@@ -104,12 +104,10 @@ strong{color:#ffe498}
 <p>The normal Firefox address bar, tabs and downloads remain available.</p>
 </main></body></html>
 EOF
-# Enable only essential services; no SSH/telnet or unnecessary daemons.
-for name in eudev dbus dhcpcd; do
- if [ -e "$ROOT/etc/init.d/$name" ]; then
-  ln -sfn "../../../init.d/$name" "$ROOT/etc/runlevels/default/$name"
- fi
-done
+# Enable services through audited OpenRC wiring. This corrects the former
+# broken ../../../init.d links (must be ../../init.d under /etc/runlevels/*)
+# and uses Alpine's actual udev service names and sysinit ordering.
+sh "$(dirname "$0")/wire_openrc_services.sh" "$ROOT"
 # Do not accidentally auto-setup a permanent root disk.
 echo "puppy50-web" > "$ROOT/etc/hostname"
 test -x "$ROOT/usr/local/bin/puppy50-web-launch"
