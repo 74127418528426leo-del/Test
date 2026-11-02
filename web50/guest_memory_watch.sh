@@ -37,6 +37,29 @@ while [ "$i" -lt 65 ]; do
         [ -r "$proc/status" ] && rss=$(awk '$1=="VmRSS:"{print $2;exit}' "$proc/status" 2>/dev/null) || :
         [ -r "$proc/smaps_rollup" ] && pss=$(awk '$1=="Pss:"{print $2;exit}' "$proc/smaps_rollup" 2>/dev/null) || :
         echo "PUPPY50_V50_PROCESS pid=$pid comm=$comm rss_kib=${rss:-unavailable} pss_kib=${pss:-unavailable}"
+        state=$(awk '$1=="State:"{print $2;exit}' "$proc/status" 2>/dev/null) || :
+        threads=$(awk '$1=="Threads:"{print $2;exit}' "$proc/status" 2>/dev/null) || :
+        vmsize=$(awk '$1=="VmSize:"{print $2;exit}' "$proc/status" 2>/dev/null) || :
+        vmpeak=$(awk '$1=="VmPeak:"{print $2;exit}' "$proc/status" 2>/dev/null) || :
+        wchan="unavailable"
+        [ -r "$proc/wchan" ] && IFS= read -r wchan < "$proc/wchan" || :
+        echo "PUPPY50_V52_STATE pid=$pid comm=$comm state=${state:-unknown} threads=${threads:-unknown} vmsize_kib=${vmsize:-unknown} vmpeak_kib=${vmpeak:-unknown} wchan=${wchan:-unavailable}"
+        # Firefox parent wait state and representative thread channels;
+        # avoid hundreds of costly /proc reads in multiprocess environments.
+        case "$comm" in
+          firefox*)
+            sampled=0
+            for task in "$proc"/task/[0-9]*; do
+              [ -r "$task/wchan" ] || continue
+              tid=${task##*/}
+              tw="unavailable"
+              IFS= read -r tw < "$task/wchan" || :
+              echo "PUPPY50_V52_THREAD pid=$pid tid=$tid wchan=${tw:-unavailable}"
+              sampled=$((sampled+1))
+              [ "$sampled" -lt 6 ] || break
+            done
+            ;;
+        esac
         ;;
     esac
   done
