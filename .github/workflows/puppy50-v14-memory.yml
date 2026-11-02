@@ -2,7 +2,7 @@ name: Puppy50 v14 actual guest RAM after desktop startup
 on:
   push:
     branches: ['puppy50-v14-memory-probe']
-    paths: ['.github/workflows/puppy50-v14-memory-probe.yml']
+    paths: ['.github/workflows/puppy50-v14-memory.yml', 'cloud/build_memory_rc_local_v14.sh']
   workflow_dispatch:
 permissions:
   contents: read
