@@ -13,38 +13,31 @@ def prepare(root,dst):
     if len(modroots)!=1:
         raise ValueError('Expected exactly one installed Alpine kernel module tree: '+str(modroots))
     source=modroots[0];version=source.name
-    records={}
-    for line in (source/'modules.dep').read_text().splitlines():
-        if ':' not in line:continue
-        key,rest=line.split(':',1);records[key]=rest.strip().split()
+    # The hardware-focused root already retains a dependency-closed set of
+    # just 103 modules. Copy them all rather than relying on host depmod's
+    # sometimes incompatible re-generated compressed-module metadata.
     def stem(s):
-        name=s.split('/')[-1]
-        return re.sub(r'\.ko(?:\.(?:zst|xz|gz))?$','',name)
-    wanted={'loop','squashfs','overlay','isofs','sr_mod','cdrom','scsi_mod',
-           'ata_piix','libata','sd_mod','virtio_blk','virtio_pci',
-           'usb_storage','uas','xhci_hcd','ehci_hcd','uhci_hcd'}
-    found={stem(k):k for k in records}
-    todo=[found[n] for n in wanted if n in found]
-    if not all(k in found or k in (source/'modules.builtin').read_text(errors='replace') for k in ('loop','squashfs','overlay')):
-        raise ValueError('Unable to locate essential loop/squashfs/overlay drivers')
-    copied=set()
-    def add(key):
-        if key in copied:return
-        if key not in records:raise ValueError('Missing module dependency '+key)
-        copied.add(key)
-        for dep in records[key]:add(dep)
-    for module in todo:add(module)
+        name=Path(s).name
+        return re.sub(r'\\.ko(?:\\.(?:zst|xz|gz))?$','',name)
+    actual={str(p.relative_to(source)):p for p in source.rglob('*')
+            if p.is_file() and re.search(r'\\.ko(?:\\.(?:zst|xz|gz))?$',p.name)}
+    available={stem(k) for k in actual}
+    builtins=(source/'modules.builtin').read_text(errors='replace') if (source/'modules.builtin').is_file() else ''
+    missing=[k for k in ('loop','squashfs','overlay','isofs','sr_mod')
+             if k not in available and k not in builtins]
+    if missing:raise ValueError('Critical filesystem/optical kernel modules missing: '+repr(missing))
+    copied=set(actual)
     target=dst/'lib/modules'/version
     target.mkdir(parents=True,exist_ok=True)
     for key in copied:
-        f=source/key
+        f=actual[key]
         to=target/key
         to.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(f,to)
     for data in source.glob('modules.*'):
         if data.is_file():shutil.copy2(data,target/data.name)
     return {'kernel_release':version,'modules_copied':len(copied),
-            'module_payload_bytes':sum((source/key).stat().st_size for key in copied),
+            'module_payload_bytes':sum(actual[key].stat().st_size for key in copied),
             'selected_module_names':sorted(stem(x) for x in copied)}
 
 if __name__=='__main__':
