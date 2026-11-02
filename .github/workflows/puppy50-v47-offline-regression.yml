@@ -1,0 +1,27 @@
+name: "Puppy50 v47 - OpenRC and 384MiB planning gates"
+on:
+  push:
+    branches:
+      - puppy50-v47-service-wiring-budget
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout experimental branch
+        uses: actions/checkout@v4
+      - name: Check POSIX shell scripts
+        run: |
+          sh -n web45/wire_openrc_services.sh
+          sh -n web45/configure_browser_session.sh
+      - name: Run staging-root and memory-budget tests
+        run: |
+          python3 -m unittest discover -s web45/tests -p 'test_*.py' -v
+      - name: Explicit VM limitation
+        run: |
+          echo "These are code and simulated-image tests, NOT a 384MiB QEMU boot proof."
