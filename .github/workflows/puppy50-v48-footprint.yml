@@ -72,6 +72,9 @@ jobs:
             ver="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['kernel_version'])" "output/reports/$candidate/pruning.json")"
             sudo depmod -b "output/roots/$candidate" "$ver"
           done
+          # Docker creates reports as root; ensure the GitHub runner can
+          # write redirection logs and JSON files while keeping roots read-only.
+          sudo chown -R "$(id -u):$(id -g)" output/reports
 
       - name: Compress and independently audit actual complete root images
         timeout-minutes: 11
