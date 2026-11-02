@@ -1,0 +1,96 @@
+name: Puppy50 v36 optional lightweight Dillo browser at 256MiB
+on:
+  push:
+    branches: ['puppy50-v36-lowram-dillo']
+    paths:
+      - '.github/workflows/puppy50-v36-dillo.yml'
+      - 'cloud/patch_puppy_init_v22.py'
+      - 'cloud/build_dillo_probe_v36.sh'
+      - 'cloud/puppy50_low_ram_v27.py'
+      - 'cloud/verify_dillo_v36.py'
+      - 'cloud/build_plocate_defer_v31.sh'
+      - 'cloud/build_seed_ydrv_v31.sh'
+      - 'cloud/build_optional_dillo_v36.sh'
+      - 'cloud/verify_dillo_v36.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify-low-ram-desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install necessary open-source utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl xorriso p7zip-full cpio gzip squashfs-tools qemu-system-x86
+      - name: Download original and verify published checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50"
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p50/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Download verified offline search index from v30
+        uses: actions/download-artifact@v4
+        with:
+          name: puppy50-v30-pristine-rootfs-prebuilt-index
+          run-id: 41445304495
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: v31-seed
+      - name: Create experimental ISO with only no-copy patch and reversible measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" '*.sfs' initrd.gz >/dev/null
+          mkdir -p "$RUNNER_TEMP/p50/initrd_tree"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_puppy_init_v22.py "$RUNNER_TEMP/p50/initrd_tree/init" "$RUNNER_TEMP/p50/optimized_init"
+          cp "$RUNNER_TEMP/p50/optimized_init" "$RUNNER_TEMP/p50/initrd_tree/init"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/optimized_initrd.gz"
+          sh cloud/build_dillo_probe_v36.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/browser_probe_ydrv.sfs" "$RUNNER_TEMP/p50/original_rc.local"
+          sh cloud/build_plocate_defer_v31.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/original_plocate.desktop" "$RUNNER_TEMP/p50/browser_probe_ydrv.sfs"
+          sudo sh cloud/build_seed_ydrv_v31.sh "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" "v31-seed/preseeded_main_sfs_only.db" "$RUNNER_TEMP/p50/final_ydrv.sfs"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/p50/dillo.deb" \
+            "https://deb.debian.org/debian/pool/main/d/dillo/dillo_3.0.5-7%2Bb1_amd64.deb"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/p50/fltk.deb" \
+            "https://deb.debian.org/debian/pool/main/f/fltk1.3/libfltk1.3_1.3.8-5_amd64.deb"
+          sh cloud/build_optional_dillo_v36.sh \
+            "$RUNNER_TEMP/p50/final_ydrv.sfs" "$RUNNER_TEMP/p50/dillo.deb" \
+            "$RUNNER_TEMP/p50/fltk.deb" "$RUNNER_TEMP/p50/dillo_ydrv.sfs"
+          xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$RUNNER_TEMP/p50/Puppy50_v36_dillo_EXPERIMENTAL.iso" \
+            -map "$RUNNER_TEMP/p50/optimized_initrd.gz" /initrd.gz \
+            -map "$RUNNER_TEMP/p50/dillo_ydrv.sfs" /ydrv_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end
+          mkdir -p "$RUNNER_TEMP/p50/check"
+          7z e -y -o"$RUNNER_TEMP/p50/check" "$RUNNER_TEMP/p50/Puppy50_v36_dillo_EXPERIMENTAL.iso" initrd.gz >/dev/null
+          cmp "$RUNNER_TEMP/p50/optimized_initrd.gz" "$RUNNER_TEMP/p50/check/initrd.gz"
+          sha256sum "$RUNNER_TEMP/p50/Puppy50_v36_dillo_EXPERIMENTAL.iso"
+      - name: Compile Python and syntax check diagnostic shell
+        run: |
+          python3 -m py_compile cloud/puppy50_low_ram_v27.py cloud/verify_dillo_v36.py cloud/patch_puppy_init_v22.py
+          sh -n cloud/build_dillo_probe_v36.sh
+          sh -n cloud/build_plocate_defer_v31.sh
+          sh -n cloud/build_seed_ydrv_v31.sh
+          sh -n cloud/build_optional_dillo_v36.sh
+      - name: Boot 256MiB original GUI with optional Dillo offline HTML
+        timeout-minutes: 14
+        run: |
+          python3 cloud/puppy50_low_ram_v27.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_v36_dillo_EXPERIMENTAL.iso" \
+            --out v36-actual-results --seconds 350 --rams 256
+      - name: Score only observed guest startup functionality
+        run: |
+          python3 cloud/verify_dillo_v36.py v36-actual-results
+      - name: Upload raw evidence even if the gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v36-256miB-optional-dillo-evidence
+          path: v36-actual-results/
+          if-no-files-found: warn
+          retention-days: 7
