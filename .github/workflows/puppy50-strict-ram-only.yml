@@ -1,0 +1,124 @@
+name: Puppy50 strict RAM-only refuse source-disk fallback
+on:
+  push:
+    branches: ['puppy50-strict-ram-only']
+    paths:
+      - '.github/workflows/puppy50-strict-ram-only.yml'
+      - 'cloud/strict_sfs_copy.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  reject-partial-copy-verify-full-copy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download previous 4GiB fully RAM-backed, all-original-files verified XZ ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: puppy50-v43-4g-ram-only-xz-optimized-iso
+          run-id: 41485045293
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-v43
+      - name: Install verified ISO, cpio, squashfs and KVM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full xorriso gzip cpio squashfs-tools qemu-system-x86
+      - name: Refuse silent partial SFS copying by patching exact source branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50/init" "$RUNNER_TEMP/p50/source" evidence dist
+          (cd source-v43 && sha256sum -c Puppy50_v43_SHA256SUMS.txt)
+          SRC="$PWD/source-v43/Puppy50_v43_4GiB_RAM_ONLY_XZ_EXPERIMENTAL.iso"
+          7z e -y -o"$RUNNER_TEMP/p50/source" "$SRC" initrd.gz '*.sfs' >/dev/null
+          ( cd "$RUNNER_TEMP/p50/init" && gzip -dc "$RUNNER_TEMP/p50/source/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/strict_sfs_copy.py "$RUNNER_TEMP/p50/init/init" "$RUNNER_TEMP/p50/strict_init"
+          cp "$RUNNER_TEMP/p50/strict_init" "$RUNNER_TEMP/p50/init/init"
+          ( cd "$RUNNER_TEMP/p50/init" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/strict_initrd.gz"
+          xorriso -indev "$SRC" -outdev "$RUNNER_TEMP/p50/STRICT.iso" \
+            -map "$RUNNER_TEMP/p50/strict_initrd.gz" /initrd.gz -boot_image any replay -commit -end
+          mkdir "$RUNNER_TEMP/p50/exact"
+          7z e -y -o"$RUNNER_TEMP/p50/exact" "$RUNNER_TEMP/p50/STRICT.iso" initrd.gz '*.sfs' >/dev/null
+          cmp "$RUNNER_TEMP/p50/strict_initrd.gz" "$RUNNER_TEMP/p50/exact/initrd.gz"
+          python3 - <<'PY'
+          import pathlib,os,json
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'p50'
+          src={p.name:p.read_bytes() for p in (root/'source').glob('*.sfs')}
+          bld={p.name:p.read_bytes() for p in (root/'exact').glob('*.sfs')}
+          if len(src)!=6 or src!=bld:raise SystemExit('Original SFS bytes altered, refusing')
+          m={k:len(v) for k,v in src.items()}
+          pathlib.Path('evidence/source_sfs_manifest.json').write_text(json.dumps(m,indent=2)+'\n')
+          print('All original programs and six SquashFS blobs retained unchanged')
+          PY
+          cp "$RUNNER_TEMP/p50/STRICT.iso" dist/Puppy50_STRICT_RAM_ONLY_EXPERIMENTAL.iso
+          (cd dist && sha256sum Puppy50_STRICT_RAM_ONLY_EXPERIMENTAL.iso > SHA256SUMS.txt)
+      - name: Generate instrumented QA ISO from same strict RAM release, preserving original apps
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh cloud/build_memory_truth_probe.sh \
+            "$RUNNER_TEMP/p50/source/puppy_dpupbw64_10.0.12.sfs" \
+            "$RUNNER_TEMP/p50/qa_ydrv.sfs" "$RUNNER_TEMP/p50/original_rc.local"
+          xorriso -indev "$RUNNER_TEMP/p50/STRICT.iso" \
+            -outdev "$RUNNER_TEMP/p50/STRICT_QA.iso" \
+            -map "$RUNNER_TEMP/p50/qa_ydrv.sfs" /ydrv_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end
+          python3 -m py_compile cloud/run_ram_threshold.py cloud/verify_guest_ram_v40.py cloud/strict_sfs_copy.py
+          sh -n cloud/build_memory_truth_probe.sh
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Positive boot at 2048MiB, eject CD, render original Firefox offline page
+        timeout-minutes: 8
+        run: |
+          python3 cloud/run_ram_threshold.py \
+            --iso "$RUNNER_TEMP/p50/STRICT_QA.iso" \
+            --ram-mib 2048 --out evidence/positive_2048 --seconds 355
+          python3 cloud/verify_guest_ram_v40.py \
+            evidence/positive_2048/serial.log evidence/positive_2048/result.json \
+            evidence/source_sfs_manifest.json --out evidence/positive_full_ram_verified.json
+      - name: Negative boot at 1280MiB must reject partial RAM copy, NOT show disk-backed desktop
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          python3 cloud/run_ram_threshold.py \
+            --iso "$RUNNER_TEMP/p50/STRICT_QA.iso" \
+            --ram-mib 1280 --out evidence/negative_1280 --seconds 170
+      - name: Fail closed release if 1280MiB silently fell back to source storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,re,json
+          p=pathlib.Path('evidence/negative_1280/serial.log')
+          if not p.exists():raise SystemExit('No negative-run serial log, manual review required')
+          s=p.read_text(errors='replace')
+          gui=re.findall(r'PUPPY50_V40_GUI_PROCESS (Xorg|jwm|ROX-Filer) PASS',s)
+          if len(gui)>=3:raise SystemExit('FAIL: low-RAM partial fallback reached graphical desktop')
+          if re.search(r'PUPPY50_V40_BEGIN sample=',s):
+              raise SystemExit('FAIL: original app environment started despite strict full-copy failure')
+          print('PUPPY50_STRICT_RAM_EXPECTED_REFUSAL: no application environment after insufficient RAM')
+          pathlib.Path('evidence/negative_copy_refusal.json').write_text(json.dumps(
+           {'ram_mib':1280,'graphical_desktop_started':False,'rejection_expected':True,
+            'strict_original_sfs_copy_test':True,
+            'note':'No original apps were launched at insufficient RAM; screen must be visually inspected.'},indent=2)+'\n')
+          PY
+      - name: Preserve all original raw evidence, positive and negative
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-strict-ram-copy-real-evidence
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Publish strict original apps RAM-only ISO only after proven positive and refusal tests
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-strict-ram-only-experimental-iso
+          path: dist/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
