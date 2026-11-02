@@ -98,16 +98,17 @@ jobs:
             output/rootfs output/official-puppy.iso \
             dist/Puppy50_Web_v52_WAITSTATE_DIAG_EXPERIMENTAL.iso output/reports
           echo 'PUPPY50_V52_REAL_ISO_BUILT_AND_EMBEDDED_BYTES_VERIFIED'
-      - name: Real KVM memory-pressure threshold at 512 768 and 1024 MiB
+      - name: Real KVM Firefox wait-state comparison 512 and 1024 MiB
         timeout-minutes: 12
         shell: bash
         run: |
           set -euo pipefail
+          test -s dist/Puppy50_Web_v52_WAITSTATE_DIAG_EXPERIMENTAL.iso
           for ram in 512 1024; do
             mkdir -p "output/evidence/ram_${ram}MiB"
             echo "PUPPY50_V50_BEGIN_REAL_KVM ram_mib=$ram"
             if python3 web45/qemu_real_cd_v45.py \
-              --iso dist/Puppy50_Web_v50_MEMORY_DIAG_EXPERIMENTAL.iso \
+              --iso dist/Puppy50_Web_v52_WAITSTATE_DIAG_EXPERIMENTAL.iso \
               --out "output/evidence/ram_${ram}MiB" \
               --ram "$ram" --seconds 155; then
               echo "PUPPY50_V50_COPY_ROOT_EJECT_GATE_PASS ram_mib=$ram"
