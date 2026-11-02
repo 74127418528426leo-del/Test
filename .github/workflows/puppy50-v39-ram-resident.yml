@@ -1,0 +1,124 @@
+name: Puppy50 v39 genuine full RAM-resident 4GiB live system
+on:
+  push:
+    branches: ['puppy50-v39-real-ram-resident']
+    paths:
+      - '.github/workflows/puppy50-v39-ram-resident.yml'
+      - 'cloud/patch_ramonly_v39.py'
+      - 'cloud/verify_ramonly_cd_v39.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  boot-all-sfs-into-tmpfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install checksum, ISO, initrd and QEMU KVM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full xorriso cpio gzip qemu-system-x86
+      - name: Obtain only official original BookwormPup64 10.0.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50"/{init,original_sfs} dist real-evidence
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p50/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Inventory every compressed original application/system SFS
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50/original_sfs" "$RUNNER_TEMP/p50/original.iso" '*.sfs' >/dev/null
+          python3 - <<'PY'
+          import pathlib,json,os
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/'p50/original_sfs'
+          paths=sorted(root.glob('*.sfs'))
+          if not paths:raise SystemExit("No original SFS found")
+          m={p.name:p.stat().st_size for p in paths}
+          pathlib.Path('real-evidence/source_sfs_manifest.json').write_text(json.dumps(m,indent=2)+"\n")
+          print("Original SFS count",len(m),"compressed bytes",sum(m.values()))
+          print(json.dumps(m,indent=2))
+          if sum(m.values())<384*1024*1024:
+              print("Unusually small: review original source. No assumptions.")
+          PY
+      - name: Rebuild original initrd with mandatory RAM residence and failure on fallbacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" initrd.gz > /dev/null
+          ( cd "$RUNNER_TEMP/p50/init" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_ramonly_v39.py "$RUNNER_TEMP/p50/init/init" "$RUNNER_TEMP/p50/ram_only_init"
+          cp "$RUNNER_TEMP/p50/ram_only_init" "$RUNNER_TEMP/p50/init/init"
+          ( cd "$RUNNER_TEMP/p50/init" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/ram_only_initrd.gz"
+          test -s "$RUNNER_TEMP/p50/ram_only_initrd.gz"
+      - name: Preserve original SFS and bootloaders while building independent RAM-only ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISO="$RUNNER_TEMP/p50/Puppy50_v39_4GiB_RAM_ONLY_EXPERIMENTAL.iso"
+          xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$ISO" \
+            -map "$RUNNER_TEMP/p50/ram_only_initrd.gz" /initrd.gz \
+            -boot_image any replay -commit -end
+          mkdir -p "$RUNNER_TEMP/p50/verify"
+          7z e -y -o"$RUNNER_TEMP/p50/verify" "$ISO" initrd.gz >/dev/null
+          cmp "$RUNNER_TEMP/p50/ram_only_initrd.gz" "$RUNNER_TEMP/p50/verify/initrd.gz"
+          xorriso -indev "$ISO" -report_el_torito plain > real-evidence/bootloader_report.txt 2>&1
+          cp "$ISO" dist/
+          (cd dist && sha256sum Puppy50_v39_4GiB_RAM_ONLY_EXPERIMENTAL.iso > Puppy50_v39_SHA256SUMS.txt)
+      - name: Verify source code and actual QEMU KVM device
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile cloud/patch_ramonly_v39.py cloud/verify_ramonly_cd_v39.py
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Normal virtual CD boot at 4 GiB, verify RAM loops then eject boot medium
+        timeout-minutes: 6
+        run: |
+          python3 cloud/verify_ramonly_cd_v39.py \
+            --iso dist/Puppy50_v39_4GiB_RAM_ONLY_EXPERIMENTAL.iso \
+            --out real-evidence/guest --seconds 220
+      - name: Verify no missing SFS files or fallback to optical backing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,pathlib
+          manifest=json.loads(pathlib.Path('real-evidence/source_sfs_manifest.json').read_text())
+          r=json.loads(pathlib.Path('real-evidence/guest/result.json').read_text())
+          copied=r.get('copied_sfs_file_bytes',{})
+          print("SOURCE",manifest)
+          print("RAM COPIED",copied)
+          if manifest!=copied:raise SystemExit('RAM copies do not cover EXACT original SFS manifest')
+          if not r.get('source_medium_not_required_by_sfs_loops'):
+              raise SystemExit('Some original SFS still backed by source optical device')
+          if not r.get('media_ejection_verified'):
+              raise SystemExit('CD ejection was not verified')
+          if not r.get('images') or r.get('qemu_exit_before_deadline') is not None:
+              raise SystemExit('No sustained post-ejection display evidence')
+          pathlib.Path('real-evidence/VERIFIED_RAM_ONLY.txt').write_text(
+              'All original SFS are copied to tmpfs and loops use RAM backing. The boot medium was ejected in QEMU.\n'
+              'Guest application launch after ejection and real hardware are NOT independently verified.\n')
+          print('PUPPY50_V39_REAL_RAM_ONLY_VERIFIED')
+          PY
+      - name: Preserve all raw logs even if verification fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v39-4g-ram-only-boot-evidence
+          path: real-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Publish RAM-only ISO only if every invariant passed
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v39-4g-ram-only-experimental-iso
+          path: dist/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
