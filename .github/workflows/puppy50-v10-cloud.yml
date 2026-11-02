@@ -33,7 +33,7 @@ jobs:
           done
           echo 'No verified official ISO downloaded' >&2
           exit 1
-      - name: VGA and serial diagnostics: no-copy 1024 128 and 64 MiB
+      - name: 'VGA and serial diagnostics - no-copy 1024 128 and 64 MiB'
         timeout-minutes: 12
         run: python3 cloud/puppy50_cloud_v10.py --iso "$RUNNER_TEMP/iso/Puppy.iso" --out cloud-results-v10 --seconds 90
       - name: Upload real guest screenshots and machine logs
