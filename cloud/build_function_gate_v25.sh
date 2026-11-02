@@ -64,6 +64,7 @@ fi
     echo "PUPPY50_V25_END"
   } > /dev/ttyS0 2>&1
 ) &
+PROBE
   cat "$saved"
 } > "$tmp/etc/rc.d/rc.local"
 chmod +x "$tmp/etc/rc.d/rc.local"
