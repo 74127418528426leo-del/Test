@@ -24,7 +24,7 @@ def monitor(path,command):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--iso',type=Path,required=True)
     p.add_argument('--out',type=Path,required=True);p.add_argument('--seconds',type=int,default=220)
-    p.add_argument('--ram-mib',type=int,required=True,choices=(1280,1536,2048))
+    p.add_argument('--ram-mib',type=int,required=True,choices=(1280,1536,1664,1792,2048))
     a=p.parse_args();a.iso=a.iso.resolve(strict=True);a.out.mkdir(parents=True,exist_ok=True)
     monitorpath=a.out/'monitor.sock'
     cmd=['qemu-system-x86_64','-machine','pc,accel=kvm','-cpu','host','-m',str(a.ram_mib),
