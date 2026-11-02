@@ -9,7 +9,7 @@ from pathlib import Path
 def prepare(root,dst):
     root=Path(root);dst=Path(dst)
     modroots=list(root.glob('lib/modules/*'))+list(root.glob('usr/lib/modules/*'))
-    modroots=[p for p in modroots if (p/'modules.dep').is_file()]
+    modroots=list({p.resolve():p for p in modroots if (p/'modules.dep').is_file()}.values())
     if len(modroots)!=1:
         raise ValueError('Expected exactly one installed Alpine kernel module tree: '+str(modroots))
     source=modroots[0];version=source.name
