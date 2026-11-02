@@ -1,0 +1,68 @@
+name: Puppy50 Web v44 browser-only 384MiB rootfs audit
+on:
+  push:
+    branches: ['puppy50-v44-browser-only-ram-engineering']
+    paths:
+      - '.github/workflows/puppy50-v44-web-rootfs.yml'
+      - 'web44/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-only-system-package-closure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SquashFS tools and confirm RAM budget test environment
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          docker version
+          mkdir -p output/reports
+      - name: Build a real current Alpine browser OS dependency closure
+        timeout-minutes: 17
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/web44/build_browser_rootfs.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" \
+            alpine:3.24 sh /build.sh
+          test -s output/reports/installed-packages.txt
+      - name: Quantify realistic lossless compressed RAM-backed root
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v44-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/squashfs-build.log 2>&1
+          unsquashfs -s output/puppy50-web-v44-root.sfs > output/reports/squashfs-superblock.txt
+          sha256sum output/puppy50-web-v44-root.sfs > output/reports/squashfs.sha256
+          python3 web44/report_ram_budget_v44.py output --out output/reports/ram-budget.json
+          cat output/reports/ram-budget.json
+      - name: Check package-closure evidence not browser-only guesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web44/tests -v
+          test -s output/reports/ram-budget.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('output/reports/ram-budget.json'))
+          assert d['compressed_root_bytes']>0 and d['installed_package_count']>30
+          assert d['actual_full_ram_boot_and_webpage_render_proven'] is False
+          print('REAL_PACKAGE_CLOSURE_SIZE_AUDIT=PASS')
+          PY
+      - name: Export measured sizes, actual packages and audit scripts (never overstate full boot)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-web-v44-real-package-closure-and-ram-budget
+          path: |
+            output/reports/
+            web44/
+          retention-days: 7
+          if-no-files-found: warn
