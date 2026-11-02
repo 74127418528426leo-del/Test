@@ -18,9 +18,9 @@ def prepare(root,dst):
     # sometimes incompatible re-generated compressed-module metadata.
     def stem(s):
         name=Path(s).name
-        return re.sub(r'\\.ko(?:\\.(?:zst|xz|gz))?$','',name)
+        return re.sub(r'\.ko(?:\.(?:zst|xz|gz))?$','',name)
     actual={str(p.relative_to(source)):p for p in source.rglob('*')
-            if p.is_file() and re.search(r'\\.ko(?:\\.(?:zst|xz|gz))?$',p.name)}
+            if p.is_file() and re.search(r'\.ko(?:\.(?:zst|xz|gz))?$',p.name)}
     available={stem(k) for k in actual}
     builtins=(source/'modules.builtin').read_text(errors='replace') if (source/'modules.builtin').is_file() else ''
     missing=[k for k in ('loop','squashfs','overlay','isofs','sr_mod')
