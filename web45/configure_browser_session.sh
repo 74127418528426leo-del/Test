@@ -29,6 +29,22 @@ cat > "$ROOT/usr/local/bin/puppy50-web-launch" <<'EOF'
 set -u
 mkdir -p /tmp/.X11-unix /run
 chmod 1777 /tmp/.X11-unix /tmp
+# GLib gspawn posix_spawn aborts if the unprivileged browser cannot open /dev/null.
+# Real v46 guest logs showed this exact assertion; fix standard device permissions,
+# not Firefox sandboxing or multi-process isolation.
+if [ ! -c /dev/null ]; then
+  rm -f /dev/null
+  mknod /dev/null c 1 3 || { echo 'PUPPY50_WEB_V46_DEV_NULL_CREATE_FAILED' > /dev/ttyS0; exit 42; }
+fi
+chmod 0666 /dev/null || { echo 'PUPPY50_WEB_V46_DEV_NULL_CHMOD_FAILED' > /dev/ttyS0; exit 43; }
+echo 'PUPPY50_WEB_V46_DEV_NULL_STATUS' > /dev/ttyS0 2>/dev/null || true
+ls -l /dev/null > /dev/ttyS0 2>/dev/null || true
+if su -s /bin/sh web -c 'test -r /dev/null && test -w /dev/null && (: </dev/null) && (: >/dev/null)'; then
+  echo 'PUPPY50_WEB_V46_DEV_NULL_NONROOT_RW_PASS' > /dev/ttyS0 2>/dev/null || true
+else
+  echo 'PUPPY50_WEB_V46_DEV_NULL_NONROOT_RW_FAILED' > /dev/ttyS0 2>/dev/null || true
+  exit 44
+fi
 chown 1000:1000 /home/web
 COOKIE=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 XAUTH=/home/web/.Xauthority
