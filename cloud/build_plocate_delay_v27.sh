@@ -2,16 +2,17 @@
 # Puppy50 v27: preserve original plocate autostart entry and defer its initial run.
 # Fail closed: this builder refuses to patch unknown or conflicting layouts.
 set -eu
-if [ "$#" -ne 3 ]; then
-  echo "Usage: $0 original_main.sfs output_ydrv.sfs saved_original_desktop_entry" >&2; exit 2
+if [ "$#" -ne 4 ]; then
+  echo "Usage: $0 original_main.sfs output_ydrv.sfs saved_original_desktop_entry preexisting_probe_ydrv.sfs" >&2; exit 2
 fi
-base=$1; out=$2; saved=$3
-[ -r "$base" ] || { echo "Missing original SFS" >&2; exit 2; }
+base=$1; out=$2; saved=$3; probe=$4
+[ -r "$base" ] && [ -r "$probe" ] || { echo "Missing original or probe SFS" >&2; exit 2; }
 [ ! -e "$out" ] || { echo "Refusing to overwrite an existing ydrv" >&2; exit 2; }
 command -v unsquashfs >/dev/null
 command -v mksquashfs >/dev/null
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+unsquashfs -d "$tmp" "$probe" >/dev/null
 mkdir -p "$tmp/etc/xdg/autostart" "$tmp/usr/local/bin"
 found=0
 for layer in "$(dirname "$base")"/*.sfs; do
