@@ -1,0 +1,60 @@
+name: Puppy50 v23 trace real plocate startup trigger
+on:
+  push:
+    branches: ['puppy50-v23-plocate-audit']
+    paths: ['.github/workflows/puppy50-v23-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trace-indexing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inspection utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full squashfs-tools
+      - name: Download and verify original Puppy ISO
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pup" audit
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/pup/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/pup/original.iso" | sha256sum -c -
+      - name: Extract original Puppy root filesystem and trace indexing startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/pup" "$RUNNER_TEMP/pup/original.iso" puppy_dpupbw64_10.0.12.sfs >/dev/null
+          unsquashfs -d "$RUNNER_TEMP/pup/rootfs" "$RUNNER_TEMP/pup/puppy_dpupbw64_10.0.12.sfs" >/dev/null
+          ROOT="$RUNNER_TEMP/pup/rootfs"
+          {
+            echo "SOURCE_ISO_SHA256=ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f"
+            echo "INDEXING EXECUTABLES"
+            find "$ROOT/usr" -iname '*plocat*' -o -iname '*updatedb*' | head -80 || true
+            echo "SCHEDULING ROOTS"
+            find "$ROOT/etc" "$ROOT/root" -iname '*cron*' -o -name 'rc.local' -o -iname '*locat*' | head -100 || true
+            echo "CONTENT REFERENCES"
+            grep -RInIsE 'updatedb(\.plocate)?|plocate(-updatedb)?|/usr/bin/updatedb' \
+              "$ROOT/etc" "$ROOT/root" "$ROOT/usr/local" "$ROOT/usr/sbin" "$ROOT/usr/share/applications" \
+              --exclude='*.svg' --exclude='*.html' --exclude='*.mo' 2>/dev/null | head -250 || true
+            echo "PLOCATE CONFIGURATION"
+            for f in "$ROOT/etc/updatedb.conf" "$ROOT/etc/cron.daily/plocate" "$ROOT/etc/cron.daily/mlocate" "$ROOT/etc/crontab"; do
+              if test -f "$f"; then echo "--- $f"; sed -n '1,170p' "$f"; fi
+            done
+            echo "PLOCATE INDEX BUILT INTO ROOTFS"
+            find "$ROOT/var" -iname '*plocat*' -o -iname '*locat*.db' | head -80 || true
+          } > audit/plocate_real_rootfs_trace.txt
+          wc -l audit/plocate_real_rootfs_trace.txt
+          sed -n '1,180p' audit/plocate_real_rootfs_trace.txt
+      - name: Upload inspection without modifying the ISO
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v23-real-plocate-rootfs-audit
+          path: audit/
+          if-no-files-found: warn
+          retention-days: 7
