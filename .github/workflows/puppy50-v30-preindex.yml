@@ -1,0 +1,61 @@
+name: Puppy50 v30 test build-time seeded plocate database
+on:
+  push:
+    branches: ['puppy50-v30-prebuilt-index-proof']
+    paths: ['.github/workflows/puppy50-v30-preindex.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-index-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO inspection and memory benchmarking tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full squashfs-tools time
+      - name: Download and verify original Puppy ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50" v30-results
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 -o "$RUNNER_TEMP/p50/original.iso" \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Extract pristine Puppy system and precompute file index in chroot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/p50/rootfs"
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" puppy_dpupbw64_10.0.12.sfs >/dev/null
+          sudo unsquashfs -d "$ROOT" "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" >/dev/null
+          test -x "$ROOT/usr/sbin/updatedb.plocate"
+          mkdir -p "$ROOT/var/lib/plocate"
+          printf 'SOURCE ISO SHA256 = ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f\n' > v30-results/summary.txt
+          echo 'Cold Puppy rootfs updatedb run:' >> v30-results/summary.txt
+          sudo /usr/bin/time -v chroot "$ROOT" /usr/sbin/updatedb.plocate -o /var/lib/plocate/plocate.db \
+            >v30-results/cold_stdout.txt 2>v30-results/cold_time.txt
+          test -s "$ROOT/var/lib/plocate/plocate.db"
+          echo 'Repeated index update against already built database:' >> v30-results/summary.txt
+          sudo /usr/bin/time -v chroot "$ROOT" /usr/sbin/updatedb.plocate -o /var/lib/plocate/plocate.db \
+            >v30-results/repeat_stdout.txt 2>v30-results/repeat_time.txt
+          sudo chroot "$ROOT" /usr/bin/plocate -d /var/lib/plocate/plocate.db 'ROX-Filer' \
+            >v30-results/query_rox.txt 2>v30-results/query_rox_err.txt || true
+          sudo chroot "$ROOT" /usr/bin/plocate -d /var/lib/plocate/plocate.db 'firefox' \
+            >v30-results/query_browser.txt 2>v30-results/query_browser_err.txt || true
+          stat -c 'database_bytes=%s' "$ROOT/var/lib/plocate/plocate.db" >> v30-results/summary.txt
+          sha256sum "$ROOT/var/lib/plocate/plocate.db" >> v30-results/summary.txt
+          grep -E 'Maximum resident set size|Elapsed \\(wall clock\\)' v30-results/*_time.txt >> v30-results/summary.txt || true
+          grep -E '/usr/|/opt/|/root/' v30-results/query_rox.txt | head -20 >> v30-results/summary.txt || true
+          cp "$ROOT/var/lib/plocate/plocate.db" v30-results/preseeded_main_sfs_only.db
+          cat v30-results/summary.txt
+      - name: Save proof and database without changing live Puppy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v30-pristine-rootfs-prebuilt-index
+          path: v30-results/
+          if-no-files-found: warn
+          retention-days: 7
