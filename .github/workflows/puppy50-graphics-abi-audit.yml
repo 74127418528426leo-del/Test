@@ -1,0 +1,55 @@
+name: Puppy50 - inspect actual Mesa LLVM loader dependencies
+on:
+  push:
+    branches: [puppy50-graphics-library-audit]
+    paths:
+      - 'graphics_audit/**'
+      - '.github/workflows/puppy50-graphics-abi-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-elf-dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate read-only ELF parser
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s graphics_audit/tests -p 'test_*.py' -v
+          command -v readelf
+      - name: Build actual Alpine Firefox and Mesa shared libraries
+        run: |
+          set -euo pipefail
+          mkdir -p output/reports
+          docker run --rm --pull=always \
+            -v "$PWD/web44/build_browser_rootfs.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh
+          test -f output/rootfs/usr/lib/libLLVM.so.22.1
+          test -f output/rootfs/usr/lib/libgallium-26.1.6.so
+          sudo chown -R "$(id -u):$(id -g)" output/reports
+      - name: Analyze ELF DT_NEEDED edges; never run staged binaries
+        run: |
+          set -euo pipefail
+          python3 graphics_audit/elf_dependencies.py \
+            --root output/rootfs \
+            --out output/reports/graphics-abi-dependency.json
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('output/reports/graphics-abi-dependency.json'))
+          assert obj['gallium_present'] and obj['llvm_present'], 'missing graphics ABI test targets'
+          print('GRAPHICS_AUDIT_REAL_LIBRARY_FILES=',obj['total_examined_files'])
+          print('GALLIUM_NEEDS_LLVM_DIRECTLY=',obj['gallium_directly_needs_LLVM'])
+          print('LLVM_REMOVAL_SAFE=',obj['llvm_removal_safe'])
+          print('NO GPU/WEBGL FUNCTIONALITY CLAIMED')
+          PY
+      - name: Preserve ABI audit and package metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-graphics-actual-ELF-ABI-audit
+          path: |
+            output/reports/graphics-abi-dependency.json
+            output/reports/installed-packages.txt
+          retention-days: 7
