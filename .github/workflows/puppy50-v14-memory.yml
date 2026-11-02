@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" puppy_dpupbw64_10.0.12.sfs >/dev/null
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" '*.sfs' >/dev/null
           sh cloud/build_memory_rc_local_v14.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/original_rc.local"
           xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$RUNNER_TEMP/p50/probe.iso" -map "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" /ydrv_dpupbw64_10.0.12.sfs -boot_image any replay -commit -end
           7z l "$RUNNER_TEMP/p50/probe.iso" | grep -F 'ydrv_dpupbw64_10.0.12.sfs'
