@@ -1,0 +1,42 @@
+name: Puppy50 v53 - compile Mesa crocus+softpipe without LLVM
+on:
+  push:
+    branches: [puppy50-v53-minimal-mesa-abi]
+    paths:
+      - 'web53/**'
+      - '.github/workflows/puppy50-v53-mesa-abi.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  experimental-abi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: POSIX syntax of isolated source-builder
+        run: |
+          set -euo pipefail
+          sh -n web53/build_mesa_llvmfree.sh
+      - name: Configure and compile Mesa on Alpine/musl
+        timeout-minutes: 24
+        run: |
+          set -euo pipefail
+          mkdir -p mesa-reports
+          docker run --rm --pull=always \
+            --memory=10g --cpus=3 \
+            -v "$PWD/web53/build_mesa_llvmfree.sh:/build_mesa.sh:ro" \
+            -v "$PWD/mesa-reports:/out" \
+            alpine:3.24 sh /build_mesa.sh
+      - name: Preserve actual configure, compiler and ABI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v53-mesa-llvmfree-build-abi-evidence
+          path: mesa-reports/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Explicit limits
+        if: always()
+        run: |
+          echo 'No physical GPU acceleration, QEMU rendering, WebGL, memory usage or secure-browser functionality proven by Mesa compilation alone.'
