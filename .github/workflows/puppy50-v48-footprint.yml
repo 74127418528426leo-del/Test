@@ -1,0 +1,118 @@
+name: Puppy50 Web v48 - real package closure and SquashFS size comparison
+
+on:
+  push:
+    branches:
+      - puppy50-v48-browser-footprint-experiments
+    paths:
+      - ".github/workflows/puppy50-v48-footprint.yml"
+      - "web48/**"
+      - "web45/prune_hardware_v45.py"
+      - "web45/ram_budget_gate.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actual-browser-footprints:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests and script syntax, no host changes
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web48/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web45/tests -p 'test_*.py' -v
+          sh -n web48/build_candidate.sh
+          python3 -m py_compile web48/audit_image.py web45/prune_hardware_v45.py
+
+      - name: Install SquashFS and kernel module tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools kmod
+          mkdir -p output/reports dist
+
+      - name: Build complete Firefox Alpine 3.24 dependency closure
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/web48/build_candidate.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh firefox /out
+          test "$(cat output/reports/firefox/status)" = "COMPLETE_PACKAGE_CLOSURE_ONLY"
+
+      - name: Build optional legacy WPE/Cog dependency closure
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          if docker run --rm \
+            -v "$PWD/web48/build_candidate.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh wpe-legacy /out; then
+            echo "PUPPY50_V48_WPE_PACKAGES_AVAILABLE"
+          else
+            echo "PUPPY50_V48_WPE_PACKAGES_NOT_AVAILABLE_OR_INSTALL_FAILED"
+            echo "NOT_BUILT" > output/reports/wpe-legacy/size-comparison-status
+          fi
+
+      - name: Prune identical excess hardware modules and firmware
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          for candidate in firefox wpe-legacy; do
+            if [ "$(cat "output/reports/$candidate/status" 2>/dev/null || true)" != "COMPLETE_PACKAGE_CLOSURE_ONLY" ]; then
+              continue
+            fi
+            sudo python3 web45/prune_hardware_v45.py \
+              "output/roots/$candidate" \
+              "output/reports/$candidate/pruning.json"
+            ver="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['kernel_version'])" "output/reports/$candidate/pruning.json")"
+            sudo depmod -b "output/roots/$candidate" "$ver"
+          done
+
+      - name: Compress and independently audit actual complete root images
+        timeout-minutes: 11
+        run: |
+          set -euo pipefail
+          for candidate in firefox wpe-legacy; do
+            if [ "$(cat "output/reports/$candidate/status" 2>/dev/null || true)" != "COMPLETE_PACKAGE_CLOSURE_ONLY" ]; then
+              continue
+            fi
+            sudo mksquashfs "output/roots/$candidate" "dist/$candidate.sfs" \
+              -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+              -exit-on-error -noappend -no-progress \
+              > "output/reports/$candidate/squashfs-build.log" 2>&1
+            sha256sum "dist/$candidate.sfs" > "output/reports/$candidate/image.sha256"
+            python3 web48/audit_image.py \
+              --root "output/roots/$candidate" \
+              --sfs "dist/$candidate.sfs" \
+              --output "output/reports/$candidate/size-audit.json" \
+              --ram-mib 384
+          done
+
+      - name: Display measured sizes with explicit functional caveat
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ('firefox','wpe-legacy'):
+              p=Path('output/reports')/name/'size-audit.json'
+              if not p.is_file():
+                  print(f'{name}: NO_COMPLETE_IMAGE_AVAILABLE'); continue
+              d=json.loads(p.read_text())
+              print(f"{name}: compressed={d['measured_sfs_mib']} MiB, "
+                    f"384MiB-budget={d['ram_budget_estimate_only']['classification']}")
+          print("BUILD AND SIZE ONLY. Browser interactivity, security and 384MiB boots are NOT verified.")
+          PY
+
+      - name: Upload only diagnostics, not large generated OS images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v48-complete-footprint-reports
+          path: output/reports/
+          if-no-files-found: warn
+          retention-days: 7
