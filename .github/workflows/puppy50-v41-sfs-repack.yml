@@ -1,0 +1,97 @@
+name: Puppy50 v41 lossless SFS XZ vs original compression and fidelity
+on:
+  push:
+    branches: ['puppy50-v41-lossless-sfs-repack']
+    paths:
+      - '.github/workflows/puppy50-v41-sfs-repack.yml'
+      - 'cloud/compare_sfs_v41.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit-unaltered-puppy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 52
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install official SquashFS tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full squashfs-tools python3
+      - name: Fetch only official checksum-verified ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p41/original_sfs" reports
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p41/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p41/original.iso" | sha256sum -c -
+          7z e -y -o"$RUNNER_TEMP/p41/original_sfs" "$RUNNER_TEMP/p41/original.iso" '*.sfs' >/dev/null
+          find "$RUNNER_TEMP/p41/original_sfs" -name '*.sfs' -printf '%f %s bytes\n' | sort | tee reports/ORIGINAL_SOURCE_SFS.txt
+      - name: Inspect source compressor and perform XZ high-density repacks, individually and without dropping any files
+        timeout-minutes: 42
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ROOT="$RUNNER_TEMP/p41"
+          python3 -m py_compile cloud/compare_sfs_v41.py
+          python3 - <<'PY'
+          import pathlib,json,os
+          root=pathlib.Path(os.environ["ROOT"])/"original_sfs"
+          m={p.name:p.stat().st_size for p in root.glob('*.sfs')}
+          if len(m)!=6:raise SystemExit(f'Expected 6 SFS, found {m}')
+          pathlib.Path('reports/original_manifest.json').write_text(json.dumps(m,indent=2)+'\n')
+          PY
+          printf 'sfs,original_bytes,xz_bytes,delta_bytes,percent_saved,roundtrip_verified\n' > reports/recompression.csv
+          # Process sequentially to cap disk/RAM usage. Smaller layers first
+          # gives partial evidence even if a timeout occurs on the main layer.
+          for file in $(find "$ROOT/original_sfs" -maxdepth 1 -name '*.sfs' -printf '%f\n' | sort); do
+            echo "PUPPY50_V41_START $file"
+            mkdir -p "$ROOT/original" "$ROOT/rebuilt"
+            unsquashfs -s "$ROOT/original_sfs/$file" > "reports/$file.source_superblock.txt"
+            sudo unsquashfs -f -d "$ROOT/original" "$ROOT/original_sfs/$file" > "reports/$file.extract.log" 2>&1
+            sudo mksquashfs "$ROOT/original" "$ROOT/recompressed.sfs" \
+              -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+              -exit-on-error -noappend -no-progress \
+              > "reports/$file.xz-build.log" 2>&1
+            unsquashfs -s "$ROOT/recompressed.sfs" > "reports/$file.repacked_superblock.txt"
+            sudo unsquashfs -f -d "$ROOT/rebuilt" "$ROOT/recompressed.sfs" \
+              > "reports/$file.verify-extract.log" 2>&1
+            sudo python3 cloud/compare_sfs_v41.py \
+              "$ROOT/original" "$ROOT/rebuilt" "reports/$file.fidelity.json" \
+              > "reports/$file.fidelity.log" 2>&1
+            ORIG=$(stat -c %s "$ROOT/original_sfs/$file")
+            XZ=$(stat -c %s "$ROOT/recompressed.sfs")
+            python3 - "$file" "$ORIG" "$XZ" <<'PY2'
+          import sys
+          name,a,b=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+          with open('reports/recompression.csv','a') as f:
+              f.write(f'{name},{a},{b},{a-b},{(a-b)*100/a:.4f},YES\n')
+          PY2
+            echo "PUPPY50_V41_SUCCESS original=$ORIG xz=$XZ file=$file"
+            sudo rm -rf "$ROOT/original" "$ROOT/rebuilt" "$ROOT/recompressed.sfs"
+          done
+          python3 - <<'PY'
+          import csv,json,pathlib
+          rows=list(csv.DictReader(open('reports/recompression.csv')))
+          if len(rows)!=6:raise SystemExit('Incomplete lossless audit')
+          a=sum(int(r['original_bytes']) for r in rows)
+          b=sum(int(r['xz_bytes']) for r in rows)
+          result={'all_six_original_layers_verified':True,'original_bytes':a,
+                  'repacked_xz_bytes':b,'savings_bytes':a-b,
+                  'savings_percentage':round((a-b)/a*100,3),
+                  'fits_384mib_before_kernel_or_apps':b<=384*1024*1024,
+                  'fits_192mib_for_os_after_other_reservations':b<=192*1024*1024,
+                  'per_layer':rows}
+          pathlib.Path('reports/FINAL_RECOMPRESSION.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Upload analysis and all raw fidelity reports, including failed experiments
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v41-lossless-recompression-fidelity-research
+          path: reports/
+          retention-days: 7
+          if-no-files-found: warn
