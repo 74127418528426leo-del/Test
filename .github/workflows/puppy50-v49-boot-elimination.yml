@@ -1,0 +1,167 @@
+name: Puppy50 v49 - measured duplicate-boot elimination and real RAM boot
+on:
+  push:
+    branches: [puppy50-v49-remove-duplicate-boot]
+    paths:
+      - 'web49/**'
+      - '.github/workflows/puppy50-v49-boot-elimination.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-measure-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 31
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test staging and tool syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web49/tests -p 'test_*.py' -v
+          sh -n web49/stage_boot_outside_sfs.sh
+          sh -n web45/configure_browser_session.sh web45/wire_openrc_services.sh
+          python3 -m unittest discover -s web45/tests -p 'test_*.py' -v
+      - name: Install the required disposable-VM and SquashFS build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools \
+            busybox-static xorriso p7zip-full cpio curl kmod qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p output/reports dist output/boot-assets
+      - name: Build actual Alpine Linux + full secure Firefox dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/web44/build_browser_rootfs.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh
+          docker run --rm \
+            -v "$PWD/output:/out" alpine:3.24 \
+            sh -ec 'apk --root /out/rootfs --arch x86_64 --no-cache add openbox xrandr xf86-video-vesa xf86-video-fbdev'
+          sudo sh web45/configure_browser_session.sh output/rootfs
+          sudo python3 web45/prune_hardware_v45.py output/rootfs output/reports/v49-hardware.json
+          VERSION=$(python3 -c 'import json;print(json.load(open("output/reports/v49-hardware.json"))["kernel_version"])')
+          sudo depmod -b output/rootfs "$VERSION"
+          test -s output/rootfs/boot/vmlinuz-lts
+          test -s output/rootfs/usr/share/puppy50web/index.html
+          # Alpine Docker owns report directories; allow runner-side shell redirects.
+          sudo chown -R "$(id -u):$(id -g)" output/reports
+      - name: Reproduce original full-root image using identical XZ settings
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/full-original.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/full-build.log 2>&1
+          stat -c 'FULL_ROOT_COMPRESSED_BYTES=%s' output/full-original.sfs | tee output/reports/full-size.txt
+          python3 web48/audit_image.py --root output/rootfs --sfs output/full-original.sfs \
+            --output output/reports/full-image-audit.json
+      - name: Preserve boot assets OUTSIDE SquashFS, without deleting matching kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sh web49/stage_boot_outside_sfs.sh output/rootfs output/boot-assets/boot
+          test -s output/boot-assets/boot/vmlinuz-lts
+          test -z "$(ls -A output/rootfs/boot)"
+          sha256sum output/boot-assets/boot/vmlinuz-lts > output/reports/external-kernel.sha256
+      - name: Compress only RAM-root contents (no redundant /boot)
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/stripped-build.log 2>&1
+          stat -c 'BOOTLESS_ROOT_COMPRESSED_BYTES=%s' output/puppy50-web-v45-root.sfs | tee output/reports/bootless-size.txt
+          python3 web48/audit_image.py --root output/rootfs --sfs output/puppy50-web-v45-root.sfs \
+            --output output/reports/bootless-image-audit.json
+          unsquashfs -ll output/puppy50-web-v45-root.sfs > output/reports/bootless-filelist.txt
+          if grep -Eq 'squashfs-root/boot/(vmlinuz|initramfs|System.map|config)' output/reports/bootless-filelist.txt; then
+            echo "PUPPY50_V49_FAIL_DUPLICATE_BOOT_STILL_PRESENT"; exit 10
+          fi
+          echo "PUPPY50_V49_BOOTLESS_SFS_CONTENT_AUDIT_PASS"
+      - name: Reassemble a real ISO using external preserved matching boot kernel
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo cp -a output/boot-assets/boot/. output/rootfs/boot/
+          test -s output/rootfs/boot/vmlinuz-lts
+          (cd output && sha256sum -c reports/external-kernel.sha256) || {
+            echo 'External boot kernel SHA check failed'; exit 11;
+          }
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o output/official-puppy.iso \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo 'ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  output/official-puppy.iso' | sha256sum -c -
+          sudo bash web45/make_web_iso_v45.sh \
+            output/rootfs output/official-puppy.iso \
+            dist/Puppy50_Web_v49_BOOTLESS_EXPERIMENTAL.iso output/reports
+          echo 'PUPPY50_V49_REAL_ISO_BUILT_AND_EMBEDDED_BYTES_VERIFIED'
+      - name: Real KVM boot test at 1024 MiB; retain both passes and failures
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          mkdir -p output/evidence/1024
+          if python3 web45/qemu_real_cd_v45.py \
+            --iso dist/Puppy50_Web_v49_BOOTLESS_EXPERIMENTAL.iso \
+            --out output/evidence/1024 --ram 1024 --seconds 155; then
+            echo 'PUPPY50_V49_1024_GUEST_RAM_COPY_BOOT_GATE_PASS' | tee output/reports/boot-1024-status.txt
+          else
+            echo 'PUPPY50_V49_1024_GUEST_RAM_COPY_BOOT_GATE_FAILED' | tee output/reports/boot-1024-status.txt
+          fi
+      - name: Real KVM boot test at 512 MiB, no silent success claims
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          mkdir -p output/evidence/512
+          if python3 web45/qemu_real_cd_v45.py \
+            --iso dist/Puppy50_Web_v49_BOOTLESS_EXPERIMENTAL.iso \
+            --out output/evidence/512 --ram 512 --seconds 155; then
+            echo 'PUPPY50_V49_512_GUEST_RAM_COPY_BOOT_GATE_PASS' | tee output/reports/boot-512-status.txt
+          else
+            echo 'PUPPY50_V49_512_GUEST_RAM_COPY_BOOT_GATE_FAILED' | tee output/reports/boot-512-status.txt
+          fi
+      - name: Produce source-of-truth savings and proof limitations
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=Path('output/reports')
+          result={'schema':'PUPPY50_V49_MEASURED_BOOT_DUPLICATION','guest_browser_interactivity_proven':False,
+                  'full_system_at_384MiB_proven':False,'boot_1g_pass':False,'boot_512_pass':False}
+          p=r/'full-image-audit.json';q=r/'bootless-image-audit.json'
+          if p.is_file() and q.is_file():
+              a=json.loads(p.read_text());b=json.loads(q.read_text())
+              result.update(original_compressed_bytes=a['measured_sfs_bytes'],
+                            optimized_compressed_bytes=b['measured_sfs_bytes'],
+                            measured_savings_bytes=a['measured_sfs_bytes']-b['measured_sfs_bytes'],
+                            measured_savings_mib=round((a['measured_sfs_bytes']-b['measured_sfs_bytes'])/1048576,3),
+                            optimized_mib=b['measured_sfs_mib'],
+                            assumed_384MiB_budget=b['ram_budget_estimate_only']['classification'])
+          for memory in (1024,512):
+              f=Path(f'output/evidence/{memory}/result.json')
+              if f.is_file():
+                  d=json.loads(f.read_text())
+                  result[f'boot_{memory}_ram_copy_completed']=d.get('ram_copy_complete',False)
+                  result[f'boot_{memory}_source_media_ejected']=d.get('media_ejection_verified',False)
+                  result[f'boot_{memory}_root_switched']=d.get('ram_root_switch',False)
+          (r/'V49_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Upload audit and screenshots, not enormous ISO
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v49-real-boot-and-compressed-savings
+          path: |
+            output/reports/
+            output/evidence/
+          retention-days: 7
+          if-no-files-found: warn
