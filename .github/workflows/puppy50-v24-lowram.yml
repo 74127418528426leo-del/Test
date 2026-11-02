@@ -1,0 +1,73 @@
+name: Puppy50 v24 actual low-RAM desktop boot sweep
+on:
+  push:
+    branches: ['puppy50-v24-minimum-working-ram']
+    paths: ['.github/workflows/puppy50-v24-lowram.yml', 'cloud/patch_puppy_init_v22.py', 'cloud/puppy50_low_ram_v24.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release-candidate-iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and ISO rebuild tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl xorriso p7zip-full cpio gzip qemu-system-x86
+      - name: Verify downloaded original ISO checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50" dist
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p50/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Patch only the initrd copy-to-RAM selection condition
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50/initrd_tree"
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" initrd.gz >/dev/null
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_puppy_init_v22.py "$RUNNER_TEMP/p50/initrd_tree/init" "$RUNNER_TEMP/p50/optimized_init"
+          cp "$RUNNER_TEMP/p50/optimized_init" "$RUNNER_TEMP/p50/initrd_tree/init"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/optimized_initrd.gz"
+          test -s "$RUNNER_TEMP/p50/optimized_initrd.gz"
+      - name: Rebuild preserving original bootloader and verify new initrd
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISO="$RUNNER_TEMP/p50/Puppy50_v22_EXPERIMENTAL_BookwormPup64.iso"
+          xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$ISO" \
+            -map "$RUNNER_TEMP/p50/optimized_initrd.gz" /initrd.gz \
+            -boot_image any replay -commit -end
+          test -s "$ISO"
+          mkdir -p "$RUNNER_TEMP/p50/check"
+          7z e -y -o"$RUNNER_TEMP/p50/check" "$ISO" initrd.gz >/dev/null
+          cmp "$RUNNER_TEMP/p50/optimized_initrd.gz" "$RUNNER_TEMP/p50/check/initrd.gz"
+          xorriso -indev "$ISO" -report_el_torito plain > dist/boot_report.txt 2>&1
+          cp "$ISO" dist/Puppy50_v22_EXPERIMENTAL_BookwormPup64.iso
+          ( cd dist && sha256sum Puppy50_v22_EXPERIMENTAL_BookwormPup64.iso > Puppy50_v22_EXPERIMENTAL.sha256 )
+          cat dist/Puppy50_v22_EXPERIMENTAL.sha256
+      - name: Check memory sweep source syntax
+        run: python3 -m py_compile cloud/puppy50_low_ram_v24.py
+      - name: Boot original-looking Puppy50 ISO at 512 384 256 192 128 MiB
+        timeout-minutes: 26
+        run: |
+          python3 cloud/puppy50_low_ram_v24.py \
+            --iso dist/Puppy50_v22_EXPERIMENTAL_BookwormPup64.iso \
+            --out cloud-lowram-results --seconds 210
+      - name: Upload CD test reports even if boot fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v24-lowram-real-boot-evidence
+          path: |
+            cloud-lowram-results/
+            dist/boot_report.txt
+            dist/Puppy50_v22_EXPERIMENTAL.sha256
+          if-no-files-found: warn
+          retention-days: 7
