@@ -1,0 +1,46 @@
+name: Puppy50 v9 real x86-64 QEMU boot sweep
+on:
+  push:
+    branches: ['puppy50-v9-virtual-test']
+    paths: ['.github/workflows/puppy50-v9-real-qemu.yml', 'cloud/puppy50_cloud_v9.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-qemu-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 42
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install open-source QEMU emulator and ISO extraction
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 p7zip-full curl
+      - name: Download ISO from official archive and validate checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/iso"
+          for url in \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso \
+            https://mirror.math.princeton.edu/pub/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso; do
+            if curl -fL --retry 2 --connect-timeout 30 --max-time 600 -o "$RUNNER_TEMP/iso/Puppy.iso" "$url"; then
+              if echo 'ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  '"$RUNNER_TEMP/iso/Puppy.iso" | sha256sum -c -; then
+                exit 0
+              fi
+            fi
+            rm -f "$RUNNER_TEMP/iso/Puppy.iso"
+          done
+          echo 'No verified official ISO downloaded' >&2
+          exit 1
+      - name: Real QEMU TCG x86-64 boot trials at 1024, 512, 128, 64 MiB
+        timeout-minutes: 32
+        run: python3 cloud/puppy50_cloud_v9.py --iso "$RUNNER_TEMP/iso/Puppy.iso" --out cloud-results --seconds 120
+      - name: Upload real guest screenshots and machine logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v9-real-boot-evidence
+          path: cloud-results/
+          if-no-files-found: warn
+          retention-days: 7
