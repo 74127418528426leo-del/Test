@@ -68,6 +68,24 @@ echo 'PUPPY50_WEB_V45_XORG_RUNNING' > /dev/ttyS0 2>/dev/null || true
 su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority openbox' >/var/log/openbox.log 2>&1 &
 sleep 2
 echo 'PUPPY50_WEB_V45_FIREFOX_REQUESTED' > /dev/ttyS0 2>/dev/null || true
+
+# Read-only memory snapshots while Firefox is actually running.
+# Sampling overhead is intentionally tiny; failures never terminate Firefox.
+(
+  sample=0
+  while [ "$sample" -lt 5 ]; do
+    sleep 20
+    sample=$((sample + 1))
+    echo "PUPPY50_WEB_MEM_SAMPLE_BEGIN sample=$sample"
+    grep -E '^(MemTotal|MemFree|MemAvailable|Shmem|Cached|Slab|SReclaimable|SwapTotal|SwapFree):' /proc/meminfo || true
+    echo "PUPPY50_WEB_MEMORY_PRESSURE"
+    cat /proc/pressure/memory 2>/dev/null || true
+    echo "PUPPY50_WEB_BROWSER_PIDS"
+    ps -eo pid,comm,rss 2>/dev/null | grep -E 'firefox|Web Content|RDD|GPU Process' || true
+    echo "PUPPY50_WEB_MEM_SAMPLE_END sample=$sample"
+  done
+) >/dev/ttyS0 2>&1 &
+
 su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority HOME=/home/web firefox-esr file:///usr/share/puppy50web/index.html' >/var/log/firefox.log 2>&1
 code=$?
 echo "PUPPY50_WEB_V46_FIREFOX_EXIT_CODE=$code" > /dev/ttyS0 2>/dev/null || true
