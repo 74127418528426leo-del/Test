@@ -5,7 +5,7 @@ set -eu
 OUT=/out
 mkdir -p "$OUT"
 cd /tmp
-apk add --no-cache   build-base linux-headers meson ninja python3 py3-mako py3-yaml   py3-packaging py3-setuptools py3-ply bison flex pkgconf   libdrm-dev expat-dev libxml2-dev zlib-dev zstd-dev   libx11-dev libxcb-dev libxext-dev libxfixes-dev libxshmfence-dev   libxrandr-dev libxdamage-dev libxxf86vm-dev xorgproto   libelf-dev wayland-dev wayland-protocols   > "$OUT/apk-build-deps.log" 2>&1 || {
+apk add --no-cache   build-base linux-headers meson ninja python3 py3-mako py3-yaml   py3-packaging py3-setuptools py3-ply bison flex pkgconf   libdrm-dev expat-dev libxml2-dev zlib-dev zstd-dev   libx11-dev libxcb-dev libxext-dev libxfixes-dev libxshmfence-dev   libxrandr-dev libxdamage-dev libxxf86vm-dev xorgproto   elfutils-dev wayland-dev wayland-protocols   > "$OUT/apk-build-deps.log" 2>&1 || {
     echo 'PUPPY50_V53_BUILD_DEPS_FAILED'
     tail -30 "$OUT/apk-build-deps.log"
     exit 10
