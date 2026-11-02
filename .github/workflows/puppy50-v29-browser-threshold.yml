@@ -1,0 +1,72 @@
+name: Puppy50 v29 original Firefox window threshold at 384 and 448 MiB
+on:
+  push:
+    branches: ['puppy50-v29-browser-threshold']
+    paths:
+      - '.github/workflows/puppy50-v29-browser-threshold.yml'
+      - 'cloud/patch_puppy_init_v22.py'
+      - 'cloud/build_browser_threshold_v29.sh'
+      - 'cloud/puppy50_low_ram_v29.py'
+      - 'cloud/verify_threshold_v29.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-low-ram-desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 34
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install necessary open-source utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl xorriso p7zip-full cpio gzip squashfs-tools qemu-system-x86
+      - name: Download original and verify published checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50"
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p50/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Create experimental ISO with only no-copy patch and reversible measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" '*.sfs' initrd.gz >/dev/null
+          mkdir -p "$RUNNER_TEMP/p50/initrd_tree"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_puppy_init_v22.py "$RUNNER_TEMP/p50/initrd_tree/init" "$RUNNER_TEMP/p50/optimized_init"
+          cp "$RUNNER_TEMP/p50/optimized_init" "$RUNNER_TEMP/p50/initrd_tree/init"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/optimized_initrd.gz"
+          sh cloud/build_browser_threshold_v29.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/original_rc.local"
+          xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$RUNNER_TEMP/p50/Puppy50_v25_qa.iso" \
+            -map "$RUNNER_TEMP/p50/optimized_initrd.gz" /initrd.gz \
+            -map "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" /ydrv_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end
+          mkdir -p "$RUNNER_TEMP/p50/check"
+          7z e -y -o"$RUNNER_TEMP/p50/check" "$RUNNER_TEMP/p50/Puppy50_v25_qa.iso" initrd.gz >/dev/null
+          cmp "$RUNNER_TEMP/p50/optimized_initrd.gz" "$RUNNER_TEMP/p50/check/initrd.gz"
+          sha256sum "$RUNNER_TEMP/p50/Puppy50_v25_qa.iso"
+      - name: Compile Python and syntax check diagnostic shell
+        run: |
+          python3 -m py_compile cloud/puppy50_low_ram_v29.py cloud/verify_threshold_v29.py cloud/patch_puppy_init_v22.py
+          sh -n cloud/build_browser_threshold_v29.sh
+      - name: Boot original Firefox at 384 and 448MiB and inspect X11 and zram
+        timeout-minutes: 22
+        run: |
+          python3 cloud/puppy50_low_ram_v29.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_v25_qa.iso" \
+            --out v29-real-results --seconds 490 --rams 384 448
+      - name: Score only observed guest startup functionality
+        run: |
+          python3 cloud/verify_threshold_v29.py v29-real-results
+      - name: Upload raw evidence even if the gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v29-browser-threshold-evidence
+          path: v29-real-results/
+          if-no-files-found: warn
+          retention-days: 7
