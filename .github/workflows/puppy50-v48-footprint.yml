@@ -45,24 +45,24 @@ jobs:
             -v "$PWD/output:/out" alpine:3.24 sh /build.sh firefox /out
           test "$(cat output/reports/firefox/status)" = "COMPLETE_PACKAGE_CLOSURE_ONLY"
 
-      - name: Build optional legacy WPE/Cog dependency closure
+      - name: Build optional Epiphany (GNOME Web) browser dependency closure
         timeout-minutes: 8
         run: |
           set -euo pipefail
           if docker run --rm \
             -v "$PWD/web48/build_candidate.sh:/build.sh:ro" \
-            -v "$PWD/output:/out" alpine:3.24 sh /build.sh wpe-legacy /out; then
-            echo "PUPPY50_V48_WPE_PACKAGES_AVAILABLE"
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh epiphany /out; then
+            echo "PUPPY50_V48_EPIPHANY_PACKAGES_AVAILABLE"
           else
-            echo "PUPPY50_V48_WPE_PACKAGES_NOT_AVAILABLE_OR_INSTALL_FAILED"
-            echo "NOT_BUILT" > output/reports/wpe-legacy/size-comparison-status
+            echo "PUPPY50_V48_EPIPHANY_PACKAGES_NOT_AVAILABLE_OR_INSTALL_FAILED"
+            echo "NOT_BUILT" | sudo tee output/reports/epiphany/size-comparison-status >/dev/null
           fi
 
       - name: Prune identical excess hardware modules and firmware
         timeout-minutes: 3
         run: |
           set -euo pipefail
-          for candidate in firefox wpe-legacy; do
+          for candidate in firefox epiphany; do
             if [ "$(cat "output/reports/$candidate/status" 2>/dev/null || true)" != "COMPLETE_PACKAGE_CLOSURE_ONLY" ]; then
               continue
             fi
@@ -77,7 +77,7 @@ jobs:
         timeout-minutes: 11
         run: |
           set -euo pipefail
-          for candidate in firefox wpe-legacy; do
+          for candidate in firefox epiphany; do
             if [ "$(cat "output/reports/$candidate/status" 2>/dev/null || true)" != "COMPLETE_PACKAGE_CLOSURE_ONLY" ]; then
               continue
             fi
@@ -98,7 +98,7 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          for name in ('firefox','wpe-legacy'):
+          for name in ('firefox','epiphany'):
               p=Path('output/reports')/name/'size-audit.json'
               if not p.is_file():
                   print(f'{name}: NO_COMPLETE_IMAGE_AVAILABLE'); continue
