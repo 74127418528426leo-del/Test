@@ -10,7 +10,7 @@ printf '%s\n' \
   'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' > "$ROOT/etc/apk/repositories"
 # The installed package dependency closure is real, not an invented size.
 # Keep Firefox's normal sandbox, network libraries and media codecs.
-apk --root "$ROOT" --arch x86_64 --initdb --no-cache --no-chown \
+apk --root "$ROOT" --arch x86_64 --initdb --no-cache \
   add alpine-base openrc busybox-initscripts \
       firefox-esr xorg-server xinit xf86-input-libinput \
       mesa-dri-gallium mesa-gl mesa-egl \
