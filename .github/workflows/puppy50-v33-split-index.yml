@@ -1,0 +1,98 @@
+name: Puppy50 v33 dual-index static vs mutable search correctness and memory
+on:
+  push:
+    branches: ['puppy50-v33-split-index-research']
+    paths: ['.github/workflows/puppy50-v33-split-index.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-index-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO inspection and memory benchmarking tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full squashfs-tools time
+      - name: Download and verify original Puppy ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50" v33-results
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 -o "$RUNNER_TEMP/p50/original.iso" \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Extract pristine Puppy system and precompute file index in chroot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/p50/rootfs"
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" puppy_dpupbw64_10.0.12.sfs >/dev/null
+          sudo unsquashfs -d "$ROOT" "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" >/dev/null
+          test -x "$ROOT/usr/sbin/updatedb.plocate"
+          mkdir -p "$ROOT/var/lib/plocate" "$ROOT/proc" "$ROOT/dev"
+          # This chroot requires /proc/self/fd for O_TMPFILE/linkat publication.
+          sudo mount -t proc proc "$ROOT/proc"
+          trap 'sudo umount "$ROOT/proc" || true' EXIT
+          printf 'SOURCE ISO SHA256 = ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f\n' > v33-results/summary.txt
+          echo 'Build static baseline, excluding /root /home /mnt:' >> v33-results/summary.txt
+          sudo /usr/bin/time -v chroot "$ROOT" /usr/sbin/updatedb.plocate \
+            --add-single-prunepath /root --add-single-prunepath /home \
+            --add-single-prunepath /mnt -o /var/lib/plocate/base.db \
+            > v33-results/base_stdout.txt 2> v33-results/base_time.txt
+          # Write a new user file only AFTER the immutable baseline was indexed.
+          sudo mkdir -p "$ROOT/root/puppy50-v33-tests"
+          echo "Puppy50 v33 newly created file" | sudo tee "$ROOT/root/puppy50-v33-tests/PUPPY50_v33_DYNAMIC_FILE.txt" >/dev/null
+          echo 'Build only mutable root user index:' >> v33-results/summary.txt
+          sudo /usr/bin/time -v chroot "$ROOT" /usr/sbin/updatedb.plocate \
+            -U /root -o /var/lib/plocate/user.db \
+            > v33-results/user_stdout.txt 2> v33-results/user_time.txt
+          echo 'Build a full index for comparison:' >> v33-results/summary.txt
+          sudo /usr/bin/time -v chroot "$ROOT" /usr/sbin/updatedb.plocate \
+            -o /var/lib/plocate/full.db \
+            > v33-results/full_stdout.txt 2> v33-results/full_time.txt
+          # Preserve original query path patterns. Multiple DB support is documented.
+          sudo chroot "$ROOT" /usr/bin/plocate \
+            -d /var/lib/plocate/base.db -d /var/lib/plocate/user.db 'ROX-Filer' \
+            | LC_ALL=C sort -u > v33-results/combined_rox.txt
+          sudo chroot "$ROOT" /usr/bin/plocate -d /var/lib/plocate/full.db 'ROX-Filer' \
+            | LC_ALL=C sort -u > v33-results/full_rox.txt
+          sudo chroot "$ROOT" /usr/bin/plocate \
+            -d /var/lib/plocate/base.db -d /var/lib/plocate/user.db 'PUPPY50_v33_DYNAMIC_FILE' \
+            > v33-results/combined_dynamic.txt
+          sudo chroot "$ROOT" /usr/bin/plocate \
+            -d /var/lib/plocate/base.db 'PUPPY50_v33_DYNAMIC_FILE' \
+            > v33-results/base_dynamic.txt || true
+          if grep -q '/root/puppy50-v33-tests/PUPPY50_v33_DYNAMIC_FILE.txt' v33-results/combined_dynamic.txt; then
+            echo 'COMBINED_MUTABLE_FILE_SEARCH=PASS' >> v33-results/summary.txt
+          else
+            echo 'COMBINED_MUTABLE_FILE_SEARCH=FAIL' >> v33-results/summary.txt
+            exit 3
+          fi
+          if test ! -s v33-results/base_dynamic.txt; then
+            echo 'BASELINE_INDEX_STAYS_IMMUTABLE=PASS' >> v33-results/summary.txt
+          else
+            echo 'BASELINE_INDEX_STAYS_IMMUTABLE=FAIL' >> v33-results/summary.txt
+            exit 3
+          fi
+          if diff -u v33-results/full_rox.txt v33-results/combined_rox.txt \
+                  >v33-results/query_rox_diff.txt; then
+            echo 'ROX_SEARCH_SET_EQUIVALENCE=PASS' >> v33-results/summary.txt
+          else
+            echo 'ROX_SEARCH_SET_EQUIVALENCE=FAIL' >> v33-results/summary.txt
+          fi
+          printf 'MAX_RESIDENT_RSS_KIB:\n' >> v33-results/summary.txt
+          grep 'Maximum resident set size' v33-results/*_time.txt >> v33-results/summary.txt
+          printf 'DATABASE_SIZES:\n' >> v33-results/summary.txt
+          stat -c '%n=%s' "$ROOT"/var/lib/plocate/*.db >> v33-results/summary.txt
+          cat v33-results/summary.txt
+      - name: Save proof and database without changing live Puppy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v33-dual-index-verified-evidence
+          path: v33-results/
+          if-no-files-found: warn
+          retention-days: 7
