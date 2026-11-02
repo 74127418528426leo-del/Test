@@ -30,7 +30,7 @@ def main():
     a.iso=a.iso.resolve(strict=True);a.out.mkdir(parents=True,exist_ok=True)
     m=a.out/'qemu.sock'; log=a.out/'qemu.log';serial=a.out/'serial.log'
     result={'test':'normal_cd_boot_no_direct_kernel','iso':a.iso.name,'qemu_started':False,
-            'bootloader_verified_by_qemu':False,'desktop_verified':False,
+            'cd_boot_path_exercised':False,'desktop_verified':False,
             'full_apps_verified':False,'50_mb_achieved':False,
             'screens':[],'errors':[]}
     cmd=['qemu-system-x86_64','-machine','pc,accel=tcg','-m','1024','-smp','1',
@@ -62,7 +62,7 @@ def main():
                 except subprocess.TimeoutExpired:p.kill();p.wait()
     result['host_elapsed_s']=int(time.monotonic()-t)
     result['qemu_exit_code']=p.returncode
-    result['bootloader_verified_by_qemu']=bool(result['screens']) and result['premature_exit'] is None
+    result['cd_boot_path_exercised']=bool(result['screens']) and result['premature_exit'] is None
     (a.out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result,indent=2))
     if not result['screens'] or result['premature_exit'] is not None:raise SystemExit(4)
