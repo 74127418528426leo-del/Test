@@ -53,6 +53,18 @@ su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority openbox' >/var
 sleep 2
 echo 'PUPPY50_WEB_V45_FIREFOX_REQUESTED' > /dev/ttyS0 2>/dev/null || true
 su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority HOME=/home/web firefox-esr file:///usr/share/puppy50web/index.html' >/var/log/firefox.log 2>&1
+code=$?
+echo "PUPPY50_WEB_V46_FIREFOX_EXIT_CODE=$code" > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_WEB_V46_FIREFOX_LOG_BEGIN' > /dev/ttyS0 2>/dev/null || true
+tail -90 /var/log/firefox.log > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_WEB_V46_FIREFOX_LOG_END' > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_WEB_V46_OPENBOX_LOG_BEGIN' > /dev/ttyS0 2>/dev/null || true
+tail -35 /var/log/openbox.log > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_WEB_V46_OPENBOX_LOG_END' > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_WEB_V46_XORG_LOG_LAST' > /dev/ttyS0 2>/dev/null || true
+tail -40 /var/log/Xorg0.log > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_WEB_V46_RUNTIME_MEMORY' > /dev/ttyS0 2>/dev/null || true
+grep -E '^(MemTotal|MemAvailable|Shmem|SwapTotal|SwapFree):' /proc/meminfo >/dev/ttyS0 2>/dev/null || true
 echo 'PUPPY50_WEB_V45_FIREFOX_EXITED' > /dev/ttyS0 2>/dev/null || true
 kill "$XPID" 2>/dev/null || true
 sleep 4
