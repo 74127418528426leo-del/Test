@@ -46,3 +46,16 @@ Do not call a smaller ISO a faster OS without speed measurements. Do not call a 
 For a truly 384 MiB system, one would need to change the contents or representation vastly more than XZ achieved. A hardware-specific, trimmed application/firmware or compiler inventory could be a valuable alternative, but MUST be labeled as changed feature scope, not "all original programs and files."
 
 The safe full original-feature RAM-only mode remains the 4GiB-tested v43 until stronger evidence exists. User's physical PC still needs independent hardware regression testing.
+
+
+## New independently measured minimum-RAM finding (same ISO, no packaging change)
+
+- Exact v43 RAM-only ISO, guest allocated 1,280 MiB: only FIVE of seven (including the tiny disposable measurement layer) SFS files were RAM-backed; firmware and kernel-build SquashFS were still backed by the virtual CD. The CD was successfully ejected but the test fails full offline RAM residency, and final Firefox page content was blank with severe memory stalls. Do not count this capacity as successful RAM-only.
+- Exact same ISO with 1,536 MiB allocated: ALL seven SquashFS layers were RAM-backed, the virtual CD was ejected, and original Firefox ESR rendered the actual offline test HTML afterward. Memory pressure was severe at various stages, so long-term smoothness is NOT established.
+- Exact same ISO with 2,048 MiB allocated: ALL seven SquashFS layers RAM-backed and original Firefox ESR rendered the post-ejection HTML page. Late memory-pressure stall samples were near zero, and available memory was substantially larger. Sustained real-world use still requires additional tests.
+- This confirms a new functional RAM-allocation tier. It does **not** reduce the intrinsic RAM footprint by 62.5%; reducing 4,096 MiB test allocation to 1,536 MiB is a test-limit reduction only.
+- Reversed-order 384MiB Firefox HTTP-cache A/B at 300s showed BOTH original and 8MiB-capped configurations rendering HTML, both with severe PSI stalls. Earlier cache-survival advantage did NOT reliably replicate; do not adopt it as an optimization by default.
+
+Source CI runs: capacity https://github.com/74127418528426leo-del/Test/actions/runs/41507942758 ; reversed A/B https://github.com/74127418528426leo-del/Test/actions/runs/41465968462
+
+Further comparison at 1,664 and 1,792 MiB: https://github.com/74127418528426leo-del/Test/actions/runs/41509402161
