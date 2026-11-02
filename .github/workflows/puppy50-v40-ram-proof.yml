@@ -1,0 +1,126 @@
+name: Puppy50 v40 independent guest RAM loop proof with removable boot CD
+on:
+  push:
+    branches: ['puppy50-v40-ram-backings-audit']
+    paths:
+      - '.github/workflows/puppy50-v40-ram-proof.yml'
+      - 'cloud/patch_ramonly_v39.py'
+      - 'cloud/verify_cd_eject_v40.py'
+      - 'cloud/build_ram_guest_probe_v40.sh'
+      - 'cloud/verify_guest_ram_v40.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  boot-all-sfs-into-tmpfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install checksum, ISO, initrd and QEMU KVM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full xorriso cpio gzip squashfs-tools qemu-system-x86
+      - name: Obtain only official original BookwormPup64 10.0.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50"/{init,original_sfs} dist real-evidence
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p50/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Inventory every compressed original application/system SFS
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50/original_sfs" "$RUNNER_TEMP/p50/original.iso" '*.sfs' >/dev/null
+          python3 - <<'PY'
+          import pathlib,json,os
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/'p50/original_sfs'
+          paths=sorted(root.glob('*.sfs'))
+          if not paths:raise SystemExit("No original SFS found")
+          m={p.name:p.stat().st_size for p in paths}
+          pathlib.Path('real-evidence/source_sfs_manifest.json').write_text(json.dumps(m,indent=2)+"\n")
+          print("Original SFS count",len(m),"compressed bytes",sum(m.values()))
+          print(json.dumps(m,indent=2))
+          if sum(m.values())<384*1024*1024:
+              print("Unusually small: review original source. No assumptions.")
+          PY
+      - name: Rebuild original initrd with mandatory RAM residence and failure on fallbacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" initrd.gz > /dev/null
+          ( cd "$RUNNER_TEMP/p50/init" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_ramonly_v39.py "$RUNNER_TEMP/p50/init/init" "$RUNNER_TEMP/p50/ram_only_init"
+          cp "$RUNNER_TEMP/p50/ram_only_init" "$RUNNER_TEMP/p50/init/init"
+          ( cd "$RUNNER_TEMP/p50/init" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/ram_only_initrd.gz"
+          test -s "$RUNNER_TEMP/p50/ram_only_initrd.gz"
+      - name: Preserve original SFS and bootloaders while building independent RAM-only ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISO="$RUNNER_TEMP/p50/Puppy50_v40_4GiB_RAM_ONLY_EXPERIMENTAL.iso"
+          xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$ISO" \
+            -map "$RUNNER_TEMP/p50/ram_only_initrd.gz" /initrd.gz \
+            -boot_image any replay -commit -end
+          mkdir -p "$RUNNER_TEMP/p50/verify"
+          7z e -y -o"$RUNNER_TEMP/p50/verify" "$ISO" initrd.gz >/dev/null
+          cmp "$RUNNER_TEMP/p50/ram_only_initrd.gz" "$RUNNER_TEMP/p50/verify/initrd.gz"
+          xorriso -indev "$ISO" -report_el_torito plain > real-evidence/bootloader_report.txt 2>&1
+          cp "$ISO" dist/
+          (cd dist && sha256sum Puppy50_v40_4GiB_RAM_ONLY_EXPERIMENTAL.iso > Puppy50_v39_SHA256SUMS.txt)
+      - name: Build disposable guest-only measurement overlay without altering release ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh cloud/build_ram_guest_probe_v40.sh \
+            "$RUNNER_TEMP/p50/original_sfs/puppy_dpupbw64_10.0.12.sfs" \
+            "$RUNNER_TEMP/p50/QA_ydrv.sfs" \
+            "$RUNNER_TEMP/p50/original_rc.local"
+          xorriso -indev "$RUNNER_TEMP/p50/Puppy50_v40_4GiB_RAM_ONLY_EXPERIMENTAL.iso" \
+            -outdev "$RUNNER_TEMP/p50/Puppy50_v40_QA.iso" \
+            -map "$RUNNER_TEMP/p50/QA_ydrv.sfs" /ydrv_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end
+      - name: Verify source scripts and available hardware KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile cloud/patch_ramonly_v39.py cloud/verify_cd_eject_v40.py cloud/verify_guest_ram_v40.py
+          sh -n cloud/build_ram_guest_probe_v40.sh
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: 4GiB actual QA CD boot, eject media, capture original desktop
+        timeout-minutes: 7
+        run: |
+          python3 cloud/verify_cd_eject_v40.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_v40_QA.iso" \
+            --out real-evidence/guest --seconds 240
+      - name: Check all source files are RAM resident and guest works after CD ejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cloud/verify_guest_ram_v40.py \
+            real-evidence/guest/serial.log \
+            real-evidence/guest/result.json \
+            real-evidence/source_sfs_manifest.json \
+            --out real-evidence/verified_guest_ram.json
+          echo "PUPPY50_V40_VERIFIED_TRUE_RAM_ONLY"
+      - name: Preserve all raw logs even if verification fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v40-guest-loop-cd-eject-evidence
+          path: real-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Publish RAM-only ISO only if every invariant passed
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v40-4g-ram-only-experimental-iso
+          path: dist/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
