@@ -14,7 +14,7 @@ DRIVER_SEEDS={
     'ahci','libahci','ata_piix','libata','ext4','vfat','fat','nls_cp437','nls_iso8859_1',
     'nvme','virtio_blk','virtio_pci','virtio_net',
     # Intel i3-540 GMA/i915 and other basic graphics/console
-    'i915','drm','drm_kms_helper','drm_display_helper','ttm','fbdev','simpledrm',
+    'i915','drm','drm_kms_helper','drm_display_helper','ttm','fbdev','simpledrm','bochs','virtio_gpu',
     # Keyboard/mouse, USB, HID and common hubs
     'usbhid','hid','hid_generic','i8042','atkbd','psmouse','xhci_hcd','xhci_pci',
     'ehci_hcd','ehci_pci','uhci_hcd','usbcore','usb_common',
