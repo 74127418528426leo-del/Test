@@ -1,0 +1,51 @@
+name: Puppy50 v31 check optional KVM acceleration
+on:
+  push:
+    branches: ['puppy50-v31-kvm-acceleration-probe']
+    paths: ['.github/workflows/puppy50-v31-kvm.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kvm-availability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+      - name: Detect /dev/kvm without assuming it works
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          {
+            echo "KVM device presence:"
+            ls -l /dev/kvm || true
+            echo "CPU VMX/SVM support:"
+            grep -m1 -E 'vmx|svm' /proc/cpuinfo | cut -c1-300 || true
+            echo "QEMU version:"
+            qemu-system-x86_64 --version | head -2
+            if test -e /dev/kvm; then
+              sudo chmod a+rw /dev/kvm
+              set +e
+              timeout 5 qemu-system-x86_64 -machine pc,accel=kvm -cpu host -m 256 -smp 1 -display none -nic none -nodefaults -no-reboot 2>&1
+              rc=$?
+              set -e
+              echo "KVM_PROBE_QEMU_EXIT_CODE=$rc"
+              if test "$rc" -eq 124; then
+                echo "KVM_PROBE_RESULT=KVM_SUPPORTED"
+              else
+                echo "KVM_PROBE_RESULT=FAILED_OR_EXITED"
+              fi
+            else
+              echo "KVM_PROBE_RESULT=DEVICE_NOT_PRESENT"
+            fi
+          } | tee results/kvm_probe.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v31-kvm-availability
+          path: results/
+          retention-days: 7
