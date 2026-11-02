@@ -59,3 +59,33 @@ The safe full original-feature RAM-only mode remains the 4GiB-tested v43 until s
 Source CI runs: capacity https://github.com/74127418528426leo-del/Test/actions/runs/41507942758 ; reversed A/B https://github.com/74127418528426leo-del/Test/actions/runs/41465968462
 
 Further comparison at 1,664 and 1,792 MiB: https://github.com/74127418528426leo-del/Test/actions/runs/41509402161
+
+
+## New matched after-ejection full-browser results
+
+Same 4,096 MiB guest RAM, same QA scripts, same offline Firefox workload, each virtual CD ejected before browser request:
+
+- Original compression v40: final MemTotal-MemAvailable **1,619.242 MiB**.
+- Full lossless XZ original-data v43: final MemTotal-MemAvailable **1,560.707 MiB**.
+- Difference: **58.535 MiB lower estimate** with browser opened, more meaningful than only measuring idle OS. Physical zram allocator ~0 in both; last PSI full avg10 0% in both. Both final actual screenshot frames showed the complete offline page.
+- Single matched run only; avoid claiming statistically proven general speed or 58.535 MiB of lower irreducible process allocations.
+- Source run https://github.com/74127418528426leo-del/Test/actions/runs/41507547871
+
+## New capacity bracket, real original Firefox after boot-medium ejection
+
+All use **the identical unmodified v43 release** (except a small temporary diagnostic layer), QEMU/KVM 2 vCPUs, networking disabled and the same HTML test:
+
+| Guest RAM limit | Every original SquashFS RAM-backed? | Firefox after optical eject | Memory pressure | Verdict |
+|---|---|---|---|---|
+| 1,280 MiB | NO: fdrv and kbuild remain backed by source CD | Final blank page | Very severe, PSI full avg10 ~80% | FAIL |
+| 1,536 MiB | YES | Real HTML pixels | Significant stalls in several samples, last 12.45% | Boots; not reliably usable |
+| 1,664 MiB | YES | Real HTML pixels | Mostly low, last 0.13%, one 4.39% spike | Promising userland capacity |
+| 1,792 MiB | YES | Real HTML pixels | Essentially zero near end | More headroom |
+| 2,048 MiB | YES | Real HTML pixels | Zero final memory stalls | Healthier baseline |
+
+Evidence and actual screenshots: https://github.com/74127418528426leo-del/Test/actions/runs/41507942758 and https://github.com/74127418528426leo-del/Test/actions/runs/41509402161
+
+The 1,664 MiB finding is a **62.5%?** NO: allocate 1,664/4,096=40.625% of the original 4GiB test RAM, thus 59.375% reduction in configured guest RAM. The OS code was not reoptimized during these capacity tests, and one run does not prove a minimum stable target or the true physical resident set. Do not claim 384MiB accomplished.
+
+The 1,280 MiB failure discovered an upstream boot behavior: on memory shortage some Puppy SFS files stay backed by the optical/USB source even with the RAM-only policy. A separate fail-closed boot-policy fix is now under independent KVM validation, with artifacts published only after passing positive and negative boot tests:
+https://github.com/74127418528426leo-del/Test/actions/runs/41510359870
