@@ -1,0 +1,29 @@
+name: Puppy50 RAM-residency proof - fail closed
+on:
+  push:
+    branches:
+      - puppy50-ram-residency-proof
+    paths:
+      - "ramevidence/**"
+      - ".github/workflows/puppy50-ram-proof-static.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence-parser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate proof script and syntax
+        run: |
+          set -euo pipefail
+          sh -n ramevidence/guest_probe.sh
+          python3 -m py_compile ramevidence/check_proof.py
+          python3 -m unittest discover -s ramevidence/tests -p 'test_*.py' -v
+      - name: Evidence scope
+        run: |
+          echo "Only synthetic parser tests performed."
+          echo "No QEMU guest, physical RAM, browser or Internet test performed."
