@@ -40,6 +40,9 @@ if [ -r /proc/vmstat ]; then
     printf "VMSTAT key=%s count=%s\n",$1,$2
   }' /proc/vmstat
 fi
+if [ -r /proc/swaps ]; then
+  awk 'NR>1 {printf "SWAP_DEVICE path=%s type=%s size_kib=%s used_kib=%s\\n", $1,$2,$3,$4}' /proc/swaps
+fi
 if [ -r /proc/pressure/memory ]; then
   awk '{printf "MEMORY_PSI %s\n",$0}' /proc/pressure/memory
 fi
@@ -49,7 +52,7 @@ for proc in /proc/[0-9]*; do
   [ -r "$proc/comm" ] || continue
   comm=$(cat "$proc/comm" 2>/dev/null || :)
   case "$comm" in
-    *firefox*|*WebKit*|*epiphany*|Xorg|Xwayland|openbox|cog)
+    *firefox*|*WebKit*|*epiphany*|*Web\ Content*|*Isolated\ Web*|*Privileged\ Cont*|*RDD\ Process*|*Socket\ Process*|*Utility\ Process*|Xorg|Xwayland|openbox|cog)
       [ -r "$proc/smaps_rollup" ] || continue
       pss=$(awk '$1=="Pss:" {print $2; exit}' "$proc/smaps_rollup" 2>/dev/null || :)
       [ -n "$pss" ] || continue
