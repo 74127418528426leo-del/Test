@@ -3,11 +3,11 @@
 # Run ONLY inside a disposable alpine:3.24 container with /out mounted.
 # Every candidate uses an identical base and includes an actual package dependency closure.
 set -eu
-[ "$#" -eq 2 ] || { echo "usage: build_candidate.sh firefox|wpe-legacy /out" >&2; exit 2; }
+[ "$#" -eq 2 ] || { echo "usage: build_candidate.sh firefox|epiphany /out" >&2; exit 2; }
 KIND=$1
 OUT=$2
 case "$KIND" in
-  firefox|wpe-legacy) ;;
+  firefox|epiphany) ;;
   *) echo "unknown candidate: $KIND" >&2; exit 2 ;;
 esac
 ROOT="$OUT/roots/$KIND"
@@ -25,10 +25,10 @@ case "$KIND" in
  firefox)
   BROWSER="firefox-esr xorg-server xinit xf86-input-libinput dbus-x11 openbox xrandr xf86-video-vesa xf86-video-fbdev"
   ;;
- wpe-legacy)
-  # Only for comparative measurement. Cog is an embedded one-view launcher,
-  # *not* a full browser, and Alpine's package may be older than WPE 2.54.
-  BROWSER="wpewebkit cog"
+ epiphany)
+  # Real GNOME Web browser dependency closure on the same Alpine/Xorg stack.
+  # Epiphany and Firefox support different standards and have distinct UX.
+  BROWSER="epiphany xorg-server xinit xf86-input-libinput dbus-x11 openbox xrandr xf86-video-vesa xf86-video-fbdev"
   ;;
 esac
 
@@ -49,6 +49,6 @@ test -s "$ROOT/boot/vmlinuz-lts"
 if [ "$KIND" = firefox ]; then
   test -x "$ROOT/usr/bin/firefox-esr" || test -x "$ROOT/usr/lib/firefox/firefox"
 else
-  test -e "$ROOT/usr/bin/cog" || exit 11
+  test -x "$ROOT/usr/bin/epiphany" || exit 11
 fi
 echo "PUPPY50_V48_COMPLETE_APK_CLOSURE candidate=$KIND"
