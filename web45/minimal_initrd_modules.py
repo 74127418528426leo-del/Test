@@ -3,7 +3,7 @@
 Only modules needed to locate optical media and mount loop/SquashFS/OverlayFS.
 No external media or disk swap needed after SFS is copied to RAM.
 """
-import json,re,shutil,sys
+import json,re,shutil,sys,gzip
 from pathlib import Path
 
 def prepare(root,dst):
@@ -32,13 +32,23 @@ def prepare(root,dst):
     for key in copied:
         f=actual[key]
         to=target/key
-        to.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copy2(f,to)
+        # Alpine ships .ko.gz modules. Ubuntu BusyBox in the early initrd
+        # does not find compressed module names in modules.dep in our
+        # actual KVM log. Convert to .ko, then regenerate dependency indexes.
+        if to.name.endswith('.ko.gz'):
+            to=to.with_suffix('')
+            to.parent.mkdir(parents=True,exist_ok=True)
+            with gzip.open(f,'rb') as inp, to.open('wb') as out:
+                shutil.copyfileobj(inp,out)
+        else:
+            to.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(f,to)
     for data in source.glob('modules.*'):
         if data.is_file():shutil.copy2(data,target/data.name)
     return {'kernel_release':version,'modules_copied':len(copied),
             'module_payload_bytes':sum(actual[key].stat().st_size for key in copied),
-            'selected_module_names':sorted(stem(x) for x in copied)}
+            'selected_module_names':sorted(stem(x) for x in copied),
+            'early_initrd_modules_decompressed_for_busybox':True}
 
 if __name__=='__main__':
     if len(sys.argv)!=4:raise SystemExit('Usage: minimal_initrd_modules.py ROOT OUTPUT_DIR REPORT_JSON')
