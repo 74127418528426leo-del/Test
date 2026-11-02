@@ -1,0 +1,54 @@
+name: Puppy50 v42 SHA-256 cross-layer duplicate upper-bound audit
+on:
+  push:
+    branches: ['puppy50-v42-cross-layer-dedup-audit']
+    paths:
+      - '.github/workflows/puppy50-v42-dedup-audit.yml'
+      - 'cloud/cross_layer_dedup_v42.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  byte-identical-app-preserving-dedup-opportunity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install original SquashFS extraction tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl p7zip-full squashfs-tools
+      - name: Download only checksum-verified ORIGINAL Puppy ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p42/original" reports
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 -o "$RUNNER_TEMP/p42/source.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p42/source.iso" | sha256sum -c -
+          7z e -y -o"$RUNNER_TEMP/p42/original" "$RUNNER_TEMP/p42/source.iso" '*.sfs' >/dev/null
+          python3 -m py_compile cloud/cross_layer_dedup_v42.py
+      - name: Hash regular file content from every original SFS, do not change filesystem
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/p42"
+          for f in $(find "$root/original" -maxdepth 1 -name '*.sfs' -printf '%f\n' | sort); do
+            mkdir "$root/tree"
+            sudo unsquashfs -d "$root/tree" "$root/original/$f" > "reports/$f.extract.log" 2>&1
+            sudo python3 cloud/cross_layer_dedup_v42.py layer "$f" "$root/tree" "reports/$f.content-hashes.jsonl" \
+              | tee "reports/$f.summary.json"
+            sudo rm -rf "$root/tree"
+          done
+          python3 cloud/cross_layer_dedup_v42.py aggregate reports/CROSS_LAYER_EXACT_DUPLICATES.json \
+            reports/*.content-hashes.jsonl | tee reports/aggregate_summary.txt
+          printf 'No original filesystem modified or applications deleted.\n' > reports/METHOD.txt
+      - name: Publish measured duplicate opportunity reports, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v42-original-sfs-exact-cross-layer-dedup-analysis
+          path: reports/
+          retention-days: 7
+          if-no-files-found: warn
