@@ -9,7 +9,7 @@ export PATH
 /busybox mount -t devtmpfs devtmpfs /dev
 /bin/busybox mkdir -p /dev/pts
 /bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null
-exec >/dev/console 2>&1
+if [ -c /dev/ttyS0 ]; then exec >/dev/ttyS0 2>&1; else exec >/dev/console 2>&1; fi
 echo PUPPY50_WEB_V45_INIT_STARTED
 /busybox modprobe ata_piix 2>/dev/null || :
 /busybox modprobe sr_mod 2>/dev/null || :
