@@ -31,7 +31,6 @@ cat >> "$tmp/rootfs/$pref" <<'PUPPY50_PREF'
 //
 // Puppy50 v36, experimental only: cap in-memory cache at 8 MiB.
 // No browser sandboxing, site isolation, privacy or process security settings changed.
-user_pref("browser.cache.memory.enable", true);
 user_pref("browser.cache.memory.capacity", 8192);
 PUPPY50_PREF
 chmod 644 "$tmp/rootfs/$pref"
