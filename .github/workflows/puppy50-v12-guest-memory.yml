@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           sh cloud/build_measurement_ydrv_v11.sh "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs"
           xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$RUNNER_TEMP/p50/probe.iso" -map "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" /ydrv_dpupbw64_10.0.12.sfs -boot_image any replay -commit -end
-          xorriso -indev "$RUNNER_TEMP/p50/probe.iso" -find / -name 'ydrv_dpupbw64_10.0.12.sfs' -print
+          7z l "$RUNNER_TEMP/p50/probe.iso" | grep -F 'ydrv_dpupbw64_10.0.12.sfs'
           sha256sum "$RUNNER_TEMP/p50/original.iso" "$RUNNER_TEMP/p50/probe.iso"
           python3 - <<'PY'
           from pathlib import Path
