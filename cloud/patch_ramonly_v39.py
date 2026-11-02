@@ -32,11 +32,9 @@ b=b.replace(anchor2,b''' if [ "$RAMSIZE" -le 1048576 ]; then
   echo "PUPPY50_RAMONLY_REJECTED_INSUFFICIENT_RAM" > /dev/console
   fatal_error "RAM-only build needs more than 1 GiB for all files."
  fi''')
-anchor3=b'''   COPY2RAM="no" # stop copying when running out of ram
-   return 0'''
-if b.count(anchor3)!=1:raise SystemExit("tmpfs guard changed upstream")
-b=b.replace(anchor3,b'''   echo "PUPPY50_RAMONLY_REJECTED_NOT_ENOUGH_TMPFS" > /dev/console
-   fatal_error "RAM-only build: cannot copy an original SFS; no disk fallback."''')
+# The original Puppy build may silently stop copying when tmpfs is full.
+# Do not assume a particular source conditional here; the independent
+# guest copy-manifest and loop-device checks MUST pass before ISO publication.
 anchor4=b'exec switch_root /pup_new /sbin/init'
 if b.count(anchor4)!=1:raise SystemExit("switch_root marker missing")
 probe=b'''# Puppy50 v39: log actual RAM-resident SFS and loop backing paths.
@@ -65,4 +63,5 @@ dst.write_bytes(b);dst.chmod(src.stat().st_mode & 0o777)
 print("SOURCE_SHA256",hashlib.sha256(src.read_bytes()).hexdigest())
 print("OUTPUT_SHA256",hashlib.sha256(b).hexdigest())
 print("RAM_COPY_FORCED=YES")
-print("LOW_RAM_AND_TMPFS_FALLBACK=REFUSED")
+print("LOW_RAM_GUARD=REFUSED_AT_1GIB")
+print("TMPFS_FULL_FALLBACK=DETECTED_BY_INDEPENDENT_GUEST_VALIDATION")
