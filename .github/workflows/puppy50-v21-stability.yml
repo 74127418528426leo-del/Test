@@ -1,0 +1,73 @@
+name: Puppy50 v21 repeated stabilized desktop memory test
+on:
+  push:
+    branches: ['puppy50-v21-stable-boot-baseline']
+    paths: ['.github/workflows/puppy50-v21-stability.yml', 'cloud/build_memory_v21.sh', 'cloud/patch_init_priority_v18.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure-real-guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and ISO tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 p7zip-full curl xorriso squashfs-tools cpio gzip
+      - name: Verify official untouched Puppy ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50"
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 -o "$RUNNER_TEMP/p50/original.iso" "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Add reversible measurement-only ydrv to separate ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" '*.sfs' >/dev/null
+          sh cloud/build_memory_v21.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/original_rc.local"
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" initrd.gz >/dev/null
+          mkdir -p "$RUNNER_TEMP/p50/initrd_tree"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_init_priority_v18.py "$RUNNER_TEMP/p50/initrd_tree/init" "$RUNNER_TEMP/p50/patched_init"
+          cp "$RUNNER_TEMP/p50/patched_init" "$RUNNER_TEMP/p50/initrd_tree/init"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/patched_initrd.gz"
+          xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$RUNNER_TEMP/p50/probe.iso" -map "$RUNNER_TEMP/p50/patched_initrd.gz" /initrd.gz -map "$RUNNER_TEMP/p50/ydrv_dpupbw64_10.0.12.sfs" /ydrv_dpupbw64_10.0.12.sfs -boot_image any replay -commit -end
+          7z l "$RUNNER_TEMP/p50/probe.iso" | grep -F 'ydrv_dpupbw64_10.0.12.sfs'
+          sha256sum "$RUNNER_TEMP/p50/original.iso" "$RUNNER_TEMP/p50/probe.iso"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,hashlib
+          p=Path(os.environ['RUNNER_TEMP'])/'p50/probe.iso'
+          digest=hashlib.sha256(p.read_bytes()).hexdigest()
+          s=Path('cloud/puppy50_cloud_v21.py').read_text()
+          original='EXPECTED_SHA256="ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f"'
+          assert original in s
+          Path('cloud/puppy50_guest_v12.py').write_text(s.replace(original,'EXPECTED_SHA256="'+digest+'"'))
+          PY
+      - name: Run two original-looking 4GiB desktops and log RAM stability
+        timeout-minutes: 30
+        run: |
+          python3 cloud/puppy50_guest_v12.py --iso "$RUNNER_TEMP/p50/probe.iso" --out cloud-results-v21 --cases stable_boot_A stable_boot_B
+      - name: Extract guest memory samples if Puppy emitted them
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p cloud-results-v21
+          for f in cloud-results-v21/*/serial.log; do
+            [ -e "$f" ] || continue
+            echo "=== $f ==="
+            grep -E '^PUPPY50_V21_(BEGIN|END)|^MemTotal:|^MemAvailable:|^SwapTotal:|^SwapFree:' "$f" | tail -90 || true
+          done > cloud-results-v21/guest_telemetry_extract.txt
+          grep -q 'PUPPY50_V21_BEGIN' cloud-results-v21/guest_telemetry_extract.txt || echo 'NO_GUEST_RAM_SAMPLES_V21' > cloud-results-v21/NO_SAMPLES.txt
+      - name: Upload raw virtual screenshots and serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v21-stable-desktop-evidence
+          path: cloud-results-v21/
+          if-no-files-found: warn
+          retention-days: 7
