@@ -1,4 +1,4 @@
-name: Puppy50 v53 - compile Mesa crocus+softpipe without LLVM
+name: Puppy50 v53 - compile Mesa softpipe without LLVM
 on:
   push:
     branches: [puppy50-v53-minimal-mesa-abi]
@@ -32,7 +32,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: puppy50-v53-mesa-llvmfree-build-abi-evidence
+          name: puppy50-v53-softpipe-only-llvmfree-build-evidence
           path: mesa-reports/
           retention-days: 7
           if-no-files-found: warn
