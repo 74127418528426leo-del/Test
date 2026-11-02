@@ -6,7 +6,7 @@ on:
       - '.github/workflows/puppy50-v27-256-indexing.yml'
       - 'cloud/patch_puppy_init_v22.py'
       - 'cloud/build_browser_gate_v26.sh'
-      - 'cloud/puppy50_low_ram_v26.py'
+      - 'cloud/puppy50_low_ram_v27.py'
       - 'cloud/verify_256_v27.py'
       - 'cloud/build_plocate_delay_v27.sh'
   workflow_dispatch:
@@ -53,15 +53,15 @@ jobs:
           sha256sum "$RUNNER_TEMP/p50/Puppy50_v25_qa.iso"
       - name: Compile Python and syntax check diagnostic shell
         run: |
-          python3 -m py_compile cloud/puppy50_low_ram_v26.py cloud/verify_256_v27.py cloud/patch_puppy_init_v22.py
+          python3 -m py_compile cloud/puppy50_low_ram_v27.py cloud/verify_256_v27.py cloud/patch_puppy_init_v22.py
           sh -n cloud/build_browser_gate_v26.sh
           sh -n cloud/build_plocate_delay_v27.sh
       - name: Boot 256MiB Puppy original-browser with delayed plocate indexing
         timeout-minutes: 14
         run: |
-          python3 cloud/puppy50_low_ram_v26.py \
+          python3 cloud/puppy50_low_ram_v27.py \
             --iso "$RUNNER_TEMP/p50/Puppy50_v25_qa.iso" \
-            --out v27-actual-results --seconds 400 --rams 256
+            --out v27-actual-results --seconds 480 --rams 256
       - name: Score only observed guest startup functionality
         run: |
           python3 cloud/verify_256_v27.py v27-actual-results
