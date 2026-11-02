@@ -11,7 +11,7 @@ printf '%s\n' \
 # The installed package dependency closure is real, not an invented size.
 # Keep Firefox's normal sandbox, network libraries and media codecs.
 apk --root "$ROOT" --arch x86_64 --initdb --no-cache \
-  add alpine-base openrc busybox-initscripts \
+  add alpine-base openrc \
       firefox-esr xorg-server xinit xf86-input-libinput \
       mesa-dri-gallium mesa-gl mesa-egl \
       dbus dbus-x11 eudev \
