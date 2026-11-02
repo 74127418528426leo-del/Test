@@ -68,7 +68,7 @@ jobs:
           sudo sh web49/stage_boot_outside_sfs.sh output/rootfs output/boot-assets/boot
           test -s output/boot-assets/boot/vmlinuz-lts
           test -z "$(ls -A output/rootfs/boot)"
-          sha256sum output/boot-assets/boot/vmlinuz-lts > output/reports/external-kernel.sha256
+          (cd output && sha256sum boot-assets/boot/vmlinuz-lts > reports/external-kernel.sha256)
       - name: Compress only RAM-root contents (no redundant /boot)
         timeout-minutes: 7
         shell: bash
