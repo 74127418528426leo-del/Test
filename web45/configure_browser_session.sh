@@ -41,6 +41,10 @@ XPID=$!
 sleep 8
 if ! kill -0 "$XPID" 2>/dev/null; then
   echo 'PUPPY50_WEB_V45_XORG_FAILED' >/dev/ttyS0 2>/dev/null || true
+  echo 'PUPPY50_WEB_V46_XORG_ERROR_LOG_BEGIN' >/dev/ttyS0 2>/dev/null || true
+  tail -85 /var/log/Xorg0.log >/dev/ttyS0 2>/dev/null || true
+  ls -l /dev/dri/ >/dev/ttyS0 2>/dev/null || true
+  echo 'PUPPY50_WEB_V46_XORG_ERROR_LOG_END' >/dev/ttyS0 2>/dev/null || true
   sleep 30
   exit 1
 fi
