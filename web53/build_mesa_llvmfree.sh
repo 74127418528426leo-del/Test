@@ -16,7 +16,7 @@ tar -xf mesa-26.1.6.tar.xz
 cd mesa-26.1.6
 # Attempt the smallest realistic open GL X11/intel + software fallback build.
 # Fail on missing Meson options. Never silently add llvmpipe.
-if ! meson setup out   --prefix=/usr   -Dbuildtype=release   -Dgallium-drivers=crocus,softpipe   -Dllvm=disabled   -Dplatforms=x11   -Dglx=dri   -Degl=enabled   -Dgbm=enabled   -Dvulkan-drivers=   -Dgallium-rusticl=false   -Dgallium-va=disabled   -Dgallium-vdpau=disabled   -Dgallium-xa=disabled   -Dbuild-tests=false   > "$OUT/meson-setup.log" 2>&1; then
+if ! meson setup out   --prefix=/usr   -Dbuildtype=release   -Dgallium-drivers=crocus,softpipe   -Dllvm=disabled   -Dplatforms=x11   -Dglx=dri   -Degl=enabled   -Dgbm=enabled   -Dvulkan-drivers=   -Dgallium-rusticl=false   -Dgallium-va=disabled         -Dbuild-tests=false   > "$OUT/meson-setup.log" 2>&1; then
   echo 'PUPPY50_V53_MESON_CONFIGURE_FAILED'
   tail -65 "$OUT/meson-setup.log"
   exit 11
