@@ -22,6 +22,15 @@ chmod +x "$SCRATCH/initrd/init"
 python3 web45/minimal_initrd_modules.py "$ROOT" "$SCRATCH/initrd" "$REPORT/initrd_module_closure.json"
 VERSION=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["kernel_release"])' "$REPORT/initrd_module_closure.json")
 depmod -b "$SCRATCH/initrd" "$VERSION"
+# A previous real KVM boot showed every module lookup failing in BusyBox.
+# Require an explicit uncompressed .ko entry for each essential early driver.
+for module in sr_mod scsi_mod cdrom ata_piix isofs squashfs loop overlay; do
+  if ! grep -Eq "/${module}\\.ko:" "$SCRATCH/initrd/lib/modules/$VERSION/modules.dep"; then
+    echo "PUPPY50_WEB_V46_FAIL_INITRD_MODDEP module=$module" >&2
+    exit 4
+  fi
+done
+echo 'PUPPY50_WEB_V46_VALIDATED_INITRD_MODULE_DEPENDENCIES'
 (
   cd "$SCRATCH/initrd"
   find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -n -6
