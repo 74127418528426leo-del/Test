@@ -12,11 +12,21 @@ command -v mksquashfs >/dev/null || exit 2
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir -p "$tmp/etc/rc.d" "$tmp/root/Startup"
-if unsquashfs -cat "$base" etc/rc.d/rc.local > "$saved"; then
-  :
-else
-  echo 'Could not extract the original rc.local; refusing to replace it' >&2
-  exit 3
+# Scan every original layer that was extracted from the ISO. Never silently
+# replace rc.local in a layer whose content we have not inspected.
+found=0
+for layer in "$(dirname "$base")"/*.sfs; do
+  [ -r "$layer" ] || continue
+  if unsquashfs -cat "$layer" etc/rc.d/rc.local > "$saved" 2>/dev/null; then
+    echo "Existing rc.local found in $layer" >&2
+    found=1
+  fi
+done
+if [ "$found" -eq 0 ]; then
+  # Puppy installations may intentionally have no rc.local. Add the hook as
+  # a new overlay file, not as a replacement of an unknown original.
+  : > "$saved"
+  echo 'No original rc.local in any supplied SFS; creating a new one' >&2
 fi
 {
   echo '#!/bin/sh'
