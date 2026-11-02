@@ -45,6 +45,12 @@ else
   echo 'PUPPY50_WEB_V46_DEV_NULL_NONROOT_RW_FAILED' > /dev/ttyS0 2>/dev/null || true
   exit 44
 fi
+# Start the bounded read-only diagnostic before Xorg/Firefox allocates RAM.
+# The VM's serial output is host-side, so no large RAM-backed guest logs grow.
+if [ -x /usr/local/bin/puppy50-v50-memory-watch ] && [ -c /dev/ttyS0 ]; then
+  /usr/local/bin/puppy50-v50-memory-watch >/dev/ttyS0 2>&1 &
+  echo 'PUPPY50_V50_MEMORY_WATCH_STARTED' >/dev/ttyS0 2>/dev/null || true
+fi
 chown 1000:1000 /home/web
 COOKIE=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 XAUTH=/home/web/.Xauthority
