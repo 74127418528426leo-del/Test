@@ -12,6 +12,11 @@ export PATH
 if [ -c /dev/ttyS0 ]; then exec >/dev/ttyS0 2>&1; else exec >/dev/console 2>&1; fi
 echo PUPPY50_WEB_V45_INIT_STARTED
 echo "PUPPY50_WEB_V46_UNAME $(/busybox uname -r)"
+if [ -x /load_early_modules.sh ]; then
+  /load_early_modules.sh
+else
+  echo PUPPY50_V46_DIRECT_INSMOD_LOADER_MISSING
+fi
 echo "PUPPY50_WEB_V46_INITRD_MODULE_FILES $(/busybox find /lib/modules -name '*.ko*' | /busybox wc -l)"
 /busybox ls -la /lib/modules/ || true
 echo "PUPPY50_WEB_V46_DEVICE_MOUNT"
