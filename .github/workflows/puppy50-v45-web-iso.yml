@@ -1,0 +1,149 @@
+name: Puppy50 Web v45 actual browser-only RAM ISO and KVM tests
+on:
+  push:
+    branches: ['puppy50-v45-web-iso-kvm-prototype']
+    paths:
+      - '.github/workflows/puppy50-v45-web-iso.yml'
+      - 'web44/**'
+      - 'web45/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-iso-and-384mib-testing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 44
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image, static-initrd and hardware KVM tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools \
+            busybox-static xorriso p7zip-full cpio curl kmod qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p output/reports dist
+      - name: Install real Alpine 3.24 full browser-only dependency closure
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/web44/build_browser_rootfs.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh
+          test -s output/reports/installed-packages.txt
+          docker run --rm \
+            -v "$PWD/output:/out" alpine:3.24 \
+            sh -ec 'apk --root /out/rootfs --arch x86_64 --no-cache add openbox xrandr'
+      - name: Create normal non-root Firefox session, prune unrelated kernel firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sh web45/configure_browser_session.sh output/rootfs
+          sudo python3 web45/prune_hardware_v45.py output/rootfs output/reports/hardware-pruning-audit.json
+          VERSION=$(python3 -c 'import json;print(json.load(open("output/reports/hardware-pruning-audit.json"))["kernel_version"])')
+          sudo depmod -b output/rootfs "$VERSION"
+          test -s output/rootfs/boot/vmlinuz-lts
+          test -s output/rootfs/usr/share/puppy50web/index.html
+          test -s output/rootfs/etc/inittab
+          python3 -m py_compile web45/prune_hardware_v45.py web45/minimal_initrd_modules.py web45/qemu_real_cd_v45.py
+          sh -n web45/configure_browser_session.sh web45/init_ram_only.sh web45/make_web_iso_v45.sh
+      - name: Build measured XZ compressed browser OS
+        timeout-minutes: 9
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/web-v45-sfs-build.log 2>&1
+          unsquashfs -s output/puppy50-web-v45-root.sfs > output/reports/web-v45-sfs-superblock.txt
+          stat -c 'PUPPY50_V45_HARDWARE_ROOT_SFS_BYTES=%s' output/puppy50-web-v45-root.sfs | tee output/reports/web-v45-size.txt
+          sha256sum output/puppy50-web-v45-root.sfs > output/reports/web-v45-sfs.sha256
+      - name: Download checksum-verified original bootloader ISO as non-destructive template
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o output/official-puppy.iso \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  output/official-puppy.iso" | sha256sum -c -
+      - name: Create experimental browser-only bootable ISO and verify embedded bytes
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo bash web45/make_web_iso_v45.sh \
+            output/rootfs output/official-puppy.iso \
+            dist/Puppy50_Web_v45_RAM_ONLY_EXPERIMENTAL.iso output/reports
+      - name: Normal virtual-CD KVM boot under hard 384MiB RAM allocation
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          mkdir -p output/evidence/ram_384MiB
+          python3 web45/qemu_real_cd_v45.py \
+            --iso dist/Puppy50_Web_v45_RAM_ONLY_EXPERIMENTAL.iso \
+            --out output/evidence/ram_384MiB --seconds 205 --ram 384 || echo 'PUPPY50_V45_384MIB_BOOT_DID_NOT_MEET_GATE' | tee output/reports/384-failure.txt
+      - name: Normal virtual-CD KVM boot at 1024MiB diagnostic control
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          mkdir -p output/evidence/ram_1024MiB
+          python3 web45/qemu_real_cd_v45.py \
+            --iso dist/Puppy50_Web_v45_RAM_ONLY_EXPERIMENTAL.iso \
+            --out output/evidence/ram_1024MiB --seconds 205 --ram 1024 || echo 'PUPPY50_V45_1024MIB_BOOT_DID_NOT_MEET_GATE' | tee output/reports/1024-failure.txt
+      - name: Fail-closed acceptance report for 384MiB and fallback
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib,json
+          result={'schema':'PUPPY50_WEB_V45_BIOS_BOOT_384MIB_EVIDENCE',
+                  'no_desktop_environment_required':True,'no_Puppy_Classic_programs_in_root':True,
+                  '384mib_Ram_browser_rendering_proven':False,
+                  'system_hardware_compatibility_verified':False}
+          for ram in (384,1024):
+              p=pathlib.Path(f'output/evidence/ram_{ram}MiB/result.json')
+              r=json.loads(p.read_text()) if p.exists() else {}
+              result[str(ram)]={'ram_only_copy':r.get('ram_copy_complete',False),
+                  'switch_root':r.get('ram_root_switch',False),
+                  'xorg_running':r.get('xorg_started',False),
+                  'firefox_requested':r.get('firefox_launch_requested',False),
+                  'media_ejected':r.get('media_ejection_verified',False),
+                  'screenshots_captured':len(r.get('images',[]))}
+          o=pathlib.Path('output/reports/FINAL_BOOT_GATE.json')
+          o.write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Preserve all raw guest/screenshots/source and size audits including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-web-v45-browser-only-384-1024mib-real-kvm-evidence
+          path: |
+            output/reports/
+            output/evidence/
+            web45/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Publish experimental ISO only when 1024MiB memory-resident start succeeded
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          p=json.load(open('output/reports/FINAL_BOOT_GATE.json'))
+          v=p['1024']
+          if not all(v.get(k) for k in ('ram_only_copy','switch_root','xorg_running','firefox_requested','media_ejected')):
+             raise SystemExit('No working 1024MiB browser launch / RAM-resident CD eject; no ISO publication.')
+          print('PUPPY50_V45_1024MIB_EXPERIMENTAL_ISO_RELEASABLE')
+          PY
+      - name: Publish experimental full ISO with its actual SHA-256 checksum
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-web-v45-experimental-browser-only-ram-iso
+          path: dist/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
