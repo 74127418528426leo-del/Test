@@ -49,10 +49,11 @@ jobs:
           sudo chroot "$ROOT" /usr/bin/plocate -d /var/lib/plocate/plocate.db 'firefox' \
             >v30-results/query_browser.txt 2>v30-results/query_browser_err.txt || true
           stat -c 'database_bytes=%s' "$ROOT/var/lib/plocate/plocate.db" >> v30-results/summary.txt
-          sha256sum "$ROOT/var/lib/plocate/plocate.db" >> v30-results/summary.txt
+          sudo sha256sum "$ROOT/var/lib/plocate/plocate.db" >> v30-results/summary.txt
           grep -E 'Maximum resident set size|Elapsed \\(wall clock\\)' v30-results/*_time.txt >> v30-results/summary.txt || true
           grep -E '/usr/|/opt/|/root/' v30-results/query_rox.txt | head -20 >> v30-results/summary.txt || true
-          cp "$ROOT/var/lib/plocate/plocate.db" v30-results/preseeded_main_sfs_only.db
+          sudo cp "$ROOT/var/lib/plocate/plocate.db" v30-results/preseeded_main_sfs_only.db
+          sudo chown "$(id -u):$(id -g)" v30-results/preseeded_main_sfs_only.db
           cat v30-results/summary.txt
       - name: Save proof and database without changing live Puppy
         if: always()
