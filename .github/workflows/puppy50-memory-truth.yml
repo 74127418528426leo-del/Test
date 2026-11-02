@@ -1,0 +1,88 @@
+name: Puppy50 memory truth and offline browser after boot-media removal
+on:
+  push:
+    branches: ['puppy50-memory-truth-functional-gate']
+    paths:
+      - '.github/workflows/puppy50-memory-truth.yml'
+      - 'cloud/build_memory_truth_probe.sh'
+      - 'cloud/analyze_memory_truth.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  identical-four-gigabyte-ram-boot-functional-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 32
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain the two previously independently boot-tested RAM-resident Puppy ISOs
+        uses: actions/download-artifact@v4
+        with:
+          name: puppy50-v40-4g-ram-only-experimental-iso
+          run-id: 41470523039
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-v40
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-v43-4g-ram-only-xz-optimized-iso
+          run-id: 41485045293
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-v43
+      - name: Install QEMU, ISO and ram-loop diagnostic utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full xorriso squashfs-tools qemu-system-x86
+      - name: Confirm original downloadable checksums and build an identical disposable diagnostic overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50" reports
+          (cd source-v40 && sha256sum -c Puppy50_v39_SHA256SUMS.txt)
+          (cd source-v43 && sha256sum -c Puppy50_v43_SHA256SUMS.txt)
+          SRC40="$PWD/source-v40/Puppy50_v40_4GiB_RAM_ONLY_EXPERIMENTAL.iso"
+          SRC43="$PWD/source-v43/Puppy50_v43_4GiB_RAM_ONLY_XZ_EXPERIMENTAL.iso"
+          7z e -y -o"$RUNNER_TEMP/p50" "$SRC40" '*.sfs' >/dev/null
+          sh cloud/build_memory_truth_probe.sh \
+            "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" \
+            "$RUNNER_TEMP/p50/identical_measurement_only.sfs" \
+            "$RUNNER_TEMP/p50/actual_original_rc.local"
+          for name in v40 v43; do
+            if test "$name" = v40; then ISO="$SRC40"; else ISO="$SRC43"; fi
+            xorriso -indev "$ISO" \
+              -outdev "$RUNNER_TEMP/p50/Puppy50_memory_truth_$name.iso" \
+              -map "$RUNNER_TEMP/p50/identical_measurement_only.sfs" /ydrv_dpupbw64_10.0.12.sfs \
+              -boot_image any replay -commit -end >/dev/null
+          done
+          python3 -m py_compile cloud/verify_cd_eject_v40.py cloud/analyze_memory_truth.py
+          sh -n cloud/build_memory_truth_probe.sh
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          sha256sum "$RUNNER_TEMP/p50/identical_measurement_only.sfs" > reports/identical_probe_sha256.txt
+      - name: Boot original-compression RAM-only system at 4 GiB, eject CD and launch Firefox afterward
+        timeout-minutes: 8
+        run: |
+          python3 cloud/verify_cd_eject_v40.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_memory_truth_v40.iso" \
+            --out reports/v40 --seconds 355
+      - name: Boot XZ-compression RAM-only system at 4 GiB, same exact test
+        timeout-minutes: 8
+        run: |
+          python3 cloud/verify_cd_eject_v40.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_memory_truth_v43.iso" \
+            --out reports/v43 --seconds 355
+      - name: Fail-closed evaluation of post-eject browser and actual RAM accounting
+        if: always()
+        run: |
+          python3 cloud/analyze_memory_truth.py \
+            reports/v40/serial.log reports/v40/result.json \
+            reports/v43/serial.log reports/v43/result.json \
+            --out reports/AB_MEMORY_TRUTH.json
+      - name: Preserve unaltered guest logs, screenshots and report for independent review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v43-post-eject-browser-memory-truth
+          path: reports/
+          retention-days: 7
+          if-no-files-found: warn
