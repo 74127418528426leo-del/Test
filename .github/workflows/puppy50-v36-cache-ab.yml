@@ -1,0 +1,92 @@
+name: Puppy50 v36 single-variable Firefox memory cache A/B at 384 MiB
+on:
+  push:
+    branches: ['puppy50-v36-384mb-browser-cache-ab']
+    paths:
+      - '.github/workflows/puppy50-v36-cache-ab.yml'
+      - 'cloud/patch_puppy_init_v22.py'
+      - 'cloud/build_offline_browser_v30.sh'
+      - 'cloud/build_cache_ab_v36.sh'
+      - 'cloud/analyze_cache_ab_v36.py'
+      - 'cloud/puppy50_kvm_v32.py'
+      - 'cloud/verify_kvm_v32.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-low-ram-desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install necessary open-source utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl xorriso p7zip-full cpio gzip squashfs-tools qemu-system-x86
+      - name: Download original and verify published checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p50"
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o "$RUNNER_TEMP/p50/original.iso" \
+            "https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso"
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  $RUNNER_TEMP/p50/original.iso" | sha256sum -c -
+      - name: Build two comparable 384MiB KVM test ISOs
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z e -y -o"$RUNNER_TEMP/p50" "$RUNNER_TEMP/p50/original.iso" '*.sfs' initrd.gz >/dev/null
+          mkdir -p "$RUNNER_TEMP/p50/initrd_tree"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && gzip -dc "$RUNNER_TEMP/p50/initrd.gz" | cpio --quiet -idm --no-absolute-filenames )
+          python3 cloud/patch_puppy_init_v22.py "$RUNNER_TEMP/p50/initrd_tree/init" "$RUNNER_TEMP/p50/optimized_init"
+          cp "$RUNNER_TEMP/p50/optimized_init" "$RUNNER_TEMP/p50/initrd_tree/init"
+          ( cd "$RUNNER_TEMP/p50/initrd_tree" && find . -print0 | cpio --null -o -H newc ) | gzip -n -9 > "$RUNNER_TEMP/p50/optimized_initrd.gz"
+          sh cloud/build_offline_browser_v30.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/measurement_ydrv.sfs" "$RUNNER_TEMP/p50/original_rc.local"
+          mkdir -p v36-results
+          sh cloud/build_cache_ab_v36.sh "$RUNNER_TEMP/p50/puppy_dpupbw64_10.0.12.sfs" "$RUNNER_TEMP/p50/measurement_ydrv.sfs" "$RUNNER_TEMP/p50/control_ydrv.sfs" "$RUNNER_TEMP/p50/capped_ydrv.sfs" v36-results/build_audit.txt
+          for v in control capped; do
+            ISO="$RUNNER_TEMP/p50/Puppy50_v36_${v}_384MiB.iso"
+            xorriso -indev "$RUNNER_TEMP/p50/original.iso" -outdev "$ISO" \
+              -map "$RUNNER_TEMP/p50/optimized_initrd.gz" /initrd.gz \
+              -map "$RUNNER_TEMP/p50/${v}_ydrv.sfs" /ydrv_dpupbw64_10.0.12.sfs \
+              -boot_image any replay -commit -end
+            7z e -y -o"$RUNNER_TEMP/p50/check_${v}" "$ISO" initrd.gz >/dev/null
+            cmp "$RUNNER_TEMP/p50/optimized_initrd.gz" "$RUNNER_TEMP/p50/check_${v}/initrd.gz"
+            sha256sum "$ISO" | tee -a v36-results/build_sha256.txt
+          done
+      - name: Verify identical RAM, same workload and instrumented source
+        run: |
+          python3 -m py_compile cloud/puppy50_kvm_v32.py cloud/patch_puppy_init_v22.py cloud/analyze_cache_ab_v36.py
+          sh -n cloud/build_cache_ab_v36.sh cloud/build_offline_browser_v30.sh
+      - name: Enable validated hardware KVM acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          echo "PUPPY50_KVM_PRESENT_AND_ACCESSIBLE"
+      - name: Boot unmodified browser profile at exactly 384MiB KVM
+        timeout-minutes: 8
+        run: |
+          python3 cloud/puppy50_kvm_v32.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_v36_control_384MiB.iso" \
+            --out v36-results/control --seconds 300 --rams 384
+      - name: Boot capped-memory browser at exactly 384MiB KVM
+        timeout-minutes: 8
+        run: |
+          python3 cloud/puppy50_kvm_v32.py \
+            --iso "$RUNNER_TEMP/p50/Puppy50_v36_capped_384MiB.iso" \
+            --out v36-results/capped --seconds 300 --rams 384
+      - name: Compare real guest swap, zram, memory pressure and X11 windows
+        if: always()
+        run: |
+          python3 cloud/analyze_cache_ab_v36.py v36-results/control/ram_384MiB/serial.log v36-results/capped/ram_384MiB/serial.log --output v36-results/comparison.json
+      - name: Upload raw evidence even if the gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v36-control-vs-capped-browser-evidence
+          path: v36-results/
+          if-no-files-found: warn
+          retention-days: 7
