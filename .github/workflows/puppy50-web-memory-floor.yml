@@ -1,0 +1,140 @@
+name: Puppy50 Web measured RAM floor 768, 512, 384 MiB
+on:
+  push:
+    branches: ['puppy50-web-working-browser-memory-floor']
+    paths:
+      - '.github/workflows/puppy50-web-memory-floor.yml'
+      - 'web44/**'
+      - 'web45/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-iso-and-384mib-testing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 44
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image, static-initrd and hardware KVM tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools \
+            busybox-static xorriso p7zip-full cpio curl kmod qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p output/reports dist
+      - name: Install real Alpine 3.24 full browser-only dependency closure
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/web44/build_browser_rootfs.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh
+          test -s output/reports/installed-packages.txt
+          docker run --rm \
+            -v "$PWD/output:/out" alpine:3.24 \
+            sh -ec 'apk --root /out/rootfs --arch x86_64 --no-cache add openbox xrandr xf86-video-vesa xf86-video-fbdev'
+      - name: Create normal non-root Firefox session, prune unrelated kernel firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sh web45/configure_browser_session.sh output/rootfs
+          sudo python3 web45/prune_hardware_v45.py output/rootfs output/reports/hardware-pruning-audit.json
+          VERSION=$(python3 -c 'import json;print(json.load(open("output/reports/hardware-pruning-audit.json"))["kernel_version"])')
+          sudo depmod -b output/rootfs "$VERSION"
+          test -s output/rootfs/boot/vmlinuz-lts
+          test -s output/rootfs/usr/share/puppy50web/index.html
+          test -s output/rootfs/etc/inittab
+          python3 -m py_compile web45/prune_hardware_v45.py web45/minimal_initrd_modules.py web45/qemu_real_cd_v45.py
+          sh -n web45/configure_browser_session.sh web45/init_ram_only.sh web45/make_web_iso_v45.sh
+      - name: Build measured XZ compressed browser OS
+        timeout-minutes: 9
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/web-v45-sfs-build.log 2>&1
+          unsquashfs -s output/puppy50-web-v45-root.sfs > output/reports/web-v45-sfs-superblock.txt
+          stat -c 'PUPPY50_V45_HARDWARE_ROOT_SFS_BYTES=%s' output/puppy50-web-v45-root.sfs | tee output/reports/web-v45-size.txt
+          sha256sum output/puppy50-web-v45-root.sfs > output/reports/web-v45-sfs.sha256
+      - name: Download checksum-verified original bootloader ISO as non-destructive template
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o output/official-puppy.iso \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo "ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  output/official-puppy.iso" | sha256sum -c -
+      - name: Create experimental browser-only bootable ISO and verify embedded bytes
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo bash web45/make_web_iso_v45.sh \
+            output/rootfs output/official-puppy.iso \
+            dist/Puppy50_Web_v45_RAM_ONLY_EXPERIMENTAL.iso output/reports
+      - name: Descending RAM KVM testing with identical browser image
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ram in 768 512 384; do
+            mkdir -p "output/evidence/ram_$ram""MiB"
+            echo "PUPPY50_WEB_RAM_TEST_BEGIN ram=$ram"
+            python3 web45/qemu_real_cd_v45.py \
+              --iso dist/Puppy50_Web_v45_RAM_ONLY_EXPERIMENTAL.iso \
+              --out "output/evidence/ram_$ram""MiB" --seconds 155 --ram "$ram" \
+              || echo "PUPPY50_WEB_RAM_TEST_INCOMPLETE ram=$ram" | tee "output/reports/$ram-failed.txt"
+          done
+      - name: Analyze real memory snapshots without asserting Firefox success
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,re
+          summary={'schema':'PUPPY50_WEB_ACTUAL_BROWSER_RAM_FLOOR',
+                   'data_class':'KVM guest serial records; browser rendering requires visual screenshot review',
+                   'tests':{}}
+          for ram in (768,512,384):
+              folder=pathlib.Path(f'output/evidence/ram_{ram}MiB')
+              src=folder/'serial.log'
+              log=src.read_text(errors='replace').replace('\r','') if src.exists() else ''
+              result_file=folder/'result.json'
+              r=json.loads(result_file.read_text()) if result_file.exists() else {}
+              samples=[]
+              for no,block in re.findall(r'PUPPY50_WEB_MEM_SAMPLE_BEGIN sample=(\d+)(.*?)PUPPY50_WEB_MEM_SAMPLE_END sample=\1',log,re.S):
+                  m={k:int(v) for k,v in re.findall(r'^(MemTotal|MemAvailable|Shmem|SwapTotal|SwapFree):\s*(\d+) kB',block,re.M)}
+                  if 'MemTotal' in m and 'MemAvailable' in m:
+                      samples.append({'sample':int(no),'nonavailable_mib':round((m['MemTotal']-m['MemAvailable'])/1024,2),
+                         'available_mib':round(m['MemAvailable']/1024,2),'shmem_mib':round(m.get('Shmem',0)/1024,2),
+                         'swap_used_mib':round((m.get('SwapTotal',0)-m.get('SwapFree',0))/1024,2),
+                         'browser_process_lines':len(re.findall(r'\b(?:firefox|Web Content|RDD|GPU Process)\b',block))})
+              summary['tests'][str(ram)]={'allocated_mib':ram,
+                  'ram_copy_complete':r.get('ram_copy_complete',False),
+                  'root_switched_to_ram':r.get('ram_root_switch',False),
+                  'cd_ejected':r.get('media_ejection_verified',False),
+                  'firefox_requested':r.get('firefox_launch_requested',False),
+                  'firefox_exits':len(re.findall('PUPPY50_WEB_V46_FIREFOX_EXIT_CODE=',log)),
+                  'dev_null_nonroot_rw_pass':'PUPPY50_WEB_V46_DEV_NULL_NONROOT_RW_PASS' in log,
+                  'guest_samples':samples,'screenshots':r.get('images',[]),
+                  'page_visually_verified':False}
+          dest=pathlib.Path('output/reports/REAL_MEMORY_FLOOR_RESULTS.json')
+          dest.write_text(json.dumps(summary,indent=2)+'\n')
+          print(json.dumps({k:{x:y for x,y in v.items() if x!='guest_samples'}
+                            for k,v in summary['tests'].items()},indent=2))
+          PY
+      - name: Preserve all raw guest/screenshots/source and size audits including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-web-real-browser-memory-768-512-384-evidence
+          path: |
+            output/reports/
+            output/evidence/
+            web45/
+          retention-days: 7
+          if-no-files-found: warn
