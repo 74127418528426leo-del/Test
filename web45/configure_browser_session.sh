@@ -1,0 +1,85 @@
+#!/bin/sh
+# Configure only-browser login on a new Alpine root (no full Puppy apps).
+# Does not weaken Firefox's sandbox, Fission/site isolation, or trust store.
+set -eu
+[ "$#" -eq 1 ] || exit 2
+ROOT=$1
+test -f "$ROOT/etc/passwd"
+mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/share/puppy50web" "$ROOT/home/web" \
+ "$ROOT/etc/runlevels/default" "$ROOT/etc/runlevels/sysinit" "$ROOT/etc/runlevels/boot"
+if ! grep -q '^web:' "$ROOT/etc/passwd"; then
+ echo 'web:x:1000:1000:Puppy50 Web:/home/web:/bin/sh' >> "$ROOT/etc/passwd"
+ echo 'web:x:!:20000:0:99999:7:::' >> "$ROOT/etc/shadow"
+ echo 'web:x:1000:' >> "$ROOT/etc/group"
+fi
+chown -R 1000:1000 "$ROOT/home/web"
+chmod 700 "$ROOT/home/web"
+mkdir -p "$ROOT/etc/apk"
+cat > "$ROOT/etc/inittab" <<'EOF'
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+tty1::respawn:/usr/local/bin/puppy50-web-launch
+tty2::respawn:/sbin/getty 38400 tty2
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown
+EOF
+cat > "$ROOT/usr/local/bin/puppy50-web-launch" <<'EOF'
+#!/bin/sh
+set -u
+mkdir -p /tmp/.X11-unix /run
+chmod 1777 /tmp/.X11-unix /tmp
+chown 1000:1000 /home/web
+COOKIE=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+XAUTH=/home/web/.Xauthority
+rm -f "$XAUTH"
+xauth -f "$XAUTH" add :0 . "$COOKIE"
+chown 1000:1000 "$XAUTH"
+echo 'PUPPY50_WEB_V45_XORG_START' > /dev/ttyS0 2>/dev/null || true
+Xorg :0 vt1 -nolisten tcp -auth "$XAUTH" > /var/log/Xorg0.log 2>&1 &
+XPID=$!
+sleep 8
+if ! kill -0 "$XPID" 2>/dev/null; then
+  echo 'PUPPY50_WEB_V45_XORG_FAILED' >/dev/ttyS0 2>/dev/null || true
+  sleep 30
+  exit 1
+fi
+echo 'PUPPY50_WEB_V45_XORG_RUNNING' > /dev/ttyS0 2>/dev/null || true
+su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority openbox' >/var/log/openbox.log 2>&1 &
+sleep 2
+echo 'PUPPY50_WEB_V45_FIREFOX_REQUESTED' > /dev/ttyS0 2>/dev/null || true
+su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority HOME=/home/web firefox-esr file:///usr/share/puppy50web/index.html' >/var/log/firefox.log 2>&1
+echo 'PUPPY50_WEB_V45_FIREFOX_EXITED' > /dev/ttyS0 2>/dev/null || true
+kill "$XPID" 2>/dev/null || true
+sleep 4
+EOF
+chmod 755 "$ROOT/usr/local/bin/puppy50-web-launch"
+cat > "$ROOT/usr/share/puppy50web/index.html" <<'EOF'
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Puppy50 Web — RAM Browser Test</title>
+<style>
+body{margin:0;background:#071020;color:#e5ecf7;font:16px system-ui,sans-serif;
+min-height:100vh;display:grid;place-items:center}
+main{border:1px solid #3d5368;background:#10243c;border-radius:20px;
+padding:44px;max-width:700px}
+h1{font-size:42px;color:#9fe1ff}p{line-height:1.65}
+strong{color:#ffe498}
+</style></head>
+<body><main><h1>PUPPY50 WEB</h1><p>Real browser-only Linux, using RAM-backed system files.</p>
+<p><strong>384 MiB target — experimental build.</strong></p>
+<p>This local page proves browser rendering without needing an internet connection.</p>
+<p>The normal Firefox address bar, tabs and downloads remain available.</p>
+</main></body></html>
+EOF
+# Enable only essential services; no SSH/telnet or unnecessary daemons.
+for name in eudev dbus dhcpcd; do
+ if [ -e "$ROOT/etc/init.d/$name" ]; then
+  ln -sfn "../../../init.d/$name" "$ROOT/etc/runlevels/default/$name"
+ fi
+done
+# Do not accidentally auto-setup a permanent root disk.
+echo "puppy50-web" > "$ROOT/etc/hostname"
+test -x "$ROOT/usr/local/bin/puppy50-web-launch"
+test -s "$ROOT/usr/share/puppy50web/index.html"
+echo 'PUPPY50_WEB_V45_USER_SESSION_CONFIGURATION=PASS'
