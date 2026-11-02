@@ -32,10 +32,10 @@ echo "PUPPY50_WEB_V45_INITRD_BYTES=$(stat -c %s "$SCRATCH/initrd.gz")" | tee "$R
 # except bootloader assets; the Alpine browser root is the single RAM-copied SFS.
 xorriso -indev "$SOURCE" -outdev "$OUT" \
   -rm /adrv_dpupbw64_10.0.12.sfs \
-  -rm /bdrv_dpupbw64_10.0.12.sfs \
-  -rm /fdrv_dpupbw64_10.0.12.sfs \
-  -rm /kbuild-6.1.148.sfs \
-  -rm /zdrv_dpupbw64_10.0.12.sfs \
+      /bdrv_dpupbw64_10.0.12.sfs \
+      /fdrv_dpupbw64_10.0.12.sfs \
+      /kbuild-6.1.148.sfs \
+      /zdrv_dpupbw64_10.0.12.sfs -- \
   -map "$ROOT/boot/vmlinuz-lts" /vmlinuz \
   -map "$SCRATCH/initrd.gz" /initrd.gz \
   -map "$ROOT/../puppy50-web-v45-root.sfs" /puppy_dpupbw64_10.0.12.sfs \
