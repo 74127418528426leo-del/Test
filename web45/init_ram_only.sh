@@ -11,18 +11,29 @@ export PATH
 /bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null
 if [ -c /dev/ttyS0 ]; then exec >/dev/ttyS0 2>&1; else exec >/dev/console 2>&1; fi
 echo PUPPY50_WEB_V45_INIT_STARTED
-/busybox modprobe ata_piix 2>/dev/null || :
-/busybox modprobe sr_mod 2>/dev/null || :
-/busybox modprobe isofs 2>/dev/null || :
-/busybox modprobe loop 2>/dev/null || :
-/busybox modprobe squashfs 2>/dev/null || :
-/busybox modprobe overlay 2>/dev/null || :
-/busybox modprobe virtio_blk 2>/dev/null || :
-/busybox modprobe virtio_pci 2>/dev/null || :
+echo "PUPPY50_WEB_V46_UNAME $(/busybox uname -r)"
+echo "PUPPY50_WEB_V46_INITRD_MODULE_FILES $(/busybox find /lib/modules -name '*.ko*' | /busybox wc -l)"
+/busybox ls -la /lib/modules/ || true
+echo "PUPPY50_WEB_V46_DEVICE_MOUNT"
+/busybox mount | /busybox grep -E 'devtmpfs|sysfs|proc' || true
+for module in scsi_mod scsi_common cdrom libata ata_piix sr_mod isofs loop squashfs overlay virtio virtio_ring virtio_pci virtio_blk; do
+  echo "PUPPY50_WEB_V46_MODPROBE_BEGIN $module"
+  /busybox modprobe -v "$module"
+  code=$?
+  echo "PUPPY50_WEB_V46_MODPROBE_END $module exit=$code"
+done
+echo PUPPY50_WEB_V46_PARTITIONS
+/busybox cat /proc/partitions || true
+echo PUPPY50_WEB_V46_BLOCK_SYSFS
+/busybox ls /sys/block/ || true
+echo PUPPY50_WEB_V46_DEV_ENTRIES
+/busybox ls -l /dev/sr* /dev/sd* /dev/vd* /dev/hd* /dev/cdrom 2>&1 || true
 /bin/busybox mdev -s 2>/dev/null || :
+echo PUPPY50_WEB_V46_PARTITIONS_AFTER_MDEV
+/busybox cat /proc/partitions || true
 MEDIA=""
 i=0
-while [ "$i" -lt 25 ]; do
+while [ "$i" -lt 12 ]; do
  for dev in /dev/sr0 /dev/sr1 /dev/hdc /dev/cdrom /dev/vda /dev/sda; do
    if [ -b "$dev" ] && /busybox mount -t iso9660 -o ro "$dev" /media 2>/dev/null; then
      if [ -s /media/puppy_dpupbw64_10.0.12.sfs ]; then MEDIA="$dev"; break; fi
@@ -35,6 +46,9 @@ while [ "$i" -lt 25 ]; do
 done
 if [ -z "$MEDIA" ]; then
  echo PUPPY50_WEB_V45_FAIL_BOOT_MEDIUM_MISSING
+ echo PUPPY50_WEB_V46_FINAL_BLOCK_DEVICES
+ /busybox ls -l /dev/sr* /dev/sd* /dev/vd* /dev/hd* /dev/cdrom 2>&1 || :
+ /busybox cat /proc/modules || :
  exec /busybox sh
 fi
 echo "PUPPY50_WEB_V45_CD_FOUND $MEDIA"
