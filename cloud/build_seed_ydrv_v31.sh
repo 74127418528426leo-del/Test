@@ -13,7 +13,14 @@ mkdir -p "$root/var/lib/plocate"
 cp "$db" "$root/var/lib/plocate/plocate.db"
 chmod 640 "$root/var/lib/plocate/plocate.db"
 chown 0:114 "$root/var/lib/plocate/plocate.db"
-mksquashfs "$root" "$output" -noappend -no-progress -all-root >/dev/null
+mksquashfs "$root" "$output" -noappend -no-progress >/dev/null
 [ -s "$output" ] || exit 4
 unsquashfs -cat "$output" var/lib/plocate/plocate.db | sha256sum | grep "^$expected" >/dev/null
-echo "Prebuilt search DB embedded without changing Puppy packages or desktop"
+# Preserve the plocate group; -all-root would incorrectly make the index root:root.
+verify=$(mktemp -d)
+unsquashfs -d "$verify" "$output" var/lib/plocate/plocate.db >/dev/null
+[ "$(stat -c '%u:%g' "$verify/var/lib/plocate/plocate.db")" = "0:114" ] || {
+  echo "Refusing release: plocate database ownership is not root:114" >&2; exit 7;
+}
+rm -rf "$verify"
+echo "Prebuilt search DB embedded with verified root:plocate group ownership"
