@@ -22,6 +22,8 @@ chmod +x "$SCRATCH/initrd/init"
 python3 web45/minimal_initrd_modules.py "$ROOT" "$SCRATCH/initrd" "$REPORT/initrd_module_closure.json"
 VERSION=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["kernel_release"])' "$REPORT/initrd_module_closure.json")
 depmod -b "$SCRATCH/initrd" "$VERSION"
+python3 web45/direct_insmod_loader.py "$SCRATCH/initrd/lib/modules/$VERSION" "$SCRATCH/initrd/load_early_modules.sh"
+test -x "$SCRATCH/initrd/load_early_modules.sh"
 # A previous real KVM boot showed every module lookup failing in BusyBox.
 # Require an explicit uncompressed .ko entry for each essential early driver.
 for module in sr_mod scsi_mod cdrom ata_piix isofs squashfs loop overlay; do
