@@ -103,7 +103,14 @@ jobs:
           r=json.loads(Path('output/evidence/result.json').read_text())
           if not r['toram_media_ejection_survived']:raise SystemExit('RAM boot not proven')
           if not r['screenshots']:raise SystemExit('Real screenshot absent')
-          print('V91_NONROOT_FIREFOX_PROCESS_GUEST_PROVEN, page visual review still needed')
+          from web91.visual_guard import analyze
+          frame=Path('output/evidence/frame_330.ppm')
+          if not frame.is_file():raise SystemExit('No final QEMU framebuffer')
+          pixels=analyze(frame)
+          Path('output/reports/V91_VISUAL_LOGIN_GUARD.json').write_text(json.dumps(pixels,indent=2)+'\\n')
+          if pixels['previous_LightDM_login_signature']:
+              raise SystemExit('P50_V91_LOGIN_DIALOG_STILL_VISIBLE')
+          print('V91_NONROOT_FIREFOX_PROCESS_AND_NO_PRIOR_LOGIN_SCREEN; manual webpage review still required')
           PY
       - name: Preserve even failing real guest screenshots, serial and ISO logs
         if: always()
