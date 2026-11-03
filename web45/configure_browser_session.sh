@@ -102,7 +102,17 @@ strong{color:#ffe498}
 <p><strong>384 MiB target — experimental build.</strong></p>
 <p>This local page proves browser rendering without needing an internet connection.</p>
 <p>The normal Firefox address bar, tabs and downloads remain available.</p>
-</main></body></html>
+</main>
+<script>
+document.addEventListener('keydown',function(event){
+  if(event.key==='t'||event.key==='T'){
+    document.documentElement.style.background='#2bcc71';
+    document.body.style.background='#2bcc71';
+    document.querySelector('main').style.background='#2bcc71';
+    document.querySelector('h1').textContent='INPUT CONFIRMED';
+  }
+});
+</script></body></html>
 EOF
 # Enable services through audited OpenRC wiring. This corrects the former
 # broken ../../../init.d links (must be ../../init.d under /etc/runlevels/*)
