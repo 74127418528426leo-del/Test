@@ -1,0 +1,110 @@
+name: Puppy50 v94 - Low RAM Firefox paced input retries in real KVM
+on:
+  push:
+    branches: [puppy50-v94-lowram-browser-input-reliability]
+    paths:
+      - 'web94/**'
+      - '.github/workflows/puppy50-v94-slow-keyboard-2gb.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v94-lowram-input
+  cancel-in-progress: true
+jobs:
+  lowram_input:
+    name: Firefox ${{ matrix.ram }} MiB trial ${{ matrix.trial }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ram: 2048
+            trial: a
+          - ram: 2048
+            trial: b
+          - ram: 2560
+            trial: control
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact real QEMU URL keyboard and PPM retry parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web94/tests -p 'test_*.py' -v
+          python3 -m py_compile web94/qemu_reliable_navigation.py
+          mkdir -p input output/evidence output/reports
+      - name: Install genuine hardware accelerated QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Retrieve EXACT v91 ISO already proven for 2.5 GiB Firefox HTTPS
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify original ISO checksum before booting
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          test -s input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso
+      - name: Start same restricted localhost proxy fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.25)
+          else:raise SystemExit('Restricted fallback proxy not ready')
+          PY
+      - name: Real KVM — slowly enter public HTTPS URL, inspect homepage, retry if needed
+        shell: bash
+        timeout-minutes: 8
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 web94/qemu_reliable_navigation.py --iso input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso --out output/evidence --ram "$RAM" --seconds 300 >output/reports/browser-trial.log 2>&1
+          printf 'actual_guest_exit=%s\n' "$?" >output/reports/guest-exit-code.txt
+          exit 0
+      - name: Audit actual raw screenshots, guest certificate-verified HTTPS and browser process
+        if: always()
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          python3 web93/proof_audit.py --evidence output/evidence --ram "$RAM" --out output/reports/V94_RESULT_AUDIT.json
+      - name: Preserve every frame including failures for independent review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v94_RAM_${{ matrix.ram }}_trial_${{ matrix.trial }}_real_QEMU
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Never pass incomplete browser process or network checks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('output/reports/V94_RESULT_AUDIT.json'))
+          if not d['browser_network_and_boot_prerequisites_passed']:
+              raise SystemExit('V94_FAILED_REAL_QEMU_BROWSER_AND_NETWORK_GATE')
+          print('V94_REAL_WEB_CANDIDATE; HUMAN FRAME INSPECTION STILL REQUIRED')
+          PY
