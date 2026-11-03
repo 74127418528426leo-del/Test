@@ -111,14 +111,30 @@ strong{color:#ffe498}
 <p>The normal Firefox address bar, tabs and downloads remain available.</p>
 </main>
 <script>
-document.addEventListener('keydown',function(event){
-  if(event.key==='t'||event.key==='T'){
-    document.documentElement.style.background='#2bcc71';
-    document.body.style.background='#2bcc71';
-    document.querySelector('main').style.background='#2bcc71';
-    document.querySelector('h1').textContent='INPUT CONFIRMED';
-  }
-});
+(function() {
+  // Three visually distinct stages: JavaScript, pointer click, keyboard.
+  // Avoid requiring focus merely to prove that JavaScript executed.
+  const root=document.documentElement,body=document.body;
+  const title=document.querySelector('h1');
+  body.style.borderTop='80px solid #ffc044';
+  title.textContent='SCRIPT READY — PUPPY50 WEB';
+  root.dataset.testStage='script-ready';
+  window.addEventListener('click', function(){
+    if(root.dataset.testStage==='key-confirmed')return;
+    root.dataset.testStage='click-confirmed';
+    body.style.background='#d48c27';
+    title.textContent='CLICK CONFIRMED';
+  },true);
+  window.addEventListener('keydown',function(event){
+    if(event.key==='t'||event.key==='T'){
+      root.dataset.testStage='key-confirmed';
+      root.style.background='#2bcc71';
+      body.style.background='#2bcc71';
+      document.querySelector('main').style.background='#2bcc71';
+      title.textContent='KEYBOARD CONFIRMED';
+    }
+  },true);
+})();
 </script></body></html>
 EOF
 # Enable services through audited OpenRC wiring. This corrects the former
