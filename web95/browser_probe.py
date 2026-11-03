@@ -11,12 +11,13 @@ BROWSERS={
  "falkon":["falkon"],"firefox":["firefox-esr","--no-remote","--new-instance"],
  "epiphany":["epiphany"]}
 SITES={"blank":"about:blank","example":"https://example.com/","wikipedia":"https://www.wikipedia.org/"}
-def process_memory(uid,proc=Path("/proc")):
+def process_memory(uid,proc=Path("/proc"),exclude_pid=None):
     sums={"process_count":0,"pss_kib":0,"uss_kib":0,"rss_kib":0,"swap_kib":0,"pss_missing":0}
     for p in proc.iterdir():
-        if not p.name.isdigit():continue
+        if not p.name.isdigit() or (exclude_pid is not None and p.name==str(exclude_pid)):continue
         try:
             status=(p/"status").read_text(errors="replace")
+            if any(line.startswith("State:") and line.split()[1]=="Z" for line in status.splitlines()):continue
             uids=next(line for line in status.splitlines() if line.startswith("Uid:"))
             if int(uids.split()[2])!=uid:continue
             sums["process_count"]+=1
@@ -36,6 +37,15 @@ def process_memory(uid,proc=Path("/proc")):
             except (OSError,ValueError):sums["pss_missing"]+=1
         except (OSError,ValueError,StopIteration):continue
     return sums
+def owner_sample():
+    """Root inside a GitHub Docker job may lack CAP_SYS_PTRACE across UIDs.
+    Ask the SAME non-root account that owns the browser to read /proc smaps_rollup."""
+    helper=Path(__file__).with_name("owner_probe.py")
+    response=subprocess.run(["runuser","-u","p50","--","python3",str(helper)],
+                            capture_output=True,text=True,timeout=15)
+    if response.returncode:
+        raise RuntimeError("PSS owner sampler failed: "+response.stderr[:350])
+    return json.loads(response.stdout)
 def run(browser,site,out,uid,seconds,display):
     out.mkdir(parents=True,exist_ok=True)
     command=[*BROWSERS[browser],SITES[site]]
@@ -49,7 +59,7 @@ def run(browser,site,out,uid,seconds,display):
         try:
             for target in sorted(set([x for x in (5,12,22,seconds) if x<=seconds])):
                 while time.monotonic()-begin<target:time.sleep(.25)
-                samples.append({"elapsed_seconds":target,**process_memory(uid)})
+                samples.append({"elapsed_seconds":target,**owner_sample()})
                 if target==seconds:
                     shot=out/f"{site}.png"
                     v=subprocess.run(["scrot","-z",str(shot)],
@@ -65,7 +75,7 @@ def run(browser,site,out,uid,seconds,display):
                 try:os.killpg(proc.pid,signal.SIGKILL)
                 except ProcessLookupError:pass
                 proc.wait(timeout=5)
-            subprocess.run(["pkill","-TERM","-u","p50"],check=False,
+            subprocess.run(["pkill","-KILL","-u","p50"],check=False,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             time.sleep(1)
     good=[x for x in samples if x["process_count"]>0 and x["pss_missing"]==0]
