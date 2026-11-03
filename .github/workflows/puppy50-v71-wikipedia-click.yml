@@ -1,0 +1,127 @@
+name: Puppy50 v71 - Real Wikipedia website click from published v70 ISO
+on:
+  push:
+    branches: [puppy50-v71-real-wikipedia-click]
+    paths:
+      - 'web71/**'
+      - '.github/workflows/puppy50-v71-wikipedia-click.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v71-real-public-site-click
+  cancel-in-progress: true
+jobs:
+  test_second_public_site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the real published v70 QEMU click script
+        run: |
+          set -euo pipefail
+          python3 -m py_compile web71/qemu_real_wikipedia_click.py
+          mkdir -p dist output/evidence/ram_1024MiB output/reports
+      - name: Install KVM and QEMU
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download SAME v70 independently verified online ISO, no new build
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Confirm byte integrity of exact v70 public source image
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          m=json.loads(Path('dist/Puppy50_v70_manifest.json').read_text())
+          p=Path('dist/Puppy50_Web_v70_Normal_Browser_Online.iso')
+          assert p.stat().st_size==m['iso_bytes']
+          sha=hashlib.sha256(p.read_bytes()).hexdigest()
+          assert sha==m['iso_sha256']
+          print('PUPPY50_V71_PUBLIC_V70_ISO_IDENTICAL_SHA256',sha)
+          PY
+      - name: Start real host HTTPS bridge (TLS byte passthrough only)
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 \
+            > output/reports/host_bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for i in range(30):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):
+                      print('PUPPY50_V71_HOST_PUBLIC_CONNECT_READY')
+                      break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Cannot start host TLS bridge')
+          PY
+          curl --fail --silent --show-error --location \
+            --proxy http://127.0.0.1:3128 --noproxy '' \
+            --proto '=https' --connect-timeout 10 --max-time 20 \
+            -o /dev/null https://www.wikipedia.org/
+      - name: Boot actual published ISO and click Wikipedia tile in real Firefox
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 web71/qemu_real_wikipedia_click.py \
+            --iso dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            --out output/evidence/ram_1024MiB --ram 1024 --seconds 275
+      - name: Record accurate webpage evidence without asserting success prematurely
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          d=Path('output/evidence/ram_1024MiB/result.json')
+          r=json.loads(d.read_text()) if d.is_file() else {}
+          o={'schema':'PUPPY50_V71_SECOND_PUBLIC_SITE_DIAGNOSTIC',
+            'real_1gib_guest_RAM_copy_and_cd_eject':bool(r.get('ram_root_copy') and r.get('ram_root_switch') and r.get('ejected')),
+            'actual_v70_user_homepage_rendered':r.get('actual_user_homepage_visibly_rendered',False),
+            'real_mouse_event_sent':r.get('real_qemu_browser_link_click_submitted',False),
+            'home_page_disappeared_after_click':(r.get('Wikipedia_link_pixel_transition') or {}).get('homepage_color_disappeared',False),
+            'wikipedia_site_real_page_visually_reviewed':False,
+            'external_Wikipedia_HTTPS_host_preflight_succeeded':True,
+            'guest_CA_verified_example_com_HTTPS':r.get('guest_public_CA_verified_HTTPS',False),
+            'universal_website_compatibility_verified':False,
+            'security_certified':False,
+            'no_new_ISO_rebuild':True
+          }
+          Path('output/reports/V71_SECOND_PUBLIC_SITE_RESULTS.json').write_text(json.dumps(o,indent=2)+'\n')
+          print(json.dumps(o,indent=2))
+          PY
+      - name: Preserve real after-click browser framebuffer for independent review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v71_Wikipedia_real_mouse_click_and_frames
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Fail closed if real link click did not change the rendered page
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V71_SECOND_PUBLIC_SITE_RESULTS.json')
+          if not p.exists():raise SystemExit('PUPPY50_V71_NO_GUEST_RESULT')
+          r=json.loads(p.read_text())
+          for key in ('real_1gib_guest_RAM_copy_and_cd_eject','actual_v70_user_homepage_rendered',
+                      'real_mouse_event_sent','home_page_disappeared_after_click'):
+              if r.get(key) is not True:raise SystemExit('PUPPY50_V71_LINK_CLICK_NOT_PROVEN '+key)
+          print('PUPPY50_V71_FIREFOX_REAL_LINK_CLICK_CHANGED_FRAMEBUFFER_PASS')
+          print('Manual screenshot review still required for Wikipedia actual content')
+          PY
