@@ -64,13 +64,20 @@ def audit(root):
     libnames=set()
     for d in LIB_SEARCH:
         x=root/d
+        # Never let an absolute guest symlink resolve to the RUNNER'S host
+        # filesystem; this audit must be read-only and rooted in extraction.
+        if x.is_symlink() and not x.resolve().is_relative_to(root):
+            continue
         if x.is_dir():
             for p in x.rglob("*"):
-                if p.is_file() or p.is_symlink():libnames.add(p.name)
+                if p.is_symlink():
+                    libnames.add(p.name)
+                elif p.is_file() and p.resolve().is_relative_to(root):
+                    libnames.add(p.name)
     dependency_report={}
     for rel in ELF_TARGETS:
         p=root/rel
-        if not p.is_file():continue
+        if not p.is_file() or not p.resolve().is_relative_to(root):continue
         needed=elf_needed(p)
         dependency_report[rel]={
           "DT_NEEDED":needed,
