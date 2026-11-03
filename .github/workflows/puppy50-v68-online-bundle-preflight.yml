@@ -1,0 +1,29 @@
+name: Puppy50 v68 - Online VM bundle source preflight, no release
+on:
+  push:
+    branches: [puppy50-v68-online-vm-package]
+    paths:
+      - 'vm/**'
+      - 'web66/**'
+      - 'web67/**'
+      - '.github/workflows/puppy50-v68-online-bundle-preflight.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate user launch script, HTTPS bridge and release review gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n vm/launch_linux_https_bridge.sh
+          sh -n web67/online_probe.sh
+          python3 -m unittest discover -s web66/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web67/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s vm/tests -p 'test_*.py' -v
+          python3 -m py_compile web66/host_https_bridge.py web67/patch_iso_root.py vm/validate_online_release.py
+          echo 'PUPPY50_V68_VM_BUNDLE_SOURCE_PREFLIGHT=PASS'
