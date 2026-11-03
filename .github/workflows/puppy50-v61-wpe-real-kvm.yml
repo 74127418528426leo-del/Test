@@ -1,0 +1,181 @@
+name: Puppy50 v61 - WPE 2.54 sandboxed headless in real RAM-root KVM
+on:
+  push:
+    branches: [puppy50-v61-wpe-real-kvm]
+    paths:
+      - 'web61/**'
+      - '.github/workflows/puppy50-v61-wpe-real-kvm.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-test-real-wpe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 38
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source syntax and host KVM before building
+        run: |
+          set -euo pipefail
+          sh -n web61/guest_init.sh
+          bash -n web61/make_wpe_iso.sh
+          python3 -m py_compile web45/minimal_initrd_modules.py web45/direct_insmod_loader.py
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p output/reports output/rootfs output/kernel-assets dist
+      - name: Install optical ISO and real SquashFS tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            squashfs-tools busybox-static xorriso p7zip-full cpio curl kmod qemu-system-x86
+      - name: Build WPEPlatform runtime with secure nonroot QEMU init
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          docker build --pull -t puppy50-wpe:real-kvm -f web61/Dockerfile . \
+            > output/reports/wpe-docker-build.log 2>&1 || {
+              tail -80 output/reports/wpe-docker-build.log
+              exit 1
+            }
+          docker create --name puppy50-wpe-measured-export puppy50-wpe:real-kvm
+          docker export puppy50-wpe-measured-export | sudo tar -xf - -C output/rootfs
+          docker rm puppy50-wpe-measured-export
+          test -s output/rootfs/usr/share/puppy50wpe/interaction.html
+          test -x output/rootfs/usr/local/bin/puppy50-wpe-headless
+          test -x output/rootfs/sbin/init
+          test -x output/rootfs/usr/bin/setpriv
+      - name: Supply matching Linux kernel and module dependency closure
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/output:/out" alpine:3.24 sh -ec '
+             apk add --no-cache linux-lts >/out/reports/kernel-apk.log 2>&1
+             mkdir -p /out/rootfs/boot /out/rootfs/usr/lib/modules
+             cp /boot/vmlinuz-lts /out/rootfs/boot/vmlinuz-lts
+             cp -a /lib/modules/. /out/rootfs/usr/lib/modules/
+           '
+          sudo python3 web45/prune_hardware_v45.py \
+            output/rootfs output/reports/kernel-module-closure.json
+          VERSION=$(python3 -c 'import json;print(json.load(open("output/reports/kernel-module-closure.json"))["kernel_version"])')
+          sudo depmod -b output/rootfs "$VERSION"
+          test -s output/rootfs/boot/vmlinuz-lts
+          test -s "output/rootfs/usr/lib/modules/$VERSION/modules.dep"
+          # Keep boot-only modules and kernel OUT of compressed root, but
+          # restore them for generating the matching early initrd later.
+          sudo mv output/rootfs/boot/vmlinuz-lts output/kernel-assets/vmlinuz-lts
+          sudo mv output/rootfs/usr/lib/modules output/kernel-assets/modules
+          sudo chown -R "$(id -u):$(id -g)" output/reports
+      - name: Compress actual Debian/WPE runtime root into RAM-copy image
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress \
+            > output/reports/wpe-squashfs.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('output/puppy50-web-v45-root.sfs')
+          b=p.stat().st_size
+          r={'schema':'PUPPY50_V61_REAL_WPE_DEBIAN_ROOT',
+             'ram_copied_compressed_root_bytes':b,
+             'ram_copied_root_mib':round(b/1048576,3),
+             '384mib_nominal_headroom_before_kernel_browser_mib':round(384-b/1048576,3),
+             'wpe_browser_page_loaded':False,'384mib_wpe_functional':False,
+             'full_graphical_browser_proven':False,'real_hardware_proven':False}
+          Path('output/reports/WPE61_ROOT_SIZE.json').write_text(json.dumps(r,indent=2)+'\n')
+          print(json.dumps(r,indent=2))
+          if b>=384*1048576: raise SystemExit('WPE root alone exceeds 384MiB RAM')
+          PY
+      - name: Assemble verified matching-kernel RAM-only ISO
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo mkdir -p output/rootfs/usr/lib/modules
+          sudo cp -a output/kernel-assets/modules/. output/rootfs/usr/lib/modules/
+          sudo cp output/kernel-assets/vmlinuz-lts output/rootfs/boot/vmlinuz-lts
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o output/official-puppy.iso \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo 'ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  output/official-puppy.iso' | sha256sum -c -
+          sudo bash web61/make_wpe_iso.sh \
+            output/rootfs output/official-puppy.iso \
+            dist/Puppy50_v61_WPE254_REAL_KVM.iso output/reports
+          test -s dist/Puppy50_v61_WPE254_REAL_KVM.iso
+      - name: Boot real KVM with physical RAM 384 and 1024 MiB
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          for ram in 384 1024; do
+            mkdir -p "output/evidence/ram_${ram}MiB"
+            if python3 web45/qemu_real_cd_v45.py \
+              --iso dist/Puppy50_v61_WPE254_REAL_KVM.iso \
+              --ram "$ram" --seconds 158 \
+              --out "output/evidence/ram_${ram}MiB"; then
+              echo "PUPPY50_V61_REAL_RAM_ROOT_BOOT_PASS ram=$ram"
+            else
+              echo "PUPPY50_V61_REAL_RAM_ROOT_BOOT_INCOMPLETE ram=$ram"
+            fi
+          done
+      - name: Summarize actual guest WebKit page-load and memory results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          results={'schema':'PUPPY50_V61_WPE_SANDBOXED_REAL_RAM_ROOT_EVIDENCE',
+                   'external_disk_swap_configured':False,
+                   'sandbox_disabling_flags_used':False,
+                   'graphical_browser_implemented':False,
+                   'https_keyboard_webgl_proven':False,
+                   'physical_pc_compatible':False}
+          for ram in (384,1024):
+              folder=Path(f'output/evidence/ram_{ram}MiB')
+              log=(folder/'serial.log').read_text(errors='replace') if (folder/'serial.log').exists() else ''
+              j=json.loads((folder/'result.json').read_text()) if (folder/'result.json').exists() else {}
+              samples=[int(n) for n in re.findall(r'^MemAvailable:\s+(\d+) kB',log,re.M)]
+              pss=[int(n) for n in re.findall(r'PUPPY50_V61_PROCESS.*?pss_kib=(\d+)',log)]
+              entry={'ram_copy':j.get('ram_copy_complete',False),
+                     'ram_root_switch':j.get('ram_root_switch',False),
+                     'cd_ejected':j.get('media_ejection_verified',False),
+                     'headless_engine_launched':'PUPPY50_V61_WPE_SANDBOXED_LAUNCH_REQUESTED' in log,
+                     'headless_local_page_load_finished':'PUPPY50_WPE_HEADLESS_LOCAL_LOAD_FINISHED' in log,
+                     'headless_process_exit_code':re.findall(r'PUPPY50_V61_WPE_ENGINE_EXIT_CODE=(\d+)',log),
+                     'minimum_observed_memavailable_mib':round(min(samples)/1024,3) if samples else None,
+                     'max_sampled_process_pss_mib':round(max(pss)/1024,3) if pss else None,
+                     'saw_bubblewrap_failure':'bwrap:' in log,
+                     'guest_log_present':bool(log)}
+              results[str(ram)]=entry
+          Path('output/reports/WPE61_REAL_GUEST_RESULTS.json').write_text(json.dumps(results,indent=2)+'\n')
+          print(json.dumps(results,indent=2))
+          PY
+      - name: Preserve evidence even if engine or kernel gates fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v61-wpe-real-guest-sandbox-memory-evidence
+          path: |
+            output/reports/
+            output/evidence/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Fail closed if real WPE 384MiB guest does not load local page
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          path=Path('output/reports/WPE61_REAL_GUEST_RESULTS.json')
+          if not path.is_file(): raise SystemExit('NO_WPE_REAL_GUEST_RESULTS')
+          d=json.loads(path.read_text())
+          for ram in ('1024','384'):
+              r=d[ram]
+              for k in ('ram_copy','ram_root_switch','cd_ejected',
+                        'headless_engine_launched','headless_local_page_load_finished'):
+                  if r[k] is not True: raise SystemExit(f'PUPPY50_V61_FAIL_CLOSED ram={ram} gate={k}')
+          print('PUPPY50_V61_WPE_HEADLESS_REAL_384MIB_PAGE_LOAD_PASS')
+          print('No graphical browser, HTTPS, mouse/keyboard, WebGL or physical hardware compatibility proven.')
+          PY
