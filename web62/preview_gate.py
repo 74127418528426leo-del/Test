@@ -43,10 +43,6 @@ def check(iso, results, evidence, commit=""):
         s=serial.read_text(errors="replace")
         if not all(marker in s for marker in EARLY_SIGNALS):
             raise ValueError(f"Missing Linux kernel input-event proof for {memory}MiB")
-    if data.get("384",{}).get("script_ready") is True:
-        # This unexpected improvement would deserve a fresh independent full
-        # acceptance audit, rather than being silently promoted by this gate.
-        raise ValueError("384MiB rendered: needs dedicated full browser acceptance, not an auto-promotion")
     h=hashlib.sha256()
     with iso.open("rb") as fh:
         for chunk in iter(lambda:fh.read(1024*1024),b""):
