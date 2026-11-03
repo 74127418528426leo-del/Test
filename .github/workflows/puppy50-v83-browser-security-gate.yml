@@ -1,0 +1,53 @@
+name: Puppy50 v83 - Check actual guest Firefox security-release freshness
+on:
+  push:
+    branches: [puppy50-v83-firefox-security-release-gate]
+    paths:
+      - 'web83/**'
+      - '.github/workflows/puppy50-v83-browser-security-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit_verified_guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run security-readiness gate tests (pass means stale version correctly detected)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web83/tests -p 'test_*.py' -v
+          python3 -m py_compile web83/firefox_security_readiness.py
+      - name: Download actual extracted v78 ISO package inventory evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v78_real_QEMU_browser_and_complete_package_closure
+          run-id: 41677336550
+          github-token: ${{ github.token }}
+          path: evidence
+      - name: Flag Firefox security-update blocker in exact actual guest package records
+        run: |
+          set -euo pipefail
+          python3 web83/firefox_security_readiness.py \
+            --apk-audit evidence/reports/V78_STOCK_OWNERSHIP_AND_DIGEST.json \
+            --out output/V83_FIREFOX_SECURITY_READINESS.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("output/V83_FIREFOX_SECURITY_READINESS.json"))
+          assert d["actual_extracted_package_version"]=="140.12.0-r0"
+          assert d["apk_library_ownership_and_digest_coherent"] is True
+          assert d["browser_version_meets_published_security_baseline"] is False
+          assert d["public_production_security_release_eligible"] is False
+          print("PUPPY50_V83_REAL_GUEST_BROWSER_SECURITY_RELEASE_BLOCKER_CONFIRMED")
+          PY
+          echo "BLOCKER: real guest Firefox ESR 140.12.0-r0 predates Mozilla ESR 153.6 October 27, 2026; not cleared for sensitive browsing." >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive conservative security audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v83_actual_installed_browser_security_baseline_audit
+          path: output/
+          retention-days: 30
+          if-no-files-found: warn
