@@ -1,0 +1,14 @@
+#!/bin/sh
+# Browser + the minimum visible controls needed to join authorized networks.
+# This Openbox session is non-root and starts with an empty in-RAM profile.
+tint2 >/tmp/puppy50-tint2.log 2>&1 &
+nm-applet >/tmp/puppy50-network-applet.log 2>&1 &
+for agent in \
+  /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
+  /usr/lib/x86_64-linux-gnu/mate-polkit/polkit-mate-authentication-agent-1; do
+    if [ -x "$agent" ]; then
+        "$agent" >/tmp/puppy50-polkit.log 2>&1 &
+        break
+    fi
+done
+firefox-esr file:///usr/share/puppy50web/index.html >/tmp/puppy50-firefox.log 2>&1 &
