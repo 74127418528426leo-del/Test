@@ -65,6 +65,13 @@ if ! kill -0 "$XPID" 2>/dev/null; then
   exit 1
 fi
 echo 'PUPPY50_WEB_V45_XORG_RUNNING' > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_INPUT_DEVICES_BEGIN' > /dev/ttyS0 2>/dev/null || true
+cat /proc/bus/input/devices > /dev/ttyS0 2>/dev/null || true
+ls -la /dev/input > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_XORG_INPUT_LOG_BEGIN' > /dev/ttyS0 2>/dev/null || true
+grep -Ei 'input|keyboard|mouse|libinput|evdev|device added' /var/log/Xorg0.log > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_XORG_INPUT_LOG_END' > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_INPUT_DEVICES_END' > /dev/ttyS0 2>/dev/null || true
 su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority openbox' >/var/log/openbox.log 2>&1 &
 sleep 2
 echo 'PUPPY50_WEB_V45_FIREFOX_REQUESTED' > /dev/ttyS0 2>/dev/null || true
