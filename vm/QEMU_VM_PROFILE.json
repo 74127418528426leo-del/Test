@@ -1,0 +1,17 @@
+{
+  "schema": "PUPPY50_QEMU_PUBLIC_VM_PROFILE_V1",
+  "format": "Live ISO and QEMU configuration, not QCOW2/OVA",
+  "guest_memory_mib": 1024,
+  "guest_vcpus": 2,
+  "qemu_machine": "pc",
+  "video": "std-vga",
+  "optical_boot_iso": "Puppy50_Web_QEMU_Preview_v62.iso",
+  "boot_medium_readonly": true,
+  "writable_disk_attached": false,
+  "network_attached": false,
+  "ram_only_boot_384mib_verified": true,
+  "interactive_firefox_384mib_verified": false,
+  "offline_firefox_input_1024mib_verified": true,
+  "physical_hardware_and_https_certified": false,
+  "running_cloud_vm_hosted": false
+}
