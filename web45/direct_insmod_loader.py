@@ -4,7 +4,7 @@ import argparse,pathlib,re
 SEEDS=['ata_piix','sr_mod','isofs','loop','squashfs','overlay','virtio_pci','virtio_blk','ahci','sd_mod','usb_storage',
        # Input modules have to be loaded before switch_root: on this image
        # /lib/modules in the final root does not provide modprobe lookup.
-       'evdev','psmouse','mousedev']
+       'evdev','psmouse','mousedev','zram']
 def stem(s):
  return re.sub(r'\.ko(?:\.(?:xz|gz|zst))?$','',pathlib.PurePosixPath(s).name).replace('-','_')
 def generate(txt,release,exists=None):
