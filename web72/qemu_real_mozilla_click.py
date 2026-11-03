@@ -47,6 +47,31 @@ def cyan_fraction(filename):
         if all(abs(a-b)<=18 for a,b in zip(rgb,(9,198,206))):n+=1
     return {"fraction":round(n/count,5),"width":w,"height":h,"samples":count}
 
+def mozilla_focus_from_ppm(filename):
+    """Grounded 1920x1080 v70 focus-border test from actual v72 PPMs.
+
+    The Mozilla tile top border at y=475..476, x=1120..1300 is bright
+    cyan ONLY when it has keyboard focus. Confirmed against first v72
+    keyboard test: 185s gray; 205/245s cyan >97% of this band.
+    """
+    raw=Path(filename).read_bytes()
+    m=re.match(rb"P6\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s",raw)
+    if not m:raise ValueError("Not a P6 QEMU screenshot")
+    w,h,maximum=map(int,m.groups())
+    if (w,h,maximum)!=(1920,1080,255):
+        raise ValueError("Focused-tile geometry changed; don't guess")
+    pix=raw[m.end():]
+    if len(pix)!=3*w*h:raise ValueError("Incomplete framebuffer")
+    total=0;match=0
+    for y in (475,476):
+        for x in range(1120,1300,3):
+            p=(y*w+x)*3
+            rgb=pix[p:p+3]
+            total+=1
+            if all(abs(a-b)<=20 for a,b in zip(rgb,(9,198,206))):match+=1
+    return {"cyan_border_fraction":round(match/total,5),
+            "mozilla_keyboard_focus_confirmed":match/total>0.8}
+
 def main():
     a=argparse.ArgumentParser(description=__doc__)
     a.add_argument("--iso",type=Path,required=True)
@@ -69,7 +94,7 @@ def main():
     with (args.out/"qemu.log").open("wb") as out:
         q=subprocess.Popen(cmd,stdout=out,stderr=subprocess.STDOUT)
         try:
-            for mark in [95,145,155,165,175,185,205,245,args.seconds]:
+            for mark in [95,145,155,165,175,185,205,245,275,325,args.seconds]:
                 while time.monotonic()-start < mark and q.poll() is None:
                     time.sleep(1)
                 if q.poll() is not None:break
@@ -94,17 +119,24 @@ def main():
                         report["keyboard_tab_events_submitted"]=len(report["QEMU_real_tab_navigation"])
                     except Exception as exc:
                         report["errors"].append("keyboard Tab: "+repr(exc))
-                if mark==205:
+                if mark==245:
                     try:
-                        reply=hmp(monitor,"sendkey ret")
+                        focus=mozilla_focus_from_ppm(args.out/"frame_205.ppm")
+                        report["mozilla_focus_before_enter"]=focus
+                        if not focus["mozilla_keyboard_focus_confirmed"]:
+                            raise RuntimeError("Mozilla link focus NOT proven by actual pre-Enter framebuffer")
+                        # QEMU HMP accepts hold-time in milliseconds. Give
+                        # the CPU-constrained browser enough time to observe
+                        # real press and release AFTER focus is confirmed.
+                        reply=hmp(monitor,"sendkey ret 500")
                         if any(t in reply.lower() for t in ("unknown command","invalid parameter","error:")):
                             raise RuntimeError("QEMU refused Enter "+reply[-240:])
                         report["real_qemu_keyboard_mozilla_link_activation_submitted"]=True
                         report["keyboard_enter_reply"]=reply[-200:]
-                        time.sleep(10)
+                        time.sleep(12)
                     except Exception as exc:
                         report["real_qemu_keyboard_mozilla_link_activation_submitted"]=False
-                        report["errors"].append("Mozilla keyboard activation: "+repr(exc))
+                        report["errors"].append("Mozilla state-driven activation: "+repr(exc))
                 frame=args.out/f"frame_{mark:03}.ppm"
                 try:
                     reply=hmp(monitor,"screendump "+str(frame))
@@ -144,7 +176,7 @@ def main():
         "homepage_color_disappeared":bool(before is not None and after is not None and before>0.025 and after<0.010)}
     report["Mozilla_public_page_visually_confirmed"]=False
     report["keyboard_tab_count_proven"]=report.get("keyboard_tab_events_submitted")==3
-    report["navigation_mode"]="three QEMU Tab keys followed by Enter, with focus-stage screenshots"
+    report["navigation_mode"]="three QEMU Tab keys, verified Mozilla focus at 205s, then Enter with 500ms hold at 245s"
     report["Mozilla_keyboard_focus_frame"]="frame_185.ppm"
 
     report["public_external_website_retested_in_this_build"]=False
