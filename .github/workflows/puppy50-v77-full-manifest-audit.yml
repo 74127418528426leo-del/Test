@@ -1,0 +1,108 @@
+name: Puppy50 v77 - Audit missing APK files and ELF links in real v70 vs v76 ISO
+on:
+  push:
+    branches: [puppy50-v77-full-apk-and-elf-audit]
+    paths:
+      - 'web77/**'
+      - '.github/workflows/puppy50-v77-full-manifest-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v77-full-manifest-audit
+  cancel-in-progress: true
+jobs:
+  inspect_missing_registered_files:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test missing-file detection, ELF dependencies and safe parsing
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web77/tests -p 'test_*.py' -v
+          python3 -m py_compile web77/full_manifest_and_elf_audit.py
+          mkdir -p output/reports output/old output/control output/unpacked-old output/unpacked-control
+      - name: Install readelf and SquashFS/ISO tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils p7zip-full squashfs-tools
+      - name: Retrieve exact public v70 ISO, unchanged
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: output/old
+      - name: Retrieve exact stock-Mesa v76 ISO after successful real KVM test
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v76_UNVERIFIED_stock_Mesa_APK_coherent_QEMU_ISO
+          run-id: 41674705325
+          github-token: ${{ github.token }}
+          path: output/control
+      - name: Verify each exact ISO SHA256 before unpacking
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          expected=[
+            ('output/old','Puppy50_Web_v70_Normal_Browser_Online.iso',
+             '26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e'),
+            ('output/control','Puppy50_v76_Stock_Mesa_QEMU_Control_EXPERIMENTAL.iso',
+             '1bfa7344a7130180acaeaee9405b08b49cf7ba97a11d143eb3b0a5bcf177d058')]
+          for folder,name,sha in expected:
+              candidates=list(Path(folder).rglob(name))
+              if len(candidates)!=1:raise SystemExit(f'ISO name not unique: {name}, {candidates}')
+              h=hashlib.sha256(candidates[0].read_bytes()).hexdigest()
+              if h!=sha:raise SystemExit(f'SHA256 mismatch {name}')
+              Path('output/reports/'+('V70' if 'v70' in name else 'V76')+'_ISO_PATH').write_text(str(candidates[0])+'\n')
+              print(name,h)
+          PY
+      - name: Extract both actual compressed RAM-root filesystems without changing them
+        run: |
+          set -euo pipefail
+          OLD=$(cat output/reports/V70_ISO_PATH)
+          NEW=$(cat output/reports/V76_ISO_PATH)
+          mkdir -p output/unpacked-old output/unpacked-control
+          7z e -y -ooutput/unpacked-old "$OLD" puppy_dpupbw64_10.0.12.sfs > output/reports/v70-extract.log
+          7z e -y -ooutput/unpacked-control "$NEW" puppy_dpupbw64_10.0.12.sfs > output/reports/v76-extract.log
+          sudo unsquashfs -d output/oldroot/rootfs output/unpacked-old/puppy_dpupbw64_10.0.12.sfs > output/reports/v70-unsquashfs.log
+          sudo unsquashfs -d output/newroot/rootfs output/unpacked-control/puppy_dpupbw64_10.0.12.sfs > output/reports/v76-unsquashfs.log
+      - name: Read-only full registered-file and critical loader dependency audit
+        run: |
+          set -euo pipefail
+          python3 web77/full_manifest_and_elf_audit.py output/oldroot/rootfs --out output/reports/V77_ORIGINAL_V70_FULL_AUDIT.json
+          python3 web77/full_manifest_and_elf_audit.py output/newroot/rootfs --out output/reports/V77_STOCK_MESA_V76_FULL_AUDIT.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          o=json.loads(Path('output/reports/V77_ORIGINAL_V70_FULL_AUDIT.json').read_text())
+          n=json.loads(Path('output/reports/V77_STOCK_MESA_V76_FULL_AUDIT.json').read_text())
+          result={
+            'schema':'PUPPY50_V77_FULL_PACKAGE_FILE_CLOSURE_COMPARISON',
+            'original_v70_missing_registered_files':o['apk_recorded_paths_missing_from_actual_root'],
+            'stock_mesa_v76_missing_registered_files':n['apk_recorded_paths_missing_from_actual_root'],
+            'original_v70_missing_recorded_libraries':len(o['missing_registered_library_examples']),
+            'stock_mesa_v76_missing_recorded_libraries':len(n['missing_registered_library_examples']),
+            'original_v70_sampled_DT_NEEDED_missing':o['sampled_missing_DT_NEEDED_total'],
+            'stock_mesa_v76_sampled_DT_NEEDED_missing':n['sampled_missing_DT_NEEDED_total'],
+            'prior_v76_zero_existing_library_digest_mismatches':True,
+            'all_packages_coherent_and_supported':False,
+            'security_updates_certified':False,
+            'new_version_released':False
+          }
+          Path('output/reports/V77_COMPARE_SUMMARY.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Preserve all differences rather than auto-marking full security compliance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v77_real_v70_vs_v76_full_APK_and_ELF_audit
+          path: output/reports/
+          retention-days: 21
+          if-no-files-found: warn
