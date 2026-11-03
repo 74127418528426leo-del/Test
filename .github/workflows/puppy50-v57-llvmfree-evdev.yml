@@ -1,0 +1,300 @@
+name: Puppy50 v57 - 148MiB Softpipe + evdev interactive KVM
+on:
+  push:
+    branches: [puppy50-v57-llvmfree-evdev-integration]
+    paths:
+      - 'web49/**'
+      - 'web51/**'
+      - 'web54/**'
+      - 'web56/**'
+      - 'web45/configure_browser_session.sh'
+      - 'web45/prune_hardware_v45.py'
+      - '.github/workflows/puppy50-v57-llvmfree-evdev.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-measure-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test staging and tool syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web49/tests -p 'test_*.py' -v
+          sh -n web49/stage_boot_outside_sfs.sh
+          python3 -m unittest discover -s web51/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web54/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web56/tests -p 'test_*.py' -v
+          python3 -m py_compile web56/qemu_input_v56.py web56/frame_stages.py
+          sh -n web54/build_mesa_softpipe.sh
+          sh -n web45/configure_browser_session.sh web45/wire_openrc_services.sh
+          python3 -m unittest discover -s web45/tests -p 'test_*.py' -v
+      - name: Install the required disposable-VM and SquashFS build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools \
+            busybox-static xorriso p7zip-full cpio curl kmod binutils qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p output/reports dist output/boot-assets
+      - name: Build actual Alpine Linux + full secure Firefox dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --pull=always \
+            -v "$PWD/web44/build_browser_rootfs.sh:/build.sh:ro" \
+            -v "$PWD/output:/out" alpine:3.24 sh /build.sh
+          docker run --rm \
+            -v "$PWD/output:/out" alpine:3.24 \
+            sh -ec 'apk --root /out/rootfs --arch x86_64 --no-cache add openbox xrandr xf86-video-vesa xf86-video-fbdev'
+          sudo sh web45/configure_browser_session.sh output/rootfs
+          sudo python3 web45/prune_hardware_v45.py output/rootfs output/reports/v49-hardware.json
+          VERSION=$(python3 -c 'import json;print(json.load(open("output/reports/v49-hardware.json"))["kernel_version"])')
+          sudo depmod -b output/rootfs "$VERSION"
+          test -s output/rootfs/boot/vmlinuz-lts
+          test -s output/rootfs/usr/share/puppy50web/index.html
+          # Alpine Docker owns report directories; allow runner-side shell redirects.
+          sudo chown -R "$(id -u):$(id -g)" output/reports
+      - name: Preserve boot assets OUTSIDE SquashFS, without deleting matching kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sh web49/stage_boot_outside_sfs.sh output/rootfs output/boot-assets/boot
+          test -s output/boot-assets/boot/vmlinuz-lts
+          test -z "$(ls -A output/rootfs/boot)"
+          (cd output && sha256sum boot-assets/boot/vmlinuz-lts > reports/external-kernel.sha256)
+      - name: Compress only RAM-root contents (no redundant /boot)
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/stripped-build.log 2>&1
+          stat -c 'BOOTLESS_ROOT_COMPRESSED_BYTES=%s' output/puppy50-web-v45-root.sfs | tee output/reports/bootless-size.txt
+          python3 web48/audit_image.py --root output/rootfs --sfs output/puppy50-web-v45-root.sfs \
+            --output output/reports/bootless-image-audit.json
+          unsquashfs -ll output/puppy50-web-v45-root.sfs > output/reports/bootless-filelist.txt
+          if grep -Eq 'squashfs-root/boot/(vmlinuz|initramfs|System.map|config)' output/reports/bootless-filelist.txt; then
+            echo "PUPPY50_V49_FAIL_DUPLICATE_BOOT_STILL_PRESENT"; exit 10
+          fi
+          echo "PUPPY50_V49_BOOTLESS_SFS_CONTENT_AUDIT_PASS"
+      - name: QEMU standard-VGA-only firmware ablation in staged copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv output/puppy50-web-v45-root.sfs output/v49-bootless-with-firmware.sfs
+          sudo python3 web51/trim_qemu_only_firmware.py \
+            --root output/rootfs \
+            --out output/reports/v51-firmware-removed.json
+          test "$(python3 -c 'import json;print(json.load(open("output/reports/v51-firmware-removed.json"))["qemu_only"])')" = True
+          test -s output/v49-bootless-with-firmware.sfs
+          # V51 must retain browser and full Mesa/LLVM dependency closure.
+          test -s output/rootfs/usr/lib/libLLVM.so.22.1
+          test -s output/rootfs/usr/lib/libgallium-26.1.6.so
+          test -s output/rootfs/usr/lib/firefox-esr/libxul.so
+      - name: Build matched firmware-free RAM-root and quantify real XZ savings
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/v51-compress.log 2>&1
+          python3 web48/audit_image.py \
+            --root output/rootfs --sfs output/puppy50-web-v45-root.sfs \
+            --output output/reports/v51-image-audit.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          baseline=Path('output/v49-bootless-with-firmware.sfs').stat().st_size
+          optimized=Path('output/puppy50-web-v45-root.sfs').stat().st_size
+          trimmed=json.loads(Path('output/reports/v51-firmware-removed.json').read_text())
+          report={'baseline_root_bytes':baseline,'qemu_only_root_bytes':optimized,
+                  'measured_savings_bytes':baseline-optimized,
+                  'measured_savings_mib':round((baseline-optimized)/1048576,3),
+                  'firmware_raw_bytes_removed':trimmed['uncompressed_regular_file_bytes_removed'],
+                  'general_hardware_compatibility':False,
+                  'live_browser_proven':False,'ram_384_proven':False}
+          Path('output/reports/V51_SAVINGS.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          assert optimized < baseline, 'firmware reduction did not save measured SFS bytes'
+          PY
+      - name: Compile custom Softpipe Mesa 26.1.6 with no LLVM
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/mesa-builder-reports
+          docker run --rm --memory=10g --cpus=3 \
+            -v "$PWD/web54/build_mesa_softpipe.sh:/build_mesa.sh:ro" \
+            -v "$PWD/output/mesa-builder-reports:/out" \
+            alpine:3.24 sh /build_mesa.sh
+          test -s output/mesa-builder-reports/mesa-softpipe-root.tar.gz
+          (cd output/mesa-builder-reports && sha256sum -c mesa-softpipe-root.sha256)
+          test ! -s output/mesa-builder-reports/llvm-dynamic-links.txt
+
+      - name: Stage custom Mesa and audit every ELF before eliminating LLVM
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv output/puppy50-web-v45-root.sfs output/v51-firmwareless-baseline.sfs
+          sudo python3 web54/integrate_softpipe.py \
+            --root output/rootfs \
+            --mesa-archive output/mesa-builder-reports/mesa-softpipe-root.tar.gz \
+            --report output/reports/v54-integration.json
+          test ! -e output/rootfs/usr/lib/libLLVM.so.22.1
+          test -s output/rootfs/usr/lib/libgallium-26.1.6.so
+          echo "PUPPY50_V54_STAGED_LLVMFREE_GALLIUM_ABI_PASS"
+
+      - name: Build matched custom-graphics SquashFS and compare exact bytes
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-web-v45-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress \
+            > output/reports/v54-compress.log 2>&1
+          python3 web48/audit_image.py --root output/rootfs \
+            --sfs output/puppy50-web-v45-root.sfs \
+            --output output/reports/v54-image-audit.json
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          a=Path('output/v51-firmwareless-baseline.sfs').stat().st_size
+          b=Path('output/puppy50-web-v45-root.sfs').stat().st_size
+          obj={'schema':'PUPPY50_V54_MEASURED_MESA_REPLACEMENT',
+               'xz_baseline_bytes':a,
+               'xz_llvmfree_softpipe_bytes':b,
+               'real_compressed_savings_mib':round((a-b)/1048576,3),
+               'root_mib':round(b/1048576,3),
+               'ram_384mib_root_only_headroom_mib':round(384-b/1048576,3),
+               'browser_rendering_proven':False,
+               'hardware_crocus_proven':False,
+               'package_database_consistent':False,
+               'security_updates_validated':False}
+          Path('output/reports/V54_SIZES.json').write_text(json.dumps(obj,indent=2)+'\n')
+          print(json.dumps(obj,indent=2))
+          if b>=a:
+              raise SystemExit('No measured size improvement. Do not claim an optimization.')
+          PY
+      - name: Reassemble a real ISO using external preserved matching boot kernel
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo cp -a output/boot-assets/boot/. output/rootfs/boot/
+          test -s output/rootfs/boot/vmlinuz-lts
+          (cd output && sha256sum -c reports/external-kernel.sha256) || {
+            echo 'External boot kernel SHA check failed'; exit 11;
+          }
+          curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+            -o output/official-puppy.iso \
+            https://distro.ibiblio.org/puppylinux/puppy-bookwormpup/BookwormPup64/10.0.12/BookwormPup64_10.0.12.iso
+          echo 'ae65f6e6d70a96f48bdbb291c2426f8a2fd77a73692e149e81a5eecb6fe7509f  output/official-puppy.iso' | sha256sum -c -
+          sudo bash web45/make_web_iso_v45.sh \
+            output/rootfs output/official-puppy.iso \
+            dist/Puppy50_Web_v54_LLVMFREE_SOFTPIPE_EXPERIMENTAL.iso output/reports
+          echo 'PUPPY50_V54_REAL_ISO_BUILT_AND_EMBEDDED_BYTES_VERIFIED'
+      - name: Real KVM browser input diagnostics at 384 and 1024 MiB
+        shell: bash
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          test -s dist/Puppy50_Web_v54_LLVMFREE_SOFTPIPE_EXPERIMENTAL.iso
+          for ram in 384 1024; do
+            p="output/evidence/ram_${ram}MiB"
+            mkdir -p "$p"
+            if python3 web56/qemu_input_v56.py \
+                --iso dist/Puppy50_Web_v54_LLVMFREE_SOFTPIPE_EXPERIMENTAL.iso \
+                --out "$p" --ram "$ram" --seconds 230; then
+              echo "PUPPY50_V57_RAM_ROOT_GATE_PASS ram=$ram"
+            else
+              echo "PUPPY50_V57_RAM_ROOT_GATE_INCOMPLETE ram=$ram"
+            fi
+          done
+
+      - name: Evaluate actual JavaScript, mouse and keyframe changes
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          obj={'schema':'PUPPY50_V57_COMBINED_GRAPHICS_AND_INPUT',
+               'real_hardware_supported':False,
+               'https_webgl_sound_wifi_proven':False,
+               'package_database_consistent':False}
+          try:
+              obj['compression']=json.loads(Path('output/reports/V54_SIZES.json').read_text())
+          except FileNotFoundError:
+              obj['compression']=None
+          for ram in (384,1024):
+              f=Path(f'output/evidence/ram_{ram}MiB/result.json')
+              if not f.exists():
+                  obj[str(ram)]={'evidence_missing':True}
+                  continue
+              j=json.loads(f.read_text())
+              obj[str(ram)]={'ram_copy':j.get('ram_copy_complete',False),
+                'root_switch':j.get('ram_root_switch',False),
+                'cd_ejected':j.get('media_ejection_verified',False),
+                'xorg_start_marker':j.get('xorg_started',False),
+                'firefox_requested':j.get('firefox_launch_requested',False),
+                'script_ready':j.get('script_ready_visually_proven',False),
+                'mouse_command_submitted':j.get('mouse_click_submitted',False),
+                'mouse_event_visually_confirmed':j.get('mouse_click_visually_proven',False),
+                'keypress_command_submitted':j.get('keypress_submitted_to_qemu',False),
+                'keyboard_event_visually_confirmed':j.get('keyboard_visually_proven',False),
+                'input_stage_proof':j.get('input_stage_proof')}
+          Path('output/reports/V57_REAL_KVM_RESULTS.json').write_text(json.dumps(obj,indent=2)+'\n')
+          print(json.dumps(obj,indent=2))
+          PY
+      - name: Report evidence honestly without inferring visible Firefox
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          report={'schema':'PUPPY50_V54_LLVMFREE_SOFTPIPE_VM',
+                  'real_hardware_compatibility':False,
+                  'full_browser_interactivity_proven':False,
+                  'internet_connectivity_proven':False,
+                  'images_manually_inspected':False}
+          try:
+              report.update(json.loads(Path('output/reports/V54_SIZES.json').read_text()))
+          except FileNotFoundError: pass
+          try:
+              report.update(json.loads(Path('output/reports/V51_SAVINGS.json').read_text()))
+          except FileNotFoundError: pass
+          for ram in (384,512,1024):
+              p=Path(f'output/evidence/ram_{ram}MiB/result.json')
+              if p.exists():
+                  d=json.loads(p.read_text())
+                  report[str(ram)]={'root_copy':d.get('ram_copy_complete',False),
+                                    'ram_root_switch':d.get('ram_root_switch',False),
+                                    'cd_ejected':d.get('media_ejection_verified',False),
+                                    'xorg_started':d.get('xorg_started',False),
+                                    'firefox_requested':d.get('firefox_launch_requested',False),
+                                    'browser_visible_proven':False}
+              else: report[str(ram)]={'evidence_missing':True}
+          Path('output/reports/V51_RESULTS.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Upload audit and screenshots, not enormous ISO
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v57-llvmfree-evdev-full-evidence
+          path: |
+            output/reports/
+            output/evidence/
+          retention-days: 7
+          if-no-files-found: warn
