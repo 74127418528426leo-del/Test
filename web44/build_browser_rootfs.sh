@@ -15,7 +15,7 @@ apk --root "$ROOT" --arch x86_64 --initdb --no-cache \
       firefox-esr xorg-server xinit xf86-input-libinput \
       mesa-dri-gallium mesa-gl mesa-egl \
       dbus dbus-x11 eudev \
-      dhcpcd wpa_supplicant iw iproute2 ca-certificates \
+      dhcpcd wpa_supplicant iw iproute2 ca-certificates curl \
       font-dejavu alsa-lib \
       linux-lts linux-firmware-intel \
   > /out/reports/apk-install.log 2>&1 || {
