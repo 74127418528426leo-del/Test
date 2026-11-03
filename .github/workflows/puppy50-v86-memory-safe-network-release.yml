@@ -1,0 +1,132 @@
+name: Puppy50 v86 - Publish RAM-safe 1536MiB QEMU host-network bundle
+on:
+  push:
+    branches: [puppy50-v86-adaptive-lowram-network]
+    paths:
+      - 'vm/launch_linux_v86.sh'
+      - 'vm/README_V86_RAM_NETWORK.md'
+      - 'vm/V86_WIKIPEDIA_1536_VISUAL_REVIEW.json'
+      - 'web86/**'
+      - '.github/workflows/puppy50-v86-memory-safe-network-release.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v86-bundle
+  cancel-in-progress: true
+jobs:
+  actual_iso_and_ramsafe_launcher:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate RAM memory guard, no writable disk, and owned proxy bridge behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n vm/launch_linux_v86.sh
+          bash -n vm/connect_host_network_v70.sh
+          python3 -m unittest discover -s web86/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s vm/tests -p 'test_v80_bridge_supervisor.py' -v
+          python3 -m json.tool vm/V86_WIKIPEDIA_1536_VISUAL_REVIEW.json > /dev/null
+          mkdir -p dist original proof
+      - name: Download unchanged original user-controlled v70 ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: original
+      - name: Download real 1536MiB v70 KVM screenshot proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v84_published-v70_1536MiB_real_browser
+          run-id: 41695446129
+          github-token: ${{ github.token }}
+          path: proof
+      - name: Verify original ISO and independent human-reviewed browser screenshot hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd original && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          m=json.loads(Path('vm/V86_WIKIPEDIA_1536_VISUAL_REVIEW.json').read_text())
+          i=Path('original/Puppy50_Web_v70_Normal_Browser_Online.iso')
+          s=Path('proof/evidence/guest/frame_405.ppm')
+          r=json.loads(Path('proof/reports/V84_REAL_BODY_PIXELS.json').read_text())
+          def sha(p):
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(1048576),b''):h.update(b)
+              return h.hexdigest()
+          assert sha(i)==m['iso_sha256']
+          assert sha(s)==m['frame_405_sha256']
+          assert m['guest_ram_mib']==1536 and r['ram_mib']==1536
+          assert r['source']=='published-v70'
+          assert r['guest_strict_CA_public_HTTPS'] is True
+          assert r['real_ram_boot'] is True
+          assert r['body_nonblank_content_candidate'] is True
+          assert m['reviewed_real_QEMU_PPM'] is True and m['real_Wikipedia_homepage_and_text_visible'] is True
+          print('PUPPY50_V86_REAL_QEMU_1536MIB_PUBLIC_WEBPAGE_VISUAL_PROOF_PASS',s.stat().st_size)
+          PY
+      - name: Create complete VM bundle (no ISO rebuild or network credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib,json,shutil
+          dist=Path('dist')
+          src=Path('original/Puppy50_Web_v70_Normal_Browser_Online.iso')
+          shutil.copyfile(src,dist/src.name)
+          (dist/'SHA256SUMS').write_bytes(Path('original/SHA256SUMS').read_bytes())
+          for source,target in [
+            ('vm/launch_linux_v86.sh','launch_linux_v86.sh'),
+            ('vm/host_https_bridge_supervisor_v80.py','host_https_bridge_supervisor_v80.py'),
+            ('web66/host_https_bridge.py','host_https_bridge.py'),
+            ('vm/host_network_preflight_v70.py','host_network_preflight_v70.py'),
+            ('vm/connect_host_network_v70.sh','connect_host_network_v70.sh'),
+            ('vm/README_V86_RAM_NETWORK.md','README_V86_RAM_NETWORK.md'),
+            ('vm/V86_WIKIPEDIA_1536_VISUAL_REVIEW.json','V86_WIKIPEDIA_1536_VISUAL_REVIEW.json')]:
+              (dist/target).write_bytes(Path(source).read_bytes())
+          sources=[p for p in dist.iterdir() if p.is_file()]
+          bundle=dist/'Puppy50_Web_v86_RAM_Safe_Network_Bundle.zip'
+          with zipfile.ZipFile(bundle,'w',compression=zipfile.ZIP_STORED,allowZip64=True) as z:
+              for p in sources:z.write(p,arcname=p.name)
+          with zipfile.ZipFile(bundle) as z:
+              assert len(z.namelist())==len(sources)
+              assert z.getinfo(src.name).file_size==src.stat().st_size
+          sha=hashlib.sha256(bundle.read_bytes()).hexdigest()
+          (dist/'BUNDLE_SHA256SUMS').write_text(sha+'  '+bundle.name+'\n')
+          print('PUPPY50_V86_COMPLETE_ZIP_BUNDLE_VERIFIED',bundle.name,bundle.stat().st_size)
+          PY
+          chmod +x dist/launch_linux_v86.sh
+          bash -n dist/launch_linux_v86.sh
+          (cd dist && sha256sum -c SHA256SUMS && sha256sum -c BUNDLE_SHA256SUMS)
+      - name: Publish immutable experimental network and RAM-safe VM bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-qemu-v86-ramsafe >/dev/null 2>&1; then
+            echo 'Release exists: refusing silent binary overwrite'
+            exit 19
+          fi
+          gh release create puppy50-qemu-v86-ramsafe \
+            dist/Puppy50_Web_v86_RAM_Safe_Network_Bundle.zip \
+            dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            dist/launch_linux_v86.sh \
+            dist/README_V86_RAM_NETWORK.md \
+            dist/BUNDLE_SHA256SUMS \
+            dist/SHA256SUMS \
+            dist/V86_WIKIPEDIA_1536_VISUAL_REVIEW.json \
+            --target "$GITHUB_SHA" \
+            --title "Puppy50 Web v86 — 1536MiB Firefox / self-healing host-network VM" \
+            --notes-file vm/README_V86_RAM_NETWORK.md \
+            --prerelease --latest=false
+          gh release view puppy50-qemu-v86-ramsafe --json url,assets
