@@ -1,0 +1,133 @@
+name: Puppy50 v93 - Publish only pinned, visually reviewed updated-browser ISO
+on:
+  push:
+    branches: [puppy50-v93-debian-live-lowram-real-web]
+    paths:
+      - '.github/workflows/puppy50-v93-publish-verified-debian.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v93-audited-public-prerelease
+  cancel-in-progress: false
+jobs:
+  audited_public_prerelease:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse missing or unreviewed release evidence before any download
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s vm/V93_HUMAN_VISUAL_REVIEW.json
+          test -s vm/V93_EXPERIMENTAL_RELEASE_NOTES.md
+          python3 - <<'PY'
+          import json,re
+          r=json.load(open('vm/V93_HUMAN_VISUAL_REVIEW.json'))
+          assert r['run_id']==41720896581 and r['guest_ram_mib']==2560
+          assert re.fullmatch('[a-f0-9]{64}',r['screenshot_sha256'])
+          assert not any(r['guarantees'].values())
+          print('V93_PINNED_HUMAN_FRAME_REVIEW_AND_LIMITATIONS=PASS')
+          PY
+          mkdir -p input proof package dist
+      - name: Obtain exactly the real-boot-tested v91 1GB Debian Live ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: Obtain actual real 2560MiB Firefox website framebuffer proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v93_Real_Debian_Firefox_2560MiB
+          run-id: 41720896581
+          github-token: ${{ github.token }}
+          path: proof
+      - name: Obtain original signed Debian package inventory
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v88_Debian_Live_QMP_Real_KVM_Evidence
+          run-id: 41704158116
+          github-token: ${{ github.token }}
+          path: package
+      - name: Verify ISO bytes, pinned visible public webpage, true guest TLS and Firefox ESR package
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          rev=json.load(open('vm/V93_HUMAN_VISUAL_REVIEW.json'))
+          frm=Path('proof')/rev['screenshot']
+          assert frm.is_file() and len(frm.read_bytes())>1000000
+          assert hashlib.sha256(frm.read_bytes()).hexdigest()==rev['screenshot_sha256']
+          actual=json.load(open('proof/evidence/result.json'))
+          assert actual['guest_memory_mib']==2560
+          assert actual['real_nonroot_firefox_process'] is True
+          assert actual['real_guest_ca_verified_public_https'] is True
+          assert actual['real_QMP_browser_navigation_requested'] is True
+          assert actual['boot_cd_ejected'] is True
+          assert actual['guest_running_at_end'] is True
+          pkg=json.load(open('package/reports/V85_ACTUAL_PACKAGE_REPORT.json'))
+          assert pkg['actual_installed_firefox_esr'].startswith('153.6.0esr')
+          assert pkg['contains_NetworkManager_and_WiFi_GUI'] is True
+          assert pkg['includes_iwlwifi_realtek_atheros_firmware'] is True
+          assert pkg['physical_wifi_hardware_proven'] is False
+          assert pkg['full_browser_security_audit_proven'] is False
+          print('PUPPY50_V93_EXACT_RAN_ISO+PINNED_REAL_EXTERNAL_PAGE_FRAME+CA_HTTPS+SECURITY_PACKAGE_GATE=PASS')
+          PY
+      - name: Make byte-identical verified image with accurate prerelease filename
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso
+          dst=dist/Puppy50_v93_Debian_Live_Firefox_ESR153_6_EXPERIMENTAL.iso
+          cp --reflink=auto -- "$src" "$dst"
+          cmp "$src" "$dst"
+          (cd dist && sha256sum Puppy50_v93_Debian_Live_Firefox_ESR153_6_EXPERIMENTAL.iso > SHA256SUMS)
+          cp vm/V93_HUMAN_VISUAL_REVIEW.json dist/
+          cp vm/V93_EXPERIMENTAL_RELEASE_NOTES.md dist/README_V93_EXPERIMENTAL.md
+          cp package/reports/V85_ACTUAL_PACKAGE_REPORT.json dist/VERIFIED_DEBIAN_PACKAGES.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('dist/Puppy50_v93_Debian_Live_Firefox_ESR153_6_EXPERIMENTAL.iso')
+          h=hashlib.sha256(p.read_bytes()).hexdigest()
+          d={'schema':'PUPPY50_V93_PUBLIC_PRERELEASE_MANIFEST',
+             'iso':p.name,'size_bytes':p.stat().st_size,'sha256':h,
+             'byte_identical_to_v91_artifact':True,
+             'real_public_webpage_visually_reviewed_at_ram_mib':2560,
+             'actual_physical_wifi_verified':False,
+             'security_for_sensitive_browsing_certified':False,
+             'research_target_384_mib_met':False}
+          Path('dist/RELEASE_MANIFEST.json').write_text(json.dumps(d,indent=2)+'\n')
+          print(json.dumps(d,indent=2))
+          PY
+      - name: Publish a PRE-RELEASE ONLY after every immutable test passes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "74127418528426leo-del/Test"
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-debian-live-v93-maintained-https >/dev/null 2>&1; then
+            echo "Existing release tag cannot be silently overwritten";exit 19
+          fi
+          gh release create puppy50-debian-live-v93-maintained-https \
+            dist/Puppy50_v93_Debian_Live_Firefox_ESR153_6_EXPERIMENTAL.iso \
+            dist/SHA256SUMS \
+            dist/RELEASE_MANIFEST.json \
+            dist/VERIFIED_DEBIAN_PACKAGES.json \
+            dist/V93_HUMAN_VISUAL_REVIEW.json \
+            dist/README_V93_EXPERIMENTAL.md \
+            --target "$GITHUB_SHA" \
+            --title "Puppy50 Web v93 - Maintained Firefox HTTPS Live ISO (EXPERIMENTAL)" \
+            --notes-file vm/V93_EXPERIMENTAL_RELEASE_NOTES.md \
+            --prerelease --latest=false
+          gh release view puppy50-debian-live-v93-maintained-https --json url,assets,tagName
+          echo "PUPPY50_V93_PUBLIC_PRERELEASE=https://github.com/$GITHUB_REPOSITORY/releases/tag/puppy50-debian-live-v93-maintained-https" >> "$GITHUB_STEP_SUMMARY"
