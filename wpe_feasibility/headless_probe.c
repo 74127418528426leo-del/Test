@@ -23,11 +23,12 @@ static void on_load(WebKitWebView *view, WebKitLoadEvent event, gpointer data) {
     }
     fflush(stdout);
 }
-static void on_failed(WebKitWebView *view, WebKitLoadEvent event, gchar *uri,
+static gboolean on_failed(WebKitWebView *view, WebKitLoadEvent event, gchar *uri,
                       GError *error, gpointer data) {
     printf("PUPPY50_WPE_LOAD_FAILED code=%d message=%s\n",
            error ? error->code : -1, error ? error->message : "unknown");
     fflush(stdout);
+    return FALSE;
 }
 int main(void) {
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
