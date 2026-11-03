@@ -1,0 +1,24 @@
+{
+  "schema": "PUPPY50_V71_SECOND_PUBLIC_HTTPS_SITE_REAL_SCREENSHOT",
+  "source_run_id": 41662860725,
+  "tested_iso": "Puppy50_Web_v70_Normal_Browser_Online.iso",
+  "tested_iso_sha256": "26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e",
+  "iso_rebuilt": false,
+  "guest_ram_mib": 1024,
+  "actual_qemu_mouse_click": true,
+  "public_site": "https://www.wikipedia.org/",
+  "before_frame_sha256": "50e6b6cd488d5fbb2cbcc0c2b07b740fe0501abf212f9210a5596105f79889db",
+  "after_frame_sha256": "5810ac139716b3e9f64d2d2839e0de9c00826a42b54f2d2155a89eacc5b10f01",
+  "after_frame": "frame_275.ppm",
+  "visually_reviewed": true,
+  "observed": "Firefox displays Wikipedia title, globe, language links, search field, and live fundraising banner. Frames 245 and 275 both display the actual external webpage.",
+  "distinct_public_websites_visually_verified": [
+    "https://example.com/",
+    "https://www.wikipedia.org/"
+  ],
+  "physical_wifi_any_network_guaranteed": false,
+  "security_update_lifecycle_certified": false,
+  "functional_browser_at_384mib": false,
+  "source_artifact": "Puppy50_v71_Wikipedia_real_mouse_click_and_frames",
+  "source_workflow": "https://github.com/74127418528426leo-del/Test/actions/runs/41662860725"
+}
