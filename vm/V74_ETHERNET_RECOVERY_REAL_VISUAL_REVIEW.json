@@ -1,0 +1,47 @@
+{
+  "schema": "PUPPY50_V74_QEMU_SIMULATED_ETHERNET_CARRIER_RECOVERY_REAL_BROWSER",
+  "source_workflow": "https://github.com/74127418528426leo-del/Test/actions/runs/41670823827",
+  "source_run_id": 41670823827,
+  "source_artifact": "Puppy50_v74_QEMU_link_down_up_browser_evidence",
+  "tested_iso": "Puppy50_Web_v70_Normal_Browser_Online.iso",
+  "tested_iso_sha256": "26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e",
+  "tested_guest_ram_mib": 1024,
+  "guest_RAM_only_boot": true,
+  "virtual_CD_ejected": true,
+  "guest_DHCP_and_DNS_initially_passed": true,
+  "guest_public_CA_verified_HTTPS_initially_passed": true,
+  "qemu_virtual_nic": "Intel e1000 / QEMU user NAT",
+  "qemu_nic_name": "puppynic",
+  "link_commands": [
+    {
+      "second": 165,
+      "command": "set_link puppynic off",
+      "qemu_command_accepted": true
+    },
+    {
+      "second": 185,
+      "command": "set_link puppynic on",
+      "qemu_command_accepted": true
+    }
+  ],
+  "real_QEMU_mouse_click_after_link_restored": true,
+  "post_link_website": "https://www.wikipedia.org/",
+  "browser_rendering_after_link_restored_visually_inspected": true,
+  "observed": "Actual Firefox screenshot at 205s shows Wikipedia with its globe, language links and live fundraising notice; frames 245 and 285 show the same website. No reboot or new ISO image occurred.",
+  "frame_sha256": {
+    "before_link_off_145": "50e6b6cd488d5fbb2cbcc0c2b07b740fe0501abf212f9210a5596105f79889db",
+    "after_link_off_165": "50e6b6cd488d5fbb2cbcc0c2b07b740fe0501abf212f9210a5596105f79889db",
+    "after_link_on_185": "50e6b6cd488d5fbb2cbcc0c2b07b740fe0501abf212f9210a5596105f79889db",
+    "wikipedia_loaded_205": "5810ac139716b3e9f64d2d2839e0de9c00826a42b54f2d2155a89eacc5b10f01",
+    "wikipedia_stable_285": "5810ac139716b3e9f64d2d2839e0de9c00826a42b54f2d2155a89eacc5b10f01"
+  },
+  "host_physical_wifi_network_switch_tested": false,
+  "real_guest_dhcp_reacquisition_measured": false,
+  "captive_portal_or_enterprise_networks_tested": false,
+  "offline_mode_and_host_proxy_policy_from_existing_v70": true,
+  "full_browser_security_patch_lifecycle_certified": false,
+  "actual_384mib_firefox_working": false,
+  "physical_hardware_compatibility_verified": false,
+  "safe_for_sensitive_account_browsing": false,
+  "reviewer_note": "This verifies continuation after a simulated QEMU link event; it is NOT proof that all physical network changes, firewall policies or Wi-Fi credentials are supported."
+}
