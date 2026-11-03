@@ -1,0 +1,212 @@
+name: Puppy50 v78 - Fully APK-managed QEMU RAM-root control with LLVM closure
+on:
+  push:
+    branches: [puppy50-v78-apk-complete-qemu]
+    paths:
+      - 'web78/**'
+      - '.github/workflows/puppy50-v78-apk-complete-qemu.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v78-apk-complete-qemu
+  cancel-in-progress: true
+jobs:
+  full_package_closure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test read-only inventory and ISO verification code
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web77/tests -p 'test_*.py' -v
+          python3 -m py_compile web77/full_manifest_and_elf_audit.py web73/audit_apk_root.py
+          mkdir -p dist output/reports output/extract output/verify output/evidence/ram_1024MiB
+      - name: Install QEMU and ISO/SquashFS handling tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools xorriso binutils qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          docker --version
+      - name: Download exact v76 stock Mesa ISO with passed package and KVM tests
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v76_UNVERIFIED_stock_Mesa_APK_coherent_QEMU_ISO
+          run-id: 41674705325
+          github-token: ${{ github.token }}
+          path: dist/control
+      - name: Verify original source ISO SHA and extract its runtime root only
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          c=list(Path('dist/control').rglob('Puppy50_v76_Stock_Mesa_QEMU_Control_EXPERIMENTAL.iso'))
+          if len(c)!=1:raise SystemExit('Missing or ambiguous v76 ISO')
+          if hashlib.sha256(c[0].read_bytes()).hexdigest()!='1bfa7344a7130180acaeaee9405b08b49cf7ba97a11d143eb3b0a5bcf177d058':
+              raise SystemExit('Source v76 ISO hash mismatch')
+          Path('output/reports/SOURCE_ISO_PATH').write_text(str(c[0])+'\n')
+          print('PUPPY50_V78_EXACT_TESTED_V76_ISO_SHA_PASS')
+          PY
+          SOURCE_ISO=$(cat output/reports/SOURCE_ISO_PATH)
+          7z e -y -ooutput/extract "$SOURCE_ISO" \
+             puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz > output/reports/source-extract.log
+          sudo unsquashfs -d output/rootfs output/extract/puppy_dpupbw64_10.0.12.sfs \
+            > output/reports/unsquashfs.log
+          python3 web77/full_manifest_and_elf_audit.py output/rootfs --out output/reports/V78_BEFORE_PACKAGE_CLOSURE.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('output/reports/V78_BEFORE_PACKAGE_CLOSURE.json'))
+          if x['apk_recorded_paths_missing_from_actual_root']!=4327:
+              raise SystemExit('Source root differs from audited v76; refuse unattended repair')
+          print('PUPPY50_V78_SOURCE_MISSING_FILES=4327')
+          PY
+      - name: Remove QEMU-unused kernel/firmware packages via APK; restore needed LLVM runtime via APK
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.24 sh -euc '
+            ROOT=/work/output/rootfs
+            # The boot kernel/early network+input modules are independently
+            # preserved in the ISO, not the running SquashFS root.
+            # Remove package ownership records through the real package
+            # manager, not through manual edits to the installed database.
+            apk --root "$ROOT" --arch x86_64 --no-cache --no-progress \
+              del linux-lts linux-firmware-intel linux-firmware-lenovo \
+                  linux-firmware-dell linux-firmware-hp \
+              > /work/output/reports/uninstall-unneeded-kernel-firmware.log 2>&1 || {
+                tail -80 /work/output/reports/uninstall-unneeded-kernel-firmware.log
+                exit 11
+              }
+            # Stock Mesa gallium has DT_NEEDED libLLVM.so.22.1, and it was
+            # removed from v70/v76 despite llvm22-libs remaining registered.
+            apk --root "$ROOT" --arch x86_64 --no-cache --no-progress \
+              fix --reinstall llvm22-libs \
+              > /work/output/reports/reinstall-llvm22-libs.log 2>&1 || {
+                tail -80 /work/output/reports/reinstall-llvm22-libs.log
+                exit 12
+              }
+            apk --root "$ROOT" info -v > /work/output/reports/final-installed-packages.txt
+          '
+          sudo python3 web73/audit_apk_root.py output/rootfs \
+            --out output/reports/V78_STOCK_OWNERSHIP_AND_DIGEST.json
+          python3 web77/full_manifest_and_elf_audit.py output/rootfs \
+            --out output/reports/V78_COMPLETE_FILE_AND_ELF_AUDIT.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('output/reports/V78_STOCK_OWNERSHIP_AND_DIGEST.json').read_text())
+          b=json.loads(Path('output/reports/V78_COMPLETE_FILE_AND_ELF_AUDIT.json').read_text())
+          gates={
+             'no_owned_library_digest_mismatch':a['owned_shared_libraries_sha1_mismatched']==0,
+             'no_unowned_shared_libraries':a['shared_library_files_without_apk_owner']==0,
+             'no_missing_APK_tracked_files':b['apk_recorded_paths_missing_from_actual_root']==0,
+             'no_tracked_missing_libraries':len(b['missing_registered_library_examples'])==0,
+             'stock_mesa_llvm_runtime_present':Path('output/rootfs/usr/lib/libLLVM.so.22.1').is_file(),
+             'firefox_still_registered':bool(a['firefox_package_version_in_database']),
+             'actual_APK_database_present':a['apk_database_present'],
+          }
+          print(json.dumps(gates,indent=2))
+          if not all(gates.values()):raise SystemExit('PUPPY50_V78_APK_PACKAGE_CLOSURE_FAIL_CLOSED')
+          Path('output/reports/V78_PACKAGE_CLOSURE_GATES.json').write_text(json.dumps(gates,indent=2)+'\n')
+          PY
+      - name: Build separate fully package-recorded experimental QEMU ISO
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/complete-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/squashfs.log 2>&1
+          SOURCE_ISO=$(cat output/reports/SOURCE_ISO_PATH)
+          xorriso -indev "$SOURCE_ISO" \
+            -outdev dist/Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso \
+            -map output/complete-root.sfs /puppy_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end > output/reports/xorriso.log 2>&1
+          7z e -y -ooutput/verify dist/Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso \
+            puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz > output/reports/reextract.log
+          cmp output/extract/vmlinuz output/verify/vmlinuz
+          cmp output/extract/initrd.gz output/verify/initrd.gz
+          cmp output/complete-root.sfs output/verify/puppy_dpupbw64_10.0.12.sfs
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          old=Path("output/reports/SOURCE_ISO_PATH").read_text().strip()
+          target=Path("dist/Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso")
+          o=Path(old)
+          m={'schema':'PUPPY50_V78_APK_CLOSED_QEMU_CONTROL',
+             'v76_stock_ISO_bytes':o.stat().st_size,
+             'v78_complete_ISO_bytes':target.stat().st_size,
+             'additional_bytes':target.stat().st_size-o.stat().st_size,
+             'target_iso_sha256':hashlib.sha256(target.read_bytes()).hexdigest(),
+             'kernel_initrd_byte_identical':True,
+             'package_file_inventory_complete':True,
+             'only_experimental_QEMU':True,
+             '384mib_Firefox_verified':False,
+             'physical_any_network_verified':False,
+             'browser_security_CVE_maintenance_verified':False}
+          Path('output/reports/V78_SIZE_AND_PROVENANCE.json').write_text(json.dumps(m,indent=2)+'\n')
+          print(json.dumps(m,indent=2))
+          PY
+          (cd dist && sha256sum Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso > V78_SHA256SUMS)
+      - name: Preserve experimental ISO as a time-limited CI artifact, not a public release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v78_UNVERIFIED_full_APK_inventory_QEMU_ISO
+          path: |
+            dist/Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso
+            dist/V78_SHA256SUMS
+            output/reports/V78_SIZE_AND_PROVENANCE.json
+            output/reports/V78_PACKAGE_CLOSURE_GATES.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Test actual 1024MiB RAM-only Firefox, guest HTTPS and Wikipedia
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 > output/reports/host-bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(40):
+              try:
+                  with socket.create_connection(("127.0.0.1",3128),timeout=.5):
+                      print('PUPPY50_V78_HOST_TLS_BRIDGE_READY')
+                      break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('No host TLS bridge')
+          PY
+          python3 web76/qemu_stock_mesa_smoke.py \
+            --iso dist/Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso \
+            --out output/evidence/ram_1024MiB --ram 1024 --seconds 285
+      - name: Save guest screenshots and complete source/build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v78_real_QEMU_browser_and_complete_package_closure
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Fail closed on absent guest browser, RAM-root, network or Wikipedia transition
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/evidence/ram_1024MiB/result.json')
+          if not p.is_file():raise SystemExit('V78_REAL_KVM_MISSING')
+          r=json.loads(p.read_text())
+          for k in ('ram_root_copy','ram_root_switch','ejected','xorg_started',
+                    'firefox_launch_requested','guest_DHCP','guest_DNS',
+                    'guest_public_CA_verified_HTTPS','actual_user_homepage_visibly_rendered',
+                    'real_qemu_browser_link_click_submitted'):
+              if r.get(k) is not True:raise SystemExit('V78_KVM_MISSING '+k)
+          if not (r.get('Wikipedia_link_pixel_transition') or {}).get('homepage_color_disappeared'):
+              raise SystemExit('V78_NO_REAL_BROWSER_NAVIGATION')
+          print('PUPPY50_V78_COMPLETE_APK_PACKAGE_INVENTORY_AND_1GIB_QEMU_BROWSER_PASS')
+          print('Requires human Wikipedia screenshot review and full security/CVE audit before public release.')
+          PY
