@@ -49,7 +49,7 @@ def ppm_valid(path):
     import re
     p=Path(path)
     raw=p.read_bytes()
-    m=re.match(rb"^P6\s+(\d+)\s+(\d+)\s",raw[:100])
+    m=re.match(rb"^P6\s+(\d+)\s+(\d+)\s+(\d+)\s",raw[:100])
     if not m:return False
     width,height,maxval=map(int,m.groups())
     return (320<=width<=16384 and 200<=height<=16384 and maxval==255
