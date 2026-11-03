@@ -1,0 +1,92 @@
+name: Puppy50 v66 - Host IPv4/IPv6 and safe HTTPS bridge feasibility
+on:
+  push:
+    branches: [puppy50-v66-outbound-proxy-diagnostics]
+    paths:
+      - 'web66/**'
+      - '.github/workflows/puppy50-v66-host-egress.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-external-host-and-bridge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate optional loopback HTTPS CONNECT bridge safety tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web66/tests -p 'test_*.py' -v
+          python3 -m py_compile web66/host_https_bridge.py
+          mkdir -p output/reports
+      - name: Differentiate actual host IPv4 and IPv6 Internet access
+        shell: bash
+        run: |
+          set -euo pipefail
+          for profile in v4 v6; do
+            if [ "$profile" = v4 ]; then FLAG='-4'; else FLAG='-6'; fi
+            if curl "$FLAG" --noproxy '*' --fail --silent --show-error --head \
+              --connect-timeout 8 --max-time 14 \
+              https://example.com/ -o /dev/null; then
+              echo "HOST_HTTPS_${profile}=PASS" | tee "output/reports/host-https-${profile}.txt"
+            else
+              echo "HOST_HTTPS_${profile}=FAIL_OR_UNSUPPORTED" | tee "output/reports/host-https-${profile}.txt"
+            fi
+          done
+      - name: Launch explicit host-only TLS-preserving bridge with private-address blocking
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 \
+            > output/reports/host-bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for i in range(30):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):
+                      print('HOST_LOOPBACK_HTTPS_BRIDGE_LISTEN=PASS')
+                      break
+              except OSError:
+                  time.sleep(.2)
+          else:raise SystemExit('HTTPS bridge refused connection')
+          PY
+      - name: Verify real external HTTPS through bridge without changing certificate verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          if curl --proxy http://127.0.0.1:3128 --noproxy '' \
+             --fail --silent --show-error --head --location \
+             --proto '=https' --connect-timeout 10 --max-time 28 \
+             https://example.com/ -o /dev/null; then
+            echo 'HOST_EXPLICIT_BRIDGE_EXTERNAL_TLS=PASS' | tee output/reports/bridge-https.txt
+          else
+            echo 'HOST_EXPLICIT_BRIDGE_EXTERNAL_TLS=FAIL' | tee output/reports/bridge-https.txt
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          def passes(name):
+              p=Path('output/reports')/name
+              return p.is_file() and '=PASS' in p.read_text()
+          report={'schema':'PUPPY50_V66_HOST_NETWORK_DIAGNOSTIC',
+                  'host_direct_ipv4_https':passes('host-https-v4.txt'),
+                  'host_direct_ipv6_https':passes('host-https-v6.txt'),
+                  'optional_host_loopback_connect_bridge_tls_works':passes('bridge-https.txt'),
+                  'bridge_private_network_targets_blocked_by_unit_tests':True,
+                  'guest_https_through_bridge_proven':False,
+                  'actual_firefox_external_webpage_proven':False,
+                  'physical_wifi_any_network_proven':False,
+                  'tls_verification_disabled':False}
+          Path('output/reports/V66_HOST_EGRESS_RESULTS.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve host diagnostics without proxy secrets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v66_host_egress_and_TLS_bridge_diagnostics
+          path: output/reports/
+          retention-days: 14
+          if-no-files-found: warn
