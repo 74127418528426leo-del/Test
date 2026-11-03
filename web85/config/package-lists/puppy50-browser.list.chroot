@@ -25,6 +25,6 @@ openbox
 tint2
 dbus-x11
 dbus-user-session
-policykit-1-gnome
+mate-polkit
 firefox-esr
 fonts-dejavu-core
