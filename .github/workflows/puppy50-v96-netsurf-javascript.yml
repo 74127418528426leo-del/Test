@@ -1,0 +1,82 @@
+name: Puppy50 v96 - NetSurf JavaScript true A-B measurement
+on:
+  push:
+    branches: [puppy50-v96-javascript-lowram-proof]
+    paths:
+      - 'web96/**'
+      - '.github/workflows/puppy50-v96-netsurf-javascript.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-v96-netsurf-javascript
+  cancel-in-progress: true
+jobs:
+  netsurf_js_ab:
+    name: NetSurf JavaScript ${{ matrix.js }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        js: [off, on]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real Debian 13 GTK NetSurf, Duktape and GUI test stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            netsurf-gtk python3 xvfb xauth scrot \
+            dbus-x11 dbus-user-session procps util-linux ca-certificates curl
+          useradd -m -u 1550 -s /bin/sh p50
+          mkdir -p /tmp/p50-runtime results
+          chown p50:p50 /tmp/p50-runtime
+          chmod 0700 /tmp/p50-runtime
+          PYTHONPATH=web96 python3 -m unittest discover -s web96/tests -p 'test_*.py' -v
+          python3 -m py_compile web96/netsurf_js_probe.py
+          dpkg-query -W -f='${binary:Package} ${Version}\n' netsurf-gtk >results/browser-package.txt
+          dpkg-query -W -f='${binary:Package} ${Version}\n' libduktape* >>results/browser-package.txt || true
+      - name: Launch isolated Xvfb and local deterministic HTTP fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :97 -screen 0 1280x800x24 -nolisten tcp -ac >results/xvfb.log 2>&1 &
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory web96/fixtures >results/http.log 2>&1 &
+          sleep 3
+          curl -fsS http://127.0.0.1:8765/01-execution.html | grep -Fq JS_BASIC_EXECUTED
+          echo NETSURF_LOCAL_JS_TEST_SERVER=READY
+      - name: Measure same-user PSS and archive every ON-OFF JavaScript behavior frame
+        shell: bash
+        env:
+          JS: ${{ matrix.js }}
+        run: |
+          set -euo pipefail
+          python3 -u web96/netsurf_js_probe.py --js "$JS" --out results --seconds 17 \
+            | tee results/summary.log
+      - name: Preserve full stdout, actual screenshots and all real memory samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v96_NetSurf_JavaScript_${{ matrix.js }}_actual_A_B
+          path: results/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Fail closed if no real process PSS, do not invent JS support from options
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('results/result.json'))
+          assert d['schema']=='PUPPY50_V96_NETSURF_JS_CONTROLLED_MEASUREMENTS'
+          assert len(d['rows'])==5
+          assert d['actual_javascript_success_not_assumed'] is True
+          assert d['not_RAM_only_OS'] is True
+          good=[x for x in d['rows'] if x['peak_pss_mib'] is not None]
+          if len(good)<3:
+              raise SystemExit('INSUFFICIENT REAL PSS FROM LIVE NETSURF')
+          print('V96_REAL_NETSURF_PSS_CAPTURED; screenshots require human JS behavior review')
+          PY
