@@ -1,0 +1,90 @@
+name: Puppy50 v73 - Audited library ownership in exact public v70 ISO
+on:
+  push:
+    branches: [puppy50-v73-package-integrity-audit]
+    paths:
+      - 'web73/**'
+      - '.github/workflows/puppy50-v73-root-package-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v73-root-integrity
+  cancel-in-progress: true
+jobs:
+  verify_published_root_package_coherence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test auditor against known intact and overlaid synthetic Alpine roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web73/tests -p 'test_*.py' -v
+          python3 -m py_compile web73/audit_apk_root.py
+          mkdir -p dist output/reports
+      - name: Install ISO and SquashFS extraction tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools
+      - name: Download exact SHA-verified public v70 normal browser ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Confirm public v70 SHA and decompress only its actual root filesystem
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          p=Path('dist/Puppy50_Web_v70_Normal_Browser_Online.iso')
+          manifest=json.loads(Path('dist/Puppy50_v70_manifest.json').read_text())
+          assert p.stat().st_size==manifest['iso_bytes']
+          assert hashlib.sha256(p.read_bytes()).hexdigest()==manifest['iso_sha256']
+          print('PUPPY50_V73_AUDITED_EXACT_RELEASE_ISO_SHA256='+manifest['iso_sha256'])
+          PY
+          mkdir -p output/extract
+          7z e -y -ooutput/extract dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            puppy_dpupbw64_10.0.12.sfs > output/reports/iso-extraction.log
+          test -s output/extract/puppy_dpupbw64_10.0.12.sfs
+          unsquashfs -d output/rootfs \
+            output/extract/puppy_dpupbw64_10.0.12.sfs \
+            > output/reports/unsquashfs.log
+          test -s output/rootfs/lib/apk/db/installed
+      - name: Compare real shared libraries with Alpine APK package database ownership and digests
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python3 web73/audit_apk_root.py output/rootfs \
+            --out output/reports/V73_ACTUAL_RELEASE_PACKAGE_COHERENCE.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('output/reports/V73_ACTUAL_RELEASE_PACKAGE_COHERENCE.json').read_text())
+          if x['shared_library_files']<20:
+              raise SystemExit('INSUFFICIENT_REAL_SHARED_LIBRARY_FILES')
+          if x['apk_package_records']<20:
+              raise SystemExit('INSUFFICIENT_APK_PACKAGE_DATABASE')
+          print('PUPPY50_V73_REAL_PACKAGE_DATABASE_AUDIT_EXECUTED')
+          print('Shared libraries without tracked owners:',x['shared_library_files_without_apk_owner'])
+          print('Owned shared libraries with digest mismatch:',x['owned_shared_libraries_sha1_mismatched'])
+          print('NOT a security update certification.')
+          PY
+      - name: Preserve real audit findings even if discrepancies are found
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v73_real_v70_ISO_package_coherence_audit
+          path: output/reports/
+          retention-days: 30
+          if-no-files-found: warn
