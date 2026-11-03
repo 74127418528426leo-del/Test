@@ -1,0 +1,125 @@
+name: Puppy50 v63 - Publish tested QEMU VM as public GitHub Release
+on:
+  push:
+    branches: [puppy50-v63-public-qemu-vm]
+    paths:
+      - 'vm/**'
+      - '.github/workflows/puppy50-v63-public-qemu-release.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v63-public-qemu-release
+  cancel-in-progress: true
+jobs:
+  publish_verified_live_vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the original real-VM ISO workflow succeeded
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          command -v gh
+          command -v python3
+          command -v sha256sum
+          gh api repos/"$GITHUB_REPOSITORY"/actions/runs/41565605787 > original-tested-run.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('original-tested-run.json'))
+          assert r['id']==41565605787
+          assert r['status']=='completed',r
+          assert r['conclusion']=='success',r
+          assert r['head_branch']=='puppy50-v62-qemu-preview-iso',r
+          assert r['head_sha']=='ef7e067e31b916de1c253a0c07f765b31ba2bc5c'
+          print("PUPPY50_V63_VERIFIED_REAL_QEMU_SOURCE_RUN=PASS")
+          PY
+      - name: Download the SAME real KVM-tested ISO from successful v62 run
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_Web_v62_QEMU_ONLY_PREVIEW_ISO
+          run-id: 41565605787
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Verify byte integrity and test manifest, then package reproducible VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/Puppy50_Web_QEMU_Preview_v62.iso
+          test -s dist/Puppy50_QEMU_Preview_v62_manifest.json
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import hashlib,json,pathlib,zipfile
+          root=pathlib.Path('dist')
+          iso=root/'Puppy50_Web_QEMU_Preview_v62.iso'
+          manifest=json.loads((root/'Puppy50_QEMU_Preview_v62_manifest.json').read_text())
+          assert manifest['source_commit']=='ef7e067e31b916de1c253a0c07f765b31ba2bc5c'
+          assert manifest['1024mib_offline_script_mouse_keyboard'] is True
+          assert manifest['384mib_full_ram_copy_root_switch_and_cd_eject'] is True
+          assert manifest['384mib_functional_browser'] is False
+          assert manifest['physical_computer_compatibility_proven'] is False
+          assert manifest['iso_filename']==iso.name
+          assert manifest['iso_bytes']==iso.stat().st_size
+          assert manifest['sha256']==hashlib.sha256(iso.read_bytes()).hexdigest()
+          for source,dest in [
+            ('vm/launch_linux.sh','launch_linux.sh'),
+            ('vm/launch_windows.ps1','launch_windows.ps1'),
+            ('vm/QEMU_VM_PROFILE.json','QEMU_VM_PROFILE.json'),
+            ('vm/README_PUBLIC_QEMU_VM.md','README_PUBLIC_VM.md')
+          ]:
+            (root/dest).write_bytes(pathlib.Path(source).read_bytes())
+          files=[
+            'Puppy50_Web_QEMU_Preview_v62.iso',
+            'SHA256SUMS',
+            'Puppy50_QEMU_Preview_v62_manifest.json',
+            'launch_linux.sh',
+            'launch_windows.ps1',
+            'QEMU_VM_PROFILE.json',
+            'README_PUBLIC_VM.md'
+          ]
+          bundle=root/'Puppy50_QEMU_VM_v63_bundle.zip'
+          with zipfile.ZipFile(bundle,'w',compression=zipfile.ZIP_STORED,allowZip64=True) as z:
+            for name in files:z.write(root/name,arcname=name)
+          with zipfile.ZipFile(bundle) as z:
+            assert sorted(z.namelist())==sorted(files)
+            assert z.getinfo(iso.name).file_size==iso.stat().st_size
+          (root/'BUNDLE_SHA256SUMS').write_text(
+              hashlib.sha256(bundle.read_bytes()).hexdigest()+
+              '  '+bundle.name+'\n')
+          print('PUPPY50_V63_VERIFIED_VM_BUNDLE_CREATED=PASS')
+          print('ISO bytes',iso.stat().st_size,'bundle bytes',bundle.stat().st_size)
+          PY
+          bash -n dist/launch_linux.sh
+          chmod +x dist/launch_linux.sh
+      - name: Publish real VM ISO and complete package as a PUBLIC GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-qemu-v63 >/dev/null 2>&1; then
+            echo "Release tag already exists. Refusing silent overwrite of public binaries."
+            exit 19
+          fi
+          gh release create puppy50-qemu-v63 \
+            dist/Puppy50_QEMU_VM_v63_bundle.zip \
+            dist/Puppy50_Web_QEMU_Preview_v62.iso \
+            dist/SHA256SUMS \
+            dist/BUNDLE_SHA256SUMS \
+            dist/Puppy50_QEMU_Preview_v62_manifest.json \
+            dist/QEMU_VM_PROFILE.json \
+            dist/launch_linux.sh \
+            dist/launch_windows.ps1 \
+            dist/README_PUBLIC_VM.md \
+            --target "$GITHUB_SHA" \
+            --title "Puppy50 Web v63 — Public QEMU-only VM preview" \
+            --notes-file vm/RELEASE_NOTES.md \
+            --prerelease --latest=false
+          gh release view puppy50-qemu-v63 --json url,assets,tagName
+          echo "PUBLIC_VM=https://github.com/$GITHUB_REPOSITORY/releases/tag/puppy50-qemu-v63" >> "$GITHUB_STEP_SUMMARY"
+          echo "Direct ISO: https://github.com/$GITHUB_REPOSITORY/releases/download/puppy50-qemu-v63/Puppy50_Web_QEMU_Preview_v62.iso" >> "$GITHUB_STEP_SUMMARY"
