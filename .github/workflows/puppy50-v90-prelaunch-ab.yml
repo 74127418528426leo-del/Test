@@ -1,0 +1,209 @@
+name: Puppy50 v90 - Safe Firefox Prelaunch A-B in Real KVM
+on:
+  push:
+    branches: [puppy50-v90-safe-prelaunch-ab]
+    paths:
+      - 'web90/**'
+      - '.github/workflows/puppy50-v90-prelaunch-ab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v90-safe-ab
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit-test safe preference patch before touching ISO
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web90/tests -p 'test_*.py' -v
+          python3 -m py_compile web90/patch_firefox_policy.py
+          mkdir -p input output/reports output/orig output/recheck
+      - name: Install reproducible ISO rebuild tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools xorriso
+      - name: Download exact previous instrumented v89 ISO, preserving memory probe
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v89_Instrumented_ISO_UNVERIFIED
+          run-id: 41707854491
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify source bytes, extract guest root, change only one Firefox pref
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          7z e -y -ooutput/orig input/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz >output/reports/source-extract.log
+          sudo unsquashfs -d output/rootfs output/orig/puppy_dpupbw64_10.0.12.sfs >output/reports/root-extract.log
+          sudo python3 web90/patch_firefox_policy.py output/rootfs | tee output/reports/V90_ONLY_CHANGE.json
+          sudo test -x output/rootfs/usr/local/bin/puppy50-serial-ram-probe
+          sudo test -x output/rootfs/usr/local/bin/puppy50-web-launch
+          sudo python3 - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('output/rootfs/usr/lib/firefox-esr/distribution/policies.json').read_text())
+          assert c['policies']['Preferences']['dom.ipc.processPrelaunch.enabled']=={'Value':False,'Status':'locked','Type':'boolean'}
+          print('PUPPY50_V90_ONE_FIREFOX_PREF_AND_OLD_PROXY_PRESERVED')
+          PY
+      - name: Rebuild tuning-only ISO with unchanged kernel, initrd and SFS verification
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/Puppy50_v90_tuned.sfs -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M -exit-on-error -noappend -no-progress >output/reports/repack.log 2>&1
+          xorriso -indev input/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso -outdev output/Puppy50_v90_No_Prelaunch_TEST_ONLY.iso -map output/Puppy50_v90_tuned.sfs /puppy_dpupbw64_10.0.12.sfs -boot_image any replay -commit -end >output/reports/xorriso.log 2>&1
+          7z e -y -ooutput/recheck output/Puppy50_v90_No_Prelaunch_TEST_ONLY.iso puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz >/dev/null
+          cmp output/orig/vmlinuz output/recheck/vmlinuz
+          cmp output/orig/initrd.gz output/recheck/initrd.gz
+          cmp output/Puppy50_v90_tuned.sfs output/recheck/puppy_dpupbw64_10.0.12.sfs
+          (cd output && sha256sum Puppy50_v90_No_Prelaunch_TEST_ONLY.iso > SHA256SUMS)
+          echo PUPPY50_V90_ONLY_PREF_DELTA_KERNEL_INITRD_UNCHANGED=PASS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v90_No_Prelaunch_ISO_TEST_ONLY
+          path: |
+            output/Puppy50_v90_No_Prelaunch_TEST_ONLY.iso
+            output/SHA256SUMS
+          retention-days: 5
+          compression-level: 0
+          if-no-files-found: error
+      - name: Preserve root policy and ISO rebuild records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v90_build_proof
+          path: output/reports/
+          retention-days: 15
+          if-no-files-found: warn
+  compare:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: control
+            ram: 1024
+          - variant: tuned
+            ram: 1024
+          - variant: tuned
+            ram: 1536
+          - variant: tuned
+            ram: 384
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real KVM QEMU; preserve test evidence even on failure
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input output/evidence output/reports
+      - name: Control image identical to previous v89 Firefox
+        if: matrix.variant == 'control'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v89_Instrumented_ISO_UNVERIFIED
+          run-id: 41707854491
+          github-token: ${{ github.token }}
+          path: input
+      - name: Tuned image has same Firefox with only idle prelaunch disabled
+        if: matrix.variant == 'tuned'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v90_No_Prelaunch_ISO_TEST_ONLY
+          path: input
+      - name: Select exact ISO and check its supplied SHA256SUMS
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          if [ "$VARIANT" = control ];then
+            echo "$PWD/input/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso" >output/reports/iso_path
+          else
+            echo "$PWD/input/Puppy50_v90_No_Prelaunch_TEST_ONLY.iso" >output/reports/iso_path
+          fi
+          test -s "$(cat output/reports/iso_path)"
+      - name: Start same TLS-preserving public-site host bridge for both arms
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(60):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Proxy listener failed')
+          print('Host listener exists; actual guest TLS is a separate required measurement.')
+          PY
+      - name: Genuine QEMU 405-second public webpage trial
+        shell: bash
+        timeout-minutes: 10
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 web79/qemu_stable_link_page_load.py --iso "$(cat output/reports/iso_path)" --out output/evidence --ram "$RAM" --seconds 405 >output/reports/browser-trial.log 2>&1
+          echo "browser_trial_exit=$?" >output/reports/browser_trial_exit.txt
+          exit 0
+      - name: Parse actual guest process memory without inventing absent readings
+        if: always()
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          if test -s output/evidence/serial.log;then
+            python3 web89/analyze_serial.py --serial output/evidence/serial.log --ram "$RAM" --out output/reports/memory.json
+          fi
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('output/reports/memory.json')
+          r=json.loads(p.read_text()) if p.exists() else {}
+          v={'schema':'PUPPY50_V90_REAL_KVM_CONTROLLED_AB',
+             'arm':os.environ['VARIANT'],'guest_ram_mib':int(os.environ['RAM']),
+             'memory_samples':r.get('samples_observed',0),
+             'firefox_peak_pss_mib':r.get('peak_observed_firefox_pss_mib'),
+             'minimum_available_mib':r.get('lowest_memavailable_mib'),
+             'oom_kills_increased':r.get('oom_kills_increased'),
+             'real_browser_visual_reviewed':False,
+             'real_guest_https_verified':None,
+             'all_networks_supported':False}
+          serial=Path('output/evidence/serial.log')
+          if serial.is_file():
+              v['real_guest_https_verified']='PUPPY50_V67_EXTERNAL_TLS_CA_VERIFIED=PASS' in serial.read_text(errors='replace')
+          Path('output/reports/V90_COMPARE.json').write_text(json.dumps(v,indent=2)+'\n')
+          print(json.dumps(v,indent=2))
+          PY
+      - name: Save raw visual frames, full guest serial and Firefox PSS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v90_${{ matrix.variant }}_${{ matrix.ram }}MiB_REAL_KVM
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Require real guest memory readings, do not confuse navigation with content
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('output/reports/V90_COMPARE.json'))
+          if r['memory_samples']<2:raise SystemExit('NO_REAL_GUEST_MEASUREMENTS')
+          if r['real_guest_https_verified'] is not True:raise SystemExit('GUEST_HTTPS_NOT_PROVEN')
+          print('V90_MEMORY_AND_HTTPS_EVIDENCE_CAPTURED; website screenshots still require review')
+          PY
