@@ -1,0 +1,155 @@
+name: Puppy50 v82 - Original lean-Mesa public v70 1GiB vs 2GiB Firefox control
+on:
+  push:
+    branches: [puppy50-v82-original-lean-graphics-control]
+    paths:
+      - 'web82/**'
+      - '.github/workflows/puppy50-v82-original-lean-control.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v82-original-lean-control
+  cancel-in-progress: true
+jobs:
+  compare_guest:
+    name: ${{ matrix.image }} at ${{ matrix.ram }} MiB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: original-public-v70
+            ram: 1024
+            artifact: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+            source_run: 41660921113
+            iso: Puppy50_Web_v70_Normal_Browser_Online.iso
+            sha256: 26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e
+          - image: original-public-v70
+            ram: 2048
+            artifact: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+            source_run: 41660921113
+            iso: Puppy50_Web_v70_Normal_Browser_Online.iso
+            sha256: 26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify correct benchmark scripts and tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile web79/qemu_stable_link_page_load.py
+          python3 -m unittest discover -s web79/tests -p 'test_*.py' -v
+          mkdir -p dist output/evidence/guest output/reports
+      - name: Install and verify KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Fetch EXACT previously assembled, verified experimental control ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          run-id: ${{ matrix.source_run }}
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Verify downloaded ISO bytes before guest execution
+        env:
+          SOURCE_ISO: ${{ matrix.iso }}
+          EXPECTED_SHA: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,hashlib
+          from pathlib import Path
+          candidates=list(Path('dist').rglob(os.environ['SOURCE_ISO']))
+          if len(candidates)!=1:raise SystemExit('ISO missing or ambiguous')
+          p=candidates[0]
+          h=hashlib.sha256()
+          with p.open('rb') as f:
+              for b in iter(lambda:f.read(1048576),b''):h.update(b)
+          if h.hexdigest()!=os.environ['EXPECTED_SHA']:raise SystemExit('ISO SHA MISMATCH')
+          Path('output/reports/iso_path').write_text(str(p.resolve())+'\n')
+          print('PUPPY50_V79_EXACT_SOURCE_ISO_VERIFIED',p,h.hexdigest())
+          PY
+      - name: Start secure localhost host HTTPS bridge with intact guest TLS verification
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 > output/reports/bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=.5):
+                      print('PUPPY50_V79_LOOPBACK_HTTPS_BRIDGE=READY');break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Bridge failed startup')
+          PY
+          curl --fail --silent --show-error --head --proxy http://127.0.0.1:3128 --noproxy '' \
+            --proto '=https' --connect-timeout 8 --max-time 20 https://www.wikipedia.org/ -o /dev/null
+      - name: Run real KVM with NIC stable; click Wikipedia and capture 20-240s page-load frames
+        timeout-minutes: 10
+        env:
+          VM_RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          ISO=$(cat output/reports/iso_path)
+          python3 web79/qemu_stable_link_page_load.py \
+            --iso "$ISO" --out output/evidence/guest --ram "$VM_RAM" --seconds 405
+      - name: Independently report first homepage disappearance without claiming Wikipedia
+        if: always()
+        env:
+          VM_RAM: ${{ matrix.ram }}
+          VM_IMAGE: ${{ matrix.image }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('output/evidence/guest/result.json')
+          data=json.loads(p.read_text()) if p.exists() else {}
+          report={'schema':'PUPPY50_V82_ORIGINAL_LEAN_MESA_CONTROL',
+            'source_iso':os.getenv('VM_IMAGE'),
+            'guest_ram_mib':int(os.getenv('VM_RAM')),
+            'guest_booted_RAM_root':bool(data.get('ram_root_copy') and data.get('ram_root_switch')),
+            'CD_ejected':data.get('ejected',False),
+            'guest_DHCP_and_DNS':bool(data.get('guest_DHCP') and data.get('guest_DNS')),
+            'guest_CA_verified_public_HTTPS':data.get('guest_public_CA_verified_HTTPS',False),
+            'real_guest_mouse_click_sent':data.get('real_qemu_browser_link_click_submitted',False),
+            'first_page_transition_seconds_after_vm_start':data.get('first_homepage_to_external_transition_seconds'),
+            'webpage_contents_visually_reviewed':False,
+            'guest_NIC_disconnect_test_performed':False,
+            'host_WiFi_network_switch_test_performed':False,
+            'physical_any_network_certified':False,
+            'secure_browser_updates_certified':False}
+          Path('output/reports/V82_ORIGINAL_RAM_CONTROL.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve genuine QEMU screenshots, serial, test report even if blank
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v82_${{ matrix.image }}_${{ matrix.ram }}MiB_real_browser_images
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Fail closed if no page transition or no working Firefox in real guest
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V82_ORIGINAL_RAM_CONTROL.json')
+          if not p.exists():raise SystemExit('NO_V79_REPORT')
+          r=json.loads(p.read_text())
+          for x in ('guest_booted_RAM_root','CD_ejected','guest_DHCP_and_DNS',
+                    'guest_CA_verified_public_HTTPS','real_guest_mouse_click_sent'):
+              if r.get(x) is not True:raise SystemExit('V79_GUEST_MISSING_'+x)
+          if r.get('first_page_transition_seconds_after_vm_start') is None:
+              raise SystemExit('V79_NO_VERIFIED_PAGE_TRANSITION')
+          print('PUPPY50_V79_REAL_QEMU_PAGE_TRANSITION_OBSERVED')
+          print('Human review of actual Wikipedia content remains required.')
+          PY
