@@ -1,0 +1,62 @@
+name: Puppy50 v80 - Publish verified host network recovery add-on
+on:
+  push:
+    branches: [puppy50-v80-self-healing-host-bridge]
+    paths:
+      - '.github/workflows/puppy50-v80-publish-network-addon.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish_verified_source_addon:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repeat real child-failure supervisor regression tests
+        run: |
+          set -euo pipefail
+          bash -n vm/launch_linux_v80.sh
+          python3 -m unittest discover -s vm/tests -p 'test_v80_bridge_supervisor.py' -v
+      - name: Download byte-identical tested add-on package from successful v80 CI
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v80_TESTED_host_network_recovery_addon
+          run-id: 41683301911
+          github-token: ${{ github.token }}
+          path: release-assets
+      - name: Validate tested ZIP SHA and source-only file inventory
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum -c SHA256_ADDON)
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          f=Path('release-assets/Puppy50_v80_Host_Network_Recovery_Addon.zip')
+          expected={'launch_linux_v80.sh','host_https_bridge_supervisor_v80.py',
+                    'host_https_bridge.py','README_HOST_NETWORK_V80.md'}
+          with zipfile.ZipFile(f) as z:
+              assert set(z.namelist())==expected
+              assert not z.testzip()
+          print('PUPPY50_V80_RELEASE_MATCHES_PASSED_NETWORK_ADDON_TESTS')
+          PY
+      - name: Publish standalone host network helper WITHOUT replacing current OS ISO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-v80-network-recovery >/dev/null 2>&1; then
+            echo 'Existing release found. Refusing to change published content.'
+            exit 18
+          fi
+          gh release create puppy50-v80-network-recovery \
+            release-assets/Puppy50_v80_Host_Network_Recovery_Addon.zip \
+            release-assets/SHA256_ADDON \
+            --target "$GITHUB_SHA" \
+            --title 'Puppy50 v80 — Host Network Recovery Add-on (not a new ISO)' \
+            --notes-file vm/README_HOST_NETWORK_V80.md \
+            --prerelease --latest=false
+          gh release view puppy50-v80-network-recovery --json url,assets,tagName
+          echo "PUBLISHED=https://github.com/$GITHUB_REPOSITORY/releases/tag/puppy50-v80-network-recovery" >> "$GITHUB_STEP_SUMMARY"
