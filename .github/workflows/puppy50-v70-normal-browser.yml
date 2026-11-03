@@ -1,0 +1,168 @@
+name: Puppy50 v70 - Normal user-controlled Firefox with verified Internet
+on:
+  push:
+    branches: [puppy50-v70-normal-browsing]
+    paths:
+      - 'web70/**'
+      - '.github/workflows/puppy50-v70-normal-browser.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v70-normal-browser
+  cancel-in-progress: true
+jobs:
+  normal-online-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test exact patch and normal browser dashboard source
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web70/tests -p 'test_*.py' -v
+          python3 -m py_compile web70/patch_normal_browser.py web70/qemu_normal_browser.py
+          sh -n web70/network_status_wrapper.sh
+          bash -n vm/launch_linux_https_bridge_v69.sh
+          mkdir -p output/extract output/reports dist output/evidence/ram_1024MiB
+      - name: Install ISO, squashfs and QEMU tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso p7zip-full squashfs-tools qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download the byte-identical v69 independently verified public HTTPS ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v69_unverified_real_Firefox_webpage_ISO
+          run-id: 41656250129
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Verify v69 input, unpack real RAM-root and remove automatic demo
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          7z e -y -ooutput/extract \
+            dist/Puppy50_Web_v69_Native_Browser_Experimental.iso \
+            puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz \
+            > output/reports/old_iso_extract.log
+          test -s output/extract/vmlinuz
+          test -s output/extract/initrd.gz
+          sudo unsquashfs -d output/rootfs \
+            output/extract/puppy_dpupbw64_10.0.12.sfs \
+            > output/reports/old_root_extract.log
+          sudo python3 web70/patch_normal_browser.py output/rootfs \
+            | tee output/reports/V70_ROOT_PATCH.json
+          grep -Fq 'PUPPY50_V70_NETWORK_STATUS_PAGE_WRITTEN=PASS' \
+            output/rootfs/usr/local/bin/puppy50-network-probe
+          if grep -Fq 'PUPPY50_V69_NATIVE_FIREFOX_NAV_REQUESTED' \
+            output/rootfs/usr/local/bin/puppy50-web-launch; then
+            echo 'Automatic delayed demonstration was not fully removed'; exit 12
+          fi
+          test -s output/rootfs/usr/share/puppy50web/index.html
+      - name: Recompress user-friendly root while preserving original real-tested boot
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/Puppy50_v70_normal_root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress \
+            > output/reports/v70_squashfs.log 2>&1
+          xorriso \
+            -indev dist/Puppy50_Web_v69_Native_Browser_Experimental.iso \
+            -outdev dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            -map output/Puppy50_v70_normal_root.sfs /puppy_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end \
+            > output/reports/v70_xorriso.log 2>&1
+          mkdir -p output/verify
+          7z e -y -ooutput/verify \
+            dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz \
+            > output/reports/v70_extract.log
+          cmp output/extract/vmlinuz output/verify/vmlinuz
+          cmp output/extract/initrd.gz output/verify/initrd.gz
+          cmp output/Puppy50_v70_normal_root.sfs output/verify/puppy_dpupbw64_10.0.12.sfs
+          (cd dist && sha256sum Puppy50_Web_v70_Normal_Browser_Online.iso > SHA256SUMS)
+          echo 'PUPPY50_V70_ORIGINAL_KERNEL_AND_INITRD_UNCHANGED=PASS'
+      - name: Start certificate-preserving host Internet bridge as in verified v69
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 \
+            > output/reports/host-https-bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for i in range(40):
+              try:
+                  with socket.create_connection(("127.0.0.1",3128),timeout=1):
+                      print("PUPPY50_V70_HOST_LOOPBACK_BRIDGE=READY")
+                      break
+              except OSError: time.sleep(.2)
+          else: raise SystemExit("Host TLS bridge not ready")
+          PY
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proxy http://127.0.0.1:3128 --noproxy '' \
+            --connect-timeout 9 --max-time 20 https://example.com/ \
+            -o /dev/null
+      - name: Boot REAL 1024 MiB KVM browser and verify normal homepage, HTTPS and CD ejection
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 web70/qemu_normal_browser.py \
+            --iso dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            --out output/evidence/ram_1024MiB --ram 1024 --seconds 220
+      - name: Preserve real guest framebuffer and full logs even if a gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v70_normal_browser_KVM_evidence
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Produce exact tested candidate manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          iso=Path('dist/Puppy50_Web_v70_Normal_Browser_Online.iso')
+          result=json.loads(Path('output/evidence/ram_1024MiB/result.json').read_text())
+          h=hashlib.sha256()
+          with iso.open('rb') as f:
+              for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+          report={
+              'schema':'PUPPY50_V70_TESTED_NORMAL_BROWSER_ISO',
+              'iso_filename':iso.name,
+              'iso_bytes':iso.stat().st_size,
+              'iso_sha256':h.hexdigest(),
+              'guest_ram_mib':1024,
+              'real_kvm_RAM_root_and_CD_eject':True,
+              'real_kvm_Firefox_homepage_visible':True,
+              'guest_CA_verified_public_HTTPS':True,
+              'internet_route':'QEMU e1000 user NAT with optional host-only TLS CONNECT bridge',
+              'timed_demo_removed':True,
+              'website_links_user_controlled':True,
+              'only_example_com_external_page_historically_verified':True,
+              'all_other_website_page_rendering_tested':False,
+              '384mib_usable_browser':False,
+              'physical_wifi_and_every_network_guaranteed':False,
+              'security_updates_certified':False,
+              'safe_for_sensitive_browsing':False,
+              'source_branch':'puppy50-v70-normal-browsing'
+          }
+          Path('dist/Puppy50_v70_manifest.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Upload truly tested experimental ISO and diagnostics, not a public release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          path: |
+            dist/Puppy50_Web_v70_Normal_Browser_Online.iso
+            dist/SHA256SUMS
+            dist/Puppy50_v70_manifest.json
+          retention-days: 14
+          if-no-files-found: error
