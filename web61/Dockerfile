@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config libwpewebkit-2.0-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY wpe_feasibility/headless_probe.c /src/headless_probe.c
+COPY web61/headless_probe.c /src/headless_probe.c
 RUN cc -O2 -Wall -Wextra -o /usr/local/bin/puppy50-wpe-headless \
     /src/headless_probe.c \
     $(pkg-config --cflags --libs wpe-webkit-2.0 wpe-platform-2.0)
