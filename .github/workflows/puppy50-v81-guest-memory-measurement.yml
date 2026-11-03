@@ -114,10 +114,26 @@ jobs:
           run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
           path: dist
-      - name: Verify exact diagnostic ISO SHA256 before boot
+      - name: Verify nested artifact ISO and SHA256 without assuming extracted folder layout
         run: |
           set -euo pipefail
-          (cd dist && sha256sum -c V81_SHA256SUMS)
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          names=list(Path('dist').rglob('Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso'))
+          sums=list(Path('dist').rglob('V81_SHA256SUMS'))
+          if len(names)!=1 or len(sums)!=1:
+              raise SystemExit('Missing or ambiguous v81 diagnostic artifact paths')
+          p=names[0]
+          digest=hashlib.sha256()
+          with p.open('rb') as f:
+              for x in iter(lambda:f.read(1048576),b''):digest.update(x)
+          rec=sums[0].read_text().split()
+          if len(rec)!=2 or rec[1]!=p.name or digest.hexdigest()!=rec[0]:
+              raise SystemExit('V81_DIAGNOSTIC_ISO_SHA256_FAIL')
+          Path('output/reports/diag_iso_path').write_text(str(p.resolve())+'\\n')
+          print('V81_EXACT_DIAGNOSTIC_ISO_SHA256_PASS',digest.hexdigest(),str(p))
+          PY
       - name: Start restricted host-only HTTPS bridge with real public certificate check
         run: |
           set -euo pipefail
@@ -141,8 +157,9 @@ jobs:
         run: |
           set -euo pipefail
           set +e
+          ISO=$(cat output/reports/diag_iso_path)
           python3 web79/qemu_stable_link_page_load.py \
-            --iso dist/Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso \
+            --iso "$ISO" \
             --out output/evidence/guest --ram "$GUEST_RAM" --seconds 405
           STATUS=$?
           set -e
