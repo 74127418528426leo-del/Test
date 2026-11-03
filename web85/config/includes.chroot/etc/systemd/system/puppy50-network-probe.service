@@ -1,0 +1,14 @@
+[Unit]
+Description=Puppy50 v85 guest CA-verified HTTPS and optional QEMU bridge configuration
+Wants=NetworkManager-wait-online.service
+After=NetworkManager.service NetworkManager-wait-online.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/puppy50-network-probe
+TimeoutStartSec=45
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
