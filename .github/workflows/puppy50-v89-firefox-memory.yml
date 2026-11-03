@@ -1,0 +1,179 @@
+name: Puppy50 v89 - Real Firefox PSS at 384 1024 1536 MiB
+on:
+  push:
+    branches: [puppy50-v89-firefox-memory-attribution]
+    paths:
+      - 'web89/**'
+      - '.github/workflows/puppy50-v89-firefox-memory.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v89-memory
+  cancel-in-progress: true
+jobs:
+  instrument:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate memory instrument code and synthetic regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web89/tests -p 'test_*.py' -v
+          python3 -m py_compile web89/instrument_root.py web89/analyze_serial.py
+          sh -n web89/guest_ram_probe.sh
+          mkdir -p input output/reports output/verify
+      - name: Install ISO rebuild utilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools xorriso
+      - name: Get real v70 Firefox RAM-only ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact unmodified v70 SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          echo '26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e  input/Puppy50_Web_v70_Normal_Browser_Online.iso' | sha256sum -c -
+          7z e -y -ooutput/verify input/Puppy50_Web_v70_Normal_Browser_Online.iso puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz > output/reports/extract.log
+      - name: Instrument copied guest root without altering Firefox options
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -d output/rootfs output/verify/puppy_dpupbw64_10.0.12.sfs > output/reports/root_extraction.log
+          sudo python3 web89/instrument_root.py output/rootfs --probe web89/guest_ram_probe.sh | tee output/reports/V89_ROOT_PATCH.json
+          sudo test -x output/rootfs/usr/local/bin/puppy50-serial-ram-probe
+          sudo sh -n output/rootfs/usr/local/bin/puppy50-web-launch
+          sudo sh -n output/rootfs/usr/local/bin/puppy50-serial-ram-probe
+      - name: Make test-only instrumented ISO with exact original kernel and initrd
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/Puppy50_v89_root.sfs -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M -exit-on-error -noappend -no-progress > output/reports/repack.log 2>&1
+          xorriso -indev input/Puppy50_Web_v70_Normal_Browser_Online.iso -outdev output/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso -map output/Puppy50_v89_root.sfs /puppy_dpupbw64_10.0.12.sfs -boot_image any replay -commit -end > output/reports/xorriso.log 2>&1
+          mkdir -p output/recheck
+          7z e -y -ooutput/recheck output/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz >/dev/null
+          cmp output/verify/vmlinuz output/recheck/vmlinuz
+          cmp output/verify/initrd.gz output/recheck/initrd.gz
+          cmp output/Puppy50_v89_root.sfs output/recheck/puppy_dpupbw64_10.0.12.sfs
+          (cd output && sha256sum Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso > SHA256SUMS)
+          echo PUPPY50_V89_KERNEL_INITRD_AND_TEST_ROOT_INTEGRITY_PASS
+      - name: Upload experimental ISO only as short-lived Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v89_Instrumented_ISO_UNVERIFIED
+          path: |
+            output/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso
+            output/SHA256SUMS
+          retention-days: 5
+          compression-level: 0
+          if-no-files-found: error
+      - name: Preserve source instrumentation build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v89_instrumentation_build_logs
+          path: output/reports/
+          retention-days: 15
+          if-no-files-found: warn
+  measure:
+    needs: instrument
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        ram: [384, 1024, 1536]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and verify KVM is real
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input output/evidence output/reports
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v89_Instrumented_ISO_UNVERIFIED
+          path: input
+      - name: Verify exact instrumented ISO before KVM boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Start TLS-preserving QEMU host network bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1): break
+              except OSError:time.sleep(.2)
+          else: raise SystemExit('Host bridge failed')
+          print('Host listener ready; not evidence of guest HTTPS')
+          PY
+      - name: Run actual real KVM + Firefox with identical website target
+        shell: bash
+        timeout-minutes: 10
+        env:
+          GUEST_RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 web79/qemu_stable_link_page_load.py --iso input/Puppy50_v89_Memory_Instrumented_EXPERIMENTAL.iso --out output/evidence --ram "$GUEST_RAM" --seconds 405 >output/reports/qemu_test.log 2>&1
+          code=$?
+          echo "browser_page_gate_exit=$code" >output/reports/browser_gate.txt
+          echo "This browser gate can fail while actual guest /proc samples remain useful."
+          exit 0
+      - name: Parse actual guest /proc snapshots without inventing missing values
+        if: always()
+        shell: bash
+        env:
+          GUEST_RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          if [ -s output/evidence/serial.log ]; then
+            python3 web89/analyze_serial.py --serial output/evidence/serial.log --ram "$GUEST_RAM" --out output/reports/V89_REAL_MEMORY.json
+          else
+            echo 'Missing guest serial: no memory claim' >output/reports/NO_GUEST_SERIAL.txt
+          fi
+      - name: Preserve real QEMU screenshots, kernel logs and measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v89_actual_KVM_${{ matrix.ram }}MiB
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          compression-level: 6
+          if-no-files-found: warn
+      - name: Fail closed if real guest memory sampling was absent
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V89_REAL_MEMORY.json')
+          if not p.exists(): raise SystemExit('PUPPY50_V89_NO_REAL_GUEST_PROBE')
+          r=json.loads(p.read_text())
+          if r['samples_observed']<2: raise SystemExit('PUPPY50_V89_NOT_ENOUGH_REAL_GUEST_SAMPLES')
+          print('PUPPY50_V89_GUEST_MEMORY_SAMPLES_PROVEN',r['samples_observed'])
+          print('This is NOT independent proof of Wikipedia page rendering.')
+          PY
