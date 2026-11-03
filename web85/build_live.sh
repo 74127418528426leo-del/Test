@@ -24,7 +24,11 @@ lb config \
   --mirror-binary https://deb.debian.org/debian
 cp -a "$SRC/config/." "$OUT/build/config/"
 echo "PUPPY50_V85_LIVE_BUILD_CONFIGURED"
-if [[ ${EUID:-$(id -u)} -eq 0 ]]; then\n  lb build\nelse\n  sudo lb build\nfi
+if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+  lb build
+else
+  sudo lb build
+fi
 ISO="$(find . -maxdepth 1 -type f -name '*.iso' | head -1)"
 if [[ ! -s "$ISO" ]]; then
     echo "PUPPY50_V85_NO_ISO_PRODUCED" >&2;exit 10
