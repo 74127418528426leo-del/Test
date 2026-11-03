@@ -28,10 +28,10 @@ class RealBrowserImageTests(unittest.TestCase):
                 module.cyan_fraction(frame)
     def test_hmp_monitor_commands_have_no_website_success_proxy(self):
         script=p.read_text()
-        self.assertIn('mouse_move 220 0',script)
-        self.assertIn('mouse_set 2',script)
-        self.assertIn('explicit_ps2_mouse_selected',script)
-        self.assertIn('"mouse_button 1","mouse_button 0"'.replace('",','",'),script.replace(',"mouse_button 0"',',"mouse_button 0"'))
+        self.assertIn('sendkey tab',script)
+        self.assertIn('sendkey ret',script)
+        self.assertIn('keyboard_tab_count_proven',script)
+        self.assertNotIn('mouse_move 220 0',script)
         self.assertIn('Mozilla_public_page_visually_confirmed"]=False',script)
 
 if __name__=="__main__":
