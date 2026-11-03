@@ -15,7 +15,7 @@ class HostBridgeRecoveryTests(unittest.TestCase):
         data=mod_path.read_text()
         self.assertIn("pc,accel=kvm",data)
         self.assertIn("file={args.iso}",data)
-        self.assertIn('"puppycd"',data)
+        self.assertIn('id=puppycd',data)
         self.assertIn("real_qemu_browser_link_click_submitted",data)
     def test_real_outage_not_fake_success(self):
         src=mod_path.read_text()
