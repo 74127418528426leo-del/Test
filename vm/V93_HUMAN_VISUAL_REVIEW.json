@@ -1,0 +1,26 @@
+{
+  "schema": "PUPPY50_V93_PINNED_HUMAN_SCREENSHOT_REVIEW",
+  "run_id": 41720896581,
+  "artifact_name": "Puppy50_v93_Real_Debian_Firefox_2560MiB",
+  "source_iso_build_run": 41716546515,
+  "source_iso_artifact": "Puppy50_v91_Debian_Live_ISO_NOT_RELEASED",
+  "guest_ram_mib": 2560,
+  "screenshot": "evidence/frame_300.ppm",
+  "screenshot_sha256": "2b4d4ca5a33df8fda6c0dab8121f3dc7d603742675fd417fbf9fb35536137641",
+  "visual_findings": "Mozilla Firefox in a nonroot Debian Live Openbox desktop visibly displaying https://example.com/ public page at 300 seconds; same QEMU ISO as the v91 source",
+  "guest_https_verified": true,
+  "cd_ejected_and_guest_running": true,
+  "compared_guests": {
+    "1536": "black panel desktop; Firefox window not visible",
+    "2048": "Firefox local homepage visible; external navigation not completed in this trial",
+    "2560": "Firefox public HTTPS example.com webpage visibly present",
+    "3072": "Firefox public HTTPS example.com webpage visibly present"
+  },
+  "guarantees": {
+    "physical_wifi_tested": false,
+    "all_networks_supported": false,
+    "secure_for_sensitive_accounts": false,
+    "minimum_ram_proven": false,
+    "full_browser_update_lifecycle_certified": false
+  }
+}
