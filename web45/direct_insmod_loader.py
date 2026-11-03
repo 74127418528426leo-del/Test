@@ -4,7 +4,7 @@ import argparse,pathlib,re
 SEEDS=['ata_piix','sr_mod','isofs','loop','squashfs','overlay','virtio_pci','virtio_blk','ahci','sd_mod','usb_storage',
        # Input modules have to be loaded before switch_root: on this image
        # /lib/modules in the final root does not provide modprobe lookup.
-       'evdev','psmouse','mousedev']
+       'evdev','psmouse','mousedev','e1000','virtio_net']
 def stem(s):
  return re.sub(r'\.ko(?:\.(?:xz|gz|zst))?$','',pathlib.PurePosixPath(s).name).replace('-','_')
 def generate(txt,release,exists=None):
@@ -14,7 +14,7 @@ def generate(txt,release,exists=None):
   name,raw=line.split(':',1)
   if name.strip().endswith('.ko'):deps[name.strip()]=raw.strip().split()
  bystem={stem(k):k for k in deps}
- required=['ata_piix','sr_mod','loop','squashfs','overlay','isofs','evdev','psmouse','mousedev']
+ required=['ata_piix','sr_mod','loop','squashfs','overlay','isofs','evdev','psmouse','mousedev','e1000']
  missing=[x for x in required if x not in bystem]
  if missing:raise ValueError('Missing critical module(s): '+repr(missing))
  seen=set();active=set();ordered=[]
