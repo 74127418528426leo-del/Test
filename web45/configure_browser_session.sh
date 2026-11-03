@@ -51,6 +51,19 @@ XAUTH=/home/web/.Xauthority
 rm -f "$XAUTH"
 xauth -f "$XAUTH" add :0 . "$COOKIE"
 chown 1000:1000 "$XAUTH"
+# Linux console handlers are not enough for Xorg/libinput: the guest must
+# have the evdev event interface. A real v55 QEMU guest displayed only
+# "Handlers=sysrq kbd" with no eventX, and Firefox ignored virtual input.
+for driver in evdev psmouse mousedev; do
+  if /sbin/modprobe -v "$driver" > /dev/ttyS0 2>&1; then
+    echo "PUPPY50_V56_INPUT_MODULE_LOADED=$driver" >/dev/ttyS0 2>/dev/null || true
+  else
+    echo "PUPPY50_V56_INPUT_MODULE_FAILED=$driver" >/dev/ttyS0 2>/dev/null || true
+  fi
+done
+echo 'PUPPY50_V56_INPUT_HANDLERS_BEFORE_XORG' >/dev/ttyS0 2>/dev/null || true
+cat /proc/bus/input/devices >/dev/ttyS0 2>/dev/null || true
+ls -la /dev/input >/dev/ttyS0 2>/dev/null || true
 echo 'PUPPY50_WEB_V45_XORG_START' > /dev/ttyS0 2>/dev/null || true
 Xorg :0 vt1 -nolisten tcp -auth "$XAUTH" > /var/log/Xorg0.log 2>&1 &
 XPID=$!
