@@ -1,0 +1,64 @@
+name: Puppy50 v80 - Bounded HTTPS bridge recovery on Linux host
+on:
+  push:
+    branches: [puppy50-v80-self-healing-host-bridge]
+    paths:
+      - 'vm/host_https_bridge_supervisor_v80.py'
+      - 'vm/launch_linux_v80.sh'
+      - 'vm/tests/test_v80_bridge_supervisor.py'
+      - 'vm/README_HOST_NETWORK_V80.md'
+      - '.github/workflows/puppy50-v80-host-bridge-supervisor.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify_recovery_addon:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate v80 launcher syntax and no insecure certificate options
+        run: |
+          set -euo pipefail
+          bash -n vm/launch_linux_v80.sh
+          python3 -m py_compile vm/host_https_bridge_supervisor_v80.py web66/host_https_bridge.py
+          if grep -Eq 'curl[[:space:]].*(-k|--insecure)|MOZ_DISABLE_CONTENT_SANDBOX' vm/launch_linux_v80.sh vm/host_https_bridge_supervisor_v80.py; then
+            echo "Forbidden TLS or sandbox override"
+            exit 10
+          fi
+      - name: Real subprocess integration - kill bridge child and prove bounded restart
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s vm/tests -p 'test_v80_bridge_supervisor.py' -v
+          echo "PUPPY50_V80_REAL_LOCAL_BRIDGE_CHILD_RESTART=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Package source-only network recovery add-on without copying user ISO
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile
+          specs=[
+            ("vm/launch_linux_v80.sh","launch_linux_v80.sh"),
+            ("vm/host_https_bridge_supervisor_v80.py","host_https_bridge_supervisor_v80.py"),
+            ("web66/host_https_bridge.py","host_https_bridge.py"),
+            ("vm/README_HOST_NETWORK_V80.md","README_HOST_NETWORK_V80.md")
+          ]
+          dest=Path("dist/Puppy50_v80_Host_Network_Recovery_Addon.zip")
+          with zipfile.ZipFile(dest,"w",compression=zipfile.ZIP_DEFLATED) as z:
+              for source,name in specs:z.write(source,name)
+          with zipfile.ZipFile(dest) as z:
+              assert sorted(z.namelist())==sorted(name for source,name in specs)
+          digest=hashlib.sha256(dest.read_bytes()).hexdigest()
+          Path("dist/SHA256_ADDON").write_text(digest+"  "+dest.name+"\n")
+          print(dest,dest.stat().st_size,digest)
+          PY
+      - name: Archive tested add-on; no changes to current public v70 ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v80_TESTED_host_network_recovery_addon
+          path: |
+            dist/Puppy50_v80_Host_Network_Recovery_Addon.zip
+            dist/SHA256_ADDON
+          retention-days: 30
+          if-no-files-found: error
