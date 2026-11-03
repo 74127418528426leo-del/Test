@@ -1,0 +1,65 @@
+name: Puppy50 v81 - Correct original Wikipedia page render claims from actual KVM images
+on:
+  push:
+    branches: [puppy50-v81-actual-page-visual-audit]
+    paths:
+      - 'web81/**'
+      - 'V81_REAL_BROWSER_CONTENT_REVIEW.json'
+      - '.github/workflows/puppy50-v81-actual-page-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v81-visual-audit
+  cancel-in-progress: true
+jobs:
+  real_frame_qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python parser and evidence manifest source
+        run: |
+          set -euo pipefail
+          python3 -m py_compile web81/verify_v79_website_frames.py
+          python3 -m json.tool V81_REAL_BROWSER_CONTENT_REVIEW.json > /dev/null
+      - name: Retrieve unchanged package-complete v78 1024MiB real KVM evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v79_package-complete-v78_1024MiB_real_browser_images
+          run-id: 41682409363
+          github-token: ${{ github.token }}
+          path: evidence/package-complete-v78-1024
+      - name: Retrieve unchanged package-complete v78 2048MiB real KVM evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v79_package-complete-v78_2048MiB_real_browser_images
+          run-id: 41682409363
+          github-token: ${{ github.token }}
+          path: evidence/package-complete-v78-2048
+      - name: Retrieve unchanged stock v76 1024MiB real KVM evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v79_stock-v76_1024MiB_real_browser_images
+          run-id: 41682409363
+          github-token: ${{ github.token }}
+          path: evidence/stock-v76-1024
+      - name: Match every screenshot hash and published real guest report
+        run: |
+          set -euo pipefail
+          python3 web81/verify_v79_website_frames.py \
+            --review V81_REAL_BROWSER_CONTENT_REVIEW.json \
+            --evidence evidence \
+            --out output/V81_REAL_PUBLIC_WEBPAGE_OUTCOME.json
+          echo "VERIFIED: green transition does NOT imply full page. 2GiB v78 displayed Wikipedia; 1GiB v78 remained blank at 405s, 1GiB v76 partial." >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve verified visual audit for independent reproduction
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v81_v79_real_webpage_visual_outcome_audit
+          path: |
+            V81_REAL_BROWSER_CONTENT_REVIEW.json
+            output/
+          retention-days: 30
+          if-no-files-found: warn
