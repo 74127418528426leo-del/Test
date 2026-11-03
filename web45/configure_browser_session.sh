@@ -54,13 +54,24 @@ chown 1000:1000 "$XAUTH"
 # Linux console handlers are not enough for Xorg/libinput: the guest must
 # have the evdev event interface. A real v55 QEMU guest displayed only
 # "Handlers=sysrq kbd" with no eventX, and Firefox ignored virtual input.
+# evdev/psmouse/mousedev are explicitly loaded by the early initrd
+# before switch_root. An absent /lib/modules here does NOT mean unloaded.
+# Kernel state plus the eventX handler are the only valid runtime checks.
 for driver in evdev psmouse mousedev; do
-  if /sbin/modprobe -v "$driver" > /dev/ttyS0 2>&1; then
-    echo "PUPPY50_V56_INPUT_MODULE_LOADED=$driver" >/dev/ttyS0 2>/dev/null || true
+  if [ -d "/sys/module/$driver" ]; then
+    echo "PUPPY50_V58_INPUT_MODULE_EARLY_LOADED=$driver" > /dev/ttyS0 2>/dev/null || true
   else
-    echo "PUPPY50_V56_INPUT_MODULE_FAILED=$driver" >/dev/ttyS0 2>/dev/null || true
+    echo "PUPPY50_V58_INPUT_MODULE_MISSING_AFTER_SWITCH=$driver" > /dev/ttyS0 2>/dev/null || true
   fi
 done
+# Repopulate device nodes if the Alpine device manager has not enumerated
+# the kernel input event interfaces by the time the graphical login starts.
+mdev -s >/dev/ttyS0 2>&1 || true
+if grep -Eq 'Handlers=.*event[0-9]+' /proc/bus/input/devices; then
+  echo 'PUPPY50_V58_EVENT_HANDLER_PRESENT=PASS' > /dev/ttyS0 2>/dev/null || true
+else
+  echo 'PUPPY50_V58_EVENT_HANDLER_PRESENT=FAIL' > /dev/ttyS0 2>/dev/null || true
+fi
 echo 'PUPPY50_V56_INPUT_HANDLERS_BEFORE_XORG' >/dev/ttyS0 2>/dev/null || true
 cat /proc/bus/input/devices >/dev/ttyS0 2>/dev/null || true
 ls -la /dev/input >/dev/ttyS0 2>/dev/null || true
