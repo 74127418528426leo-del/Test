@@ -52,11 +52,22 @@ def main():
                     except Exception as exc:report['errors'].append('eject: '+repr(exc))
                 if seconds==175:
                     try:
-                        report['keypress_command']=monitor(monitorpath,'sendkey t')
+                        # Establish content focus with a real mouse click before
+                        # sending the test keyboard key through QEMU's PS/2 input.
+                        commands=['mouse_button 1','mouse_button 0','sendkey t']
+                        results=[]
+                        for cmdline in commands:
+                            reply=monitor(monitorpath,cmdline)
+                            results.append({'command':cmdline,'reply':reply[-240:]})
+                            if any(token in reply.lower() for token in
+                                   ('unknown command','invalid parameter','error:')):
+                                raise RuntimeError(f'HMP rejected {cmdline}: {reply[-240:]}')
+                            time.sleep(0.3)
+                        report['hmp_input_trace']=results
                         report['keypress_submitted_to_qemu']=True
                     except Exception as exc:
                         report['keypress_submitted_to_qemu']=False
-                        report['errors'].append('sendkey: '+repr(exc))
+                        report['errors'].append('click-and-keypress: '+repr(exc))
                     time.sleep(8)
                 image=a.out/f'frame_{seconds:03}.ppm'
                 try:
