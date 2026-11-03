@@ -30,6 +30,12 @@ def validate_root(root):
 def validate_tar(tar,root):
     items = tar.getmembers()
     for m in items:
+        # POSIX tar archives conventionally begin with the root '.' entry.
+        # It denotes the staging root itself, not its parent directory.
+        if Path(m.name) == Path("."):
+            if not m.isdir():
+                raise ValueError("unsafe non-directory root entry")
+            continue
         if not (m.isdir() or m.isfile() or m.issym() or m.islnk()):
             raise ValueError("unexpected tar member "+m.name)
         dest = root/m.name
