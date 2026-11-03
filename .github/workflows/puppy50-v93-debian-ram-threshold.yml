@@ -1,0 +1,107 @@
+name: Puppy50 v93 - Maintained Firefox REAL HTTPS RAM threshold
+on:
+  push:
+    branches: [puppy50-v93-debian-live-lowram-real-web]
+    paths:
+      - 'web93/**'
+      - '.github/workflows/puppy50-v93-debian-ram-threshold.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v93-lowram-real-website
+  cancel-in-progress: true
+jobs:
+  threshold:
+    name: Real Debian Live Firefox ${{ matrix.ram }} MiB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        ram: [1536, 2048, 2560, 3072]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate independent screenshot and guest evidence gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web93/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web92/tests -p 'test_*.py' -v
+          python3 -m py_compile web92/qemu_external_website.py web93/proof_audit.py
+          mkdir -p input output/evidence output/reports
+      - name: Install real QEMU and confirm KVM access
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download unchanged exact v91 Debian Live RAM-browser ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: SHA-256 validate full ISO before real guest execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          test -s input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso
+          echo 'V93 immutable v91 ISO / unchanged Firefox and QEMU networking'
+      - name: Start restricted host loopback bridge for QEMU fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError: time.sleep(.25)
+          else:raise SystemExit('No host HTTPS fallback')
+          print('Fallback listener ready, but not evidence of guest web access')
+          PY
+      - name: Genuine KVM Firefox HTTPS navigation, RAM-only media eject and real frames
+        timeout-minutes: 8
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 web92/qemu_external_website.py --iso input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso --out output/evidence --ram "$RAM" --seconds 300 >output/reports/qemu-run.log 2>&1
+          printf 'guest_test_exit=%s\n' "$?" >output/reports/guest_exit_status.txt
+          exit 0
+      - name: Explicit evidence audit, never invent low-RAM browser success
+        if: always()
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          python3 web93/proof_audit.py --evidence output/evidence --ram "$RAM" --out output/reports/V93_REAL_GUEST_AUDIT.json
+      - name: Preserve ALL real QEMU screenshots, serial, failed trial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v93_Real_Debian_Firefox_${{ matrix.ram }}MiB
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Strict gateway — only actual guest Firefox/HTTPS prerequisites count
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('output/reports/V93_REAL_GUEST_AUDIT.json'))
+          if not d['browser_network_and_boot_prerequisites_passed']:
+              raise SystemExit('V93_REAL_GUEST_PREREQUISITES_FAILED; review uploaded frames')
+          print('V93_CANDIDATE_NEEDS_INDEPENDENT_FRAME_REVIEW; no visual website claim yet')
+          PY
