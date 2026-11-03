@@ -13,6 +13,7 @@ Puppy50 Web v70 is a **QEMU-only experimental Linux browser**. It loads the comp
 ## Run with your existing Wi-Fi, Ethernet, or hotspot
 
 1. Connect **the host Xubuntu computer** to Wi-Fi, wired Ethernet or a phone hotspot.
+   Optionally run `bash connect_host_network_v70.sh` to list nearby Wi-Fi networks and explicitly join an authorized one through NetworkManager's own password prompts. This does not run automatically or require sharing credentials with the virtual machine.
 2. Install QEMU and Python: `sudo apt install qemu-system-x86 python3`.
 3. Extract the complete v70 bundle in one directory.
 4. Run `bash launch_linux_v70.sh`.
