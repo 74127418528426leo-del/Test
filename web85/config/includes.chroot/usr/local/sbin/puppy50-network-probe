@@ -1,0 +1,49 @@
+#!/bin/sh
+# Debian Live: choose direct, CA-verified Internet when possible.
+# QEMU-only FALLBACK: host's restricted TLS-byte CONNECT bridge at 10.0.2.2.
+# On physical Wi-Fi, NetworkManager provides native connection management.
+# This program NEVER selects SSIDs, stores passwords or weakens TLS.
+set -u
+say() { printf '%s\n' "$1" >/dev/ttyS0 2>/dev/null || true; }
+MODE=offline
+mkdir -p /run/puppy50web
+POLICY=/usr/lib/firefox-esr/distribution/policies.json
+# Prevent a stale fallback in the in-memory session if the network changes.
+if [ -f "$POLICY" ] && grep -q 'PUPPY50_QEMU_HOST_BRIDGE' "$POLICY"; then rm -f "$POLICY"; fi
+say "PUPPY50_V85_NETWORK_PROBE_START"
+if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  --noproxy '*' --connect-timeout 5 --max-time 12 -o /dev/null https://example.com/; then
+  MODE=direct
+  say "PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_DIRECT=PASS"
+else
+  if ip -o -4 addr show | grep -Eq 'inet 10\.0\.2\.[0-9]+/' && \
+     curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+       --proxy http://10.0.2.2:3128 --noproxy '' --connect-timeout 8 \
+       --max-time 25 -o /dev/null https://example.com/; then
+    MODE=qemu-bridge
+    mkdir -p /usr/lib/firefox-esr/distribution
+    # The marker is an inert JSON string. Firefox only reads supported Proxy
+    # keys; certificate trust stays unchanged. Internal/private URL shortcuts
+    # must never pass through this unrestricted host proxy.
+    cat >"$POLICY" <<'EOF'
+{
+ "policies": {
+   "Proxy": {
+     "Mode":"manual",
+     "SSLProxy":"10.0.2.2:3128",
+     "Locked":false,
+     "Passthrough":"localhost,127.0.0.1"
+   }
+ },
+ "_comment":"PUPPY50_QEMU_HOST_BRIDGE"
+}
+EOF
+    say "PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS"
+  fi
+fi
+printf '%s\n' "$MODE" >/run/puppy50web/network-mode
+say "PUPPY50_V85_NETWORK_MODE=$MODE"
+if command -v nmcli >/dev/null; then
+  nmcli -t -f DEVICE,TYPE,STATE device status | sed 's/[^[:print:]]//g' >/run/puppy50web/nmcli-devices || true
+fi
+exit 0
