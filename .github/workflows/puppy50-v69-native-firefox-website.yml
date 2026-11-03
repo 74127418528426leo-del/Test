@@ -86,7 +86,7 @@ jobs:
           cmp output/extract/vmlinuz output/verify/vmlinuz
           cmp output/extract/initrd.gz output/verify/initrd.gz
           cmp output/puppy50-v69-native-browser-root.sfs output/verify/puppy_dpupbw64_10.0.12.sfs
-          (cd dist && sha256sum Puppy50_Web_v67_HTTPS_Bridge_Experimental.iso > SHA256SUMS)
+          (cd dist && sha256sum Puppy50_Web_v69_Native_Browser_Experimental.iso > SHA256SUMS)
           echo 'PUPPY50_V69_REAL_BOOT_KERNEL_INITRD_BYTE_IDENTICAL=PASS'
       - name: Preserve UNVERIFIED experimental candidate ISO for audit (NOT public release)
         uses: actions/upload-artifact@v4
