@@ -6,12 +6,34 @@
 set -u
 log() { echo "$*" >/dev/ttyS0 2>/dev/null || true; }
 log "PUPPY50_V67_NETWORK_PROBE_BEGIN"
+if [ ! -d /sys/class/net/eth0 ]; then
+  log "PUPPY50_V67_ETHERNET_MISSING=eth0"
+  exit 20
+fi
 ip link set dev eth0 up 2>/dev/null || true
+# OpenRC's dhcpcd can be starting asynchronously when the browser session
+# begins. The earlier v64 guest only passed because it waited for a lease.
+i=0
+while [ "$i" -lt 12 ]; do
+  if ip -o -4 addr show dev eth0 | grep -q 'inet '; then break; fi
+  i=$((i+1))
+  sleep 1
+done
 if ! ip -o -4 addr show dev eth0 | grep -q 'inet '; then
-  dhcpcd -4 -t 18 eth0 >/tmp/v67-dhcp.log 2>&1 || true
+  log "PUPPY50_V67_DHCP_RETRY_REQUESTED"
+  dhcpcd -4 -t 20 eth0 >/tmp/v67-dhcp.log 2>&1 || true
+  i=0
+  while [ "$i" -lt 25 ]; do
+    if ip -o -4 addr show dev eth0 | grep -q 'inet '; then break; fi
+    i=$((i+1))
+    sleep 1
+  done
 fi
 if ! ip -o -4 addr show dev eth0 | grep -q 'inet '; then
   log "PUPPY50_V67_DHCP=FAIL"
+  ip -o addr show dev eth0 >/dev/ttyS0 2>/dev/null || true
+  ip -4 route show >/dev/ttyS0 2>/dev/null || true
+  tail -15 /tmp/v67-dhcp.log >/dev/ttyS0 2>/dev/null || true
   exit 21
 fi
 log "PUPPY50_V67_DHCP=PASS"
@@ -38,7 +60,7 @@ fi
 URL=https://example.com/
 echo direct > /run/puppy50-network-mode
 if curl --noproxy '*' --fail --silent --show-error --location \
-  --proto '=https' --connect-timeout 6 --max-time 12 \
+  --proto '=https' --proto-redir '=https' --connect-timeout 6 --max-time 12 \
   --output /tmp/v67-example.html "$URL" &&
   [ -s /tmp/v67-example.html ]; then
   log "PUPPY50_V67_EXTERNAL_TLS_DIRECT=PASS"
