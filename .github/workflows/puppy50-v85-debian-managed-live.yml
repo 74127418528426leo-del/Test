@@ -56,8 +56,12 @@ jobs:
               apt-get update
               apt-get install -y --no-install-recommends \
                 live-build debootstrap debian-archive-keyring \
+                ca-certificates curl wget \
                 xorriso squashfs-tools isolinux syslinux-common \
                 grub-pc-bin grub-efi-amd64-bin
+              update-ca-certificates
+              curl --fail --show-error --silent --head --max-time 20 \
+                https://deb.debian.org/debian/dists/trixie/Release -o /dev/null
               bash /source/web85/build_live.sh /out
             ' > output/reports/debian_live_build.log 2>&1 || {
               tail -n 120 output/reports/debian_live_build.log
