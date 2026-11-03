@@ -1,0 +1,43 @@
+{
+  "schema": "PUPPY50_V70_NORMAL_BROWSING_VM_PROFILE",
+  "version": "v70-experimental",
+  "system": "RAM-only Linux browser, QEMU-only",
+  "guest_hardware": {
+    "machine": "x86_64 pc",
+    "vcpus": 2,
+    "tested_ram_mib": 1024,
+    "recommended_optional_ram_mib": 2048,
+    "video": "QEMU standard VGA",
+    "read_only_boot_medium": true,
+    "writable_disk": false,
+    "emulated_network_adapter": "Intel e1000"
+  },
+  "connectivity": {
+    "default_mode": "QEMU user-mode outbound NAT",
+    "host_network_types": ["host Wi-Fi", "host Ethernet", "host phone hotspot", "other host-routable networks subject to restrictions"],
+    "host_wifi_management": "optional separate NetworkManager user-prompted helper",
+    "guest_selects_host_ssid": false,
+    "guest_has_wifi_password": false,
+    "fallback": "localhost-only HTTPS CONNECT bridge when direct guest HTTPS fails",
+    "guest_https_certificate_validation_preserved": true,
+    "guest_network_status_snapshot": "file:///run/puppy50-network-status.html",
+    "network_status_is_live": false,
+    "physical_any_network_guaranteed": false,
+    "captive_portal_vpn_enterprise_auth_guaranteed": false
+  },
+  "browser": {
+    "engine": "Firefox ESR",
+    "homepage": "file:///usr/share/puppy50web/index.html",
+    "automatic_delayed_external_navigation": false,
+    "address_bar_available": true,
+    "user_selects_websites": true,
+    "example_com_https_visually_proven_in_parent_v69": true,
+    "other_public_websites_independently_verified": false
+  },
+  "limitations": {
+    "384mib_functional_browser": false,
+    "physical_hardware_drivers_certified": false,
+    "browser_security_updates_certified": false,
+    "safe_for_sensitive_accounts": false
+  }
+}
