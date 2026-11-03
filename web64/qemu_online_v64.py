@@ -2,8 +2,9 @@
 """Puppy50 Web v45: real optical-CD boot with configurable physical RAM and screenshot checks.
 Not a GUI interaction test. All source SFS loop devices must be RAM-backed.
 """
-import argparse,hashlib,json,socket,subprocess,time,re
+import argparse,hashlib,json,socket,subprocess,time,re,sys
 from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'web56'))
 
 def monitor(path,command):
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
