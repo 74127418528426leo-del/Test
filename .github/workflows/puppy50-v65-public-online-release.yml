@@ -1,0 +1,128 @@
+name: Puppy50 v65 - Publish validated QEMU online VM publicly
+on:
+  push:
+    branches: [puppy50-v65-public-online-vm]
+    paths:
+      - 'vm/ONLINE_RELEASE_READY.txt'
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: puppy50-v65-public-online-release
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify a completed verified v64 internet KVM run
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/puppy50-v64-online-qemu.yml/runs?branch=puppy50-v64-online-qemu&status=completed&per_page=30" > /tmp/online-runs.json
+          python3 - <<'PY'
+          import json,os
+          runs=json.load(open('/tmp/online-runs.json')).get('workflow_runs',[])
+          matched=[x for x in runs if x.get('status')=='completed' and
+                   x.get('conclusion')=='success' and
+                   x.get('head_branch')=='puppy50-v64-online-qemu']
+          if not matched:raise SystemExit('No successful real online KVM run exists. Public upload is forbidden.')
+          r=matched[0]
+          print('Real online KVM run:',r['id'],'SHA:',r['head_sha'])
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f"run_id={r['id']}\nsource_sha={r['head_sha']}\n")
+          PY
+      - name: Download the exact real-online ISO tested by that run
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_Web_v64_QEMU_ONLINE_ISO
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Independently validate guest HTTPS and prepare publicly downloadable package
+        shell: bash
+        env:
+          TESTED_SOURCE_SHA: ${{ steps.find.outputs.source_sha }}
+          TESTED_RUN_ID: ${{ steps.find.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          test -s dist/Puppy50_Web_v64_Online_QEMU.iso
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,zipfile
+          p=pathlib.Path('dist')
+          iso=p/'Puppy50_Web_v64_Online_QEMU.iso'
+          m=json.loads((p/'Puppy50_v64_Online_manifest.json').read_text())
+          assert m['iso_filename']==iso.name
+          assert m['iso_bytes']==iso.stat().st_size
+          assert m['iso_sha256']==hashlib.sha256(iso.read_bytes()).hexdigest()
+          assert m['1024mib_guest_real_DHCP_DNS_CA_verified_external_HTTPS'] is True
+          assert m['1024mib_offline_Firefox_JS_mouse_keyboard'] is True
+          assert m['1024mib_Firefox_HTTPS_URL_navigation_command_sent'] is True
+          assert m['browser_actual_remote_page_content_verified_automatically'] is False
+          assert m['384mib_full_browser_works'] is False
+          assert m['physical_wifi_any_network_supported'] is False
+          assert m['guests']['384']['ram_root_and_media_eject'] is True
+          assert m['guests']['1024']['guest_certificate_verified_https'] is True
+          p.joinpath('SOURCE_PROVENANCE.json').write_text(json.dumps({
+            'schema':'PUPPY50_ONLINE_PUBLIC_VM_SOURCE_PROVENANCE',
+            'real_test_workflow_run':int(os.environ['TESTED_RUN_ID']),
+            'real_test_source_commit':os.environ['TESTED_SOURCE_SHA'],
+            'online_curl_ca_verification_passed':True,
+            'real_browser_remote_site_manual_review_status':'see-public-release-notes'
+          },indent=2)+'\n')
+          for path,name in [
+            ('vm/launch_linux_online.sh','launch_linux_online.sh'),
+            ('vm/launch_windows_online.ps1','launch_windows_online.ps1'),
+            ('vm/QEMU_ONLINE_NETWORK_PROFILE.json','QEMU_ONLINE_NETWORK_PROFILE.json'),
+            ('web64/ONLINE_README.md','README_QEMU_ONLINE.md')
+          ]:
+            (p/name).write_bytes(pathlib.Path(path).read_bytes())
+          names=[
+            iso.name,'SHA256SUMS','Puppy50_v64_Online_manifest.json',
+            'SOURCE_PROVENANCE.json',
+            'launch_linux_online.sh','launch_windows_online.ps1',
+            'QEMU_ONLINE_NETWORK_PROFILE.json','README_QEMU_ONLINE.md'
+          ]
+          out=p/'Puppy50_Online_QEMU_VM_v65_bundle.zip'
+          with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_STORED,allowZip64=True) as z:
+            for name in names:z.write(p/name,arcname=name)
+          with zipfile.ZipFile(out) as z:
+            assert sorted(z.namelist())==sorted(names)
+            assert z.getinfo(iso.name).file_size==iso.stat().st_size
+          (p/'BUNDLE_SHA256SUMS').write_text(hashlib.sha256(out.read_bytes()).hexdigest()+'  '+out.name+'\n')
+          print('PUPPY50_V65_NETWORK_VM_BUNDLE_PASSED',out.stat().st_size)
+          PY
+          bash -n dist/launch_linux_online.sh
+      - name: Publish online QEMU VM as a PUBLIC GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-online-v65 >/dev/null 2>&1; then
+            echo 'Public tag already exists. Refusing to silently overwrite artifacts.' >&2
+            exit 20
+          fi
+          gh release create puppy50-online-v65 \
+            dist/Puppy50_Online_QEMU_VM_v65_bundle.zip \
+            dist/Puppy50_Web_v64_Online_QEMU.iso \
+            dist/SHA256SUMS dist/BUNDLE_SHA256SUMS \
+            dist/Puppy50_v64_Online_manifest.json \
+            dist/SOURCE_PROVENANCE.json \
+            dist/launch_linux_online.sh \
+            dist/launch_windows_online.ps1 \
+            dist/QEMU_ONLINE_NETWORK_PROFILE.json \
+            dist/README_QEMU_ONLINE.md \
+            --title 'Puppy50 Web v65 — Experimental online QEMU VM' \
+            --target "$GITHUB_SHA" \
+            --notes-file vm/ONLINE_PUBLIC_RELEASE_NOTES.md \
+            --prerelease --latest=false
+          gh release view puppy50-online-v65 --json url,assets,tagName
+          echo "PUBLIC_LINK=https://github.com/$GITHUB_REPOSITORY/releases/tag/puppy50-online-v65" >> "$GITHUB_STEP_SUMMARY"
