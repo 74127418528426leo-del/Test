@@ -1,0 +1,21 @@
+{
+  "schema": "PUPPY50_V69_HUMAN_REVIEWED_REAL_QEMU_SCREENSHOT",
+  "reviewed_screenshot": true,
+  "public_website_actually_visible_in_firefox": true,
+  "firefox_HTTPS_URL_confirmed": true,
+  "website": "https://example.com/",
+  "review_method": "Visual inspection of the actual QEMU P6 framebuffer at 375 seconds. The Firefox window shows a tab titled Example Domain, location example.com, and the Example Domain page body. Earlier frames show the gold JavaScript, orange mouse and green keyboard stages.",
+  "visual_run_url": "https://github.com/74127418528426leo-del/Test/actions/runs/41656250129",
+  "underlying_network_test": "Guest CA-verified external HTTPS to example.com through TLS-preserving host-only bridge",
+  "iso_sha256": "ceaa17d2aa74838048635a8270ed21025e93e04469c34dda4151ee0d4705609f",
+  "screenshot_sha256": "2ebff4a1d20fbd156cade170c4274173d553448e516bdac3b1c478e4163c77cb",
+  "screenshot_relative_path": "evidence/ram_1024MiB/frame_375.ppm",
+  "run_id": 41656250129,
+  "guest_RAM_mib": 1024,
+  "limitations": [
+    "This visual confirmation is of the example.com HTTPS page, not arbitrary Internet browsing.",
+    "The QEMU workflow failed a legacy input-stage timing and native exit marker parser despite verified later frames and successful native navigation.",
+    "No 384MiB working browser, secure automatic updates, physical Wi-Fi hardware or every-network compatibility.",
+    "This test image automatically opens an example.com demonstration tab after the initial offline mouse/keyboard test."
+  ]
+}
