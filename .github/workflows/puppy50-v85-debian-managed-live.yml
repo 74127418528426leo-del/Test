@@ -1,0 +1,174 @@
+name: Puppy50 v85 - Maintained Firefox ESR and physical Wi-Fi Debian Live pilot
+on:
+  push:
+    branches: [puppy50-v85-maintained-debian-wifi-live]
+    paths:
+      - 'web85/**'
+      - '.github/workflows/puppy50-v85-debian-managed-live.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v85-debian-live-test
+  cancel-in-progress: true
+jobs:
+  maintained_browser_live_iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate network probe and Debian Live source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n web85/build_live.sh
+          sh -n web85/config/includes.chroot/usr/local/sbin/puppy50-network-probe
+          sh -n web85/config/includes.chroot/etc/skel/.config/openbox/autostart
+          sh -n web85/config/hooks/live/010-enable-network-browser.hook.chroot
+          python3 -m py_compile web85/qemu_debian_live_smoke.py
+          grep -qx firefox-esr web85/config/package-lists/puppy50-browser.list.chroot
+          grep -qx network-manager web85/config/package-lists/puppy50-browser.list.chroot
+          grep -qx firmware-iwlwifi web85/config/package-lists/puppy50-browser.list.chroot
+          grep -qx firmware-realtek web85/config/package-lists/puppy50-browser.list.chroot
+          mkdir -p output/reports output/evidence
+      - name: Install live-build and signed Debian archive verification keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            live-build debootstrap debian-archive-keyring \
+            squashfs-tools xorriso isolinux syslinux-common \
+            grub-pc-bin grub-efi-amd64-bin qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          lb --version
+      - name: Build isolated Debian 13 live ISO using APT signature verification
+        timeout-minutes: 32
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash web85/build_live.sh "$PWD/output" \
+            > output/reports/debian_live_build.log 2>&1 || {
+            tail -n 100 output/reports/debian_live_build.log
+            exit 10
+          }
+          tail -n 25 output/reports/debian_live_build.log
+          (cd output && sha256sum -c SHA256SUMS)
+          du -h output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso
+      - name: Verify actual installed Firefox ESR version and NetworkManager from filesystem
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISO=output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso
+          mkdir -p output/extracted
+          xorriso -osirrox on -indev "$ISO" \
+            -extract /live/filesystem.squashfs output/extracted/filesystem.squashfs
+          unsquashfs -cat output/extracted/filesystem.squashfs var/lib/dpkg/status \
+            > output/reports/actual_dpkg_status.txt
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          s=Path('output/reports/actual_dpkg_status.txt').read_text()
+          pkgs={}
+          for block in s.split('\n\n'):
+              p=re.search(r'^Package: (.+)$',block,re.M)
+              v=re.search(r'^Version: (.+)$',block,re.M)
+              st=re.search(r'^Status: (.+)$',block,re.M)
+              if p and v and st and st.group(1)=='install ok installed':
+                  pkgs[p.group(1)]=v.group(1)
+          need=['firefox-esr','network-manager','network-manager-gnome',
+                'lightdm','openbox','live-boot','firmware-iwlwifi',
+                'firmware-realtek','firmware-atheros']
+          missing=[n for n in need if n not in pkgs]
+          if missing:raise SystemExit('Required actual signed packages missing: '+repr(missing))
+          v=pkgs['firefox-esr']
+          m=re.match(r'^(\d+)\.(\d+)\.(\d+)',v)
+          if m is None or tuple(map(int,m.groups()))<(153,6,0):
+              raise SystemExit('Outdated ESR installed; cannot claim security update')
+          out={'schema':'PUPPY50_V85_DEBIAN_SIGNED_BROWSER_IMAGE_REPORT',
+               'actual_installed_firefox_esr':v,
+               'contains_NetworkManager_and_WiFi_GUI':True,
+               'includes_iwlwifi_realtek_atheros_firmware':True,
+               'physical_wifi_hardware_proven':False,
+               'QEMU_actual_HTTPS_proven':False,
+               'full_browser_security_audit_proven':False,
+               'source':'Signed Debian trixie + security repositories, no Alpine APK mixing',
+               'actual_package_versions':{k:pkgs[k] for k in need},
+               'iso_bytes':Path('output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso').stat().st_size}
+          Path('output/reports/V85_ACTUAL_PACKAGE_REPORT.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - name: Start host-only TLS-preserving public HTTPS bridge for QEMU test
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 \
+            > output/reports/host_https_bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for n in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):
+                      print('PUPPY50_V85_HOST_HTTPS_BRIDGE_READY');break
+              except OSError:time.sleep(.3)
+          else:raise SystemExit('HTTPS bridge failed')
+          PY
+          curl --fail --silent --show-error --head \
+            --proxy http://127.0.0.1:3128 --noproxy '' --proto '=https' \
+            --connect-timeout 8 --max-time 20 https://example.com/ -o /dev/null
+      - name: Verify genuine 4096 MiB KVM toram boot, Firefox desktop and external HTTPS
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 web85/qemu_debian_live_smoke.py \
+            --iso output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso \
+            --out output/evidence/guest --ram 4096 --seconds 395
+      - name: Summarize evidence without claiming physical Wi-Fi or full website compatibility
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/evidence/guest/result.json')
+          actual=json.loads(p.read_text()) if p.is_file() else {}
+          pk=Path('output/reports/V85_ACTUAL_PACKAGE_REPORT.json')
+          package=json.loads(pk.read_text()) if pk.is_file() else {}
+          obj={'schema':'PUPPY50_V85_REAL_DEBIAN_LIVE_PUBLIC_RELEASE_GATE',
+               'image_built_and_signed_package_inventoried':bool(package),
+               'actual_Firefox_ESR_153_6_or_later':bool(package and
+                 package['actual_installed_firefox_esr'].startswith('153.6')),
+               'guest_real_public_CA_verified_HTTPS':actual.get('guest_public_HTTPS_proven',False),
+               'guest_media_ejection_survived_with_RAM_root':actual.get('toram_media_ejection_survived',False),
+               'QEMU_real_frames_saved':len(actual.get('screenshots',[])),
+               'actual_Firefox_desktop_manually_reviewed':False,
+               'any_real_physical_WiFi_chipset_tested':False,
+               'live_image_security_certified':False,
+               'full_online_browsing_public_release_eligible':False}
+          Path('output/reports/V85_RELEASE_GATE.json').write_text(json.dumps(obj,indent=2)+'\n')
+          print(json.dumps(obj,indent=2))
+          PY
+      - name: Preserve build reports, actual package versions and KVM evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v85_Debian_Managed_Firefox_Real_KVM_Evidence
+          path: |
+            output/reports/V85_*.json
+            output/reports/debian_live_build.log
+            output/evidence/guest/
+          retention-days: 20
+          if-no-files-found: warn
+      - name: Keep unverified pilot ISO as ephemeral Actions artifact, not public release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v85_Debian_Firefox_153_6_Physical_WiFi_TEST_ONLY_ISO
+          path: |
+            output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso
+            output/SHA256SUMS
+          retention-days: 5
+          if-no-files-found: error
