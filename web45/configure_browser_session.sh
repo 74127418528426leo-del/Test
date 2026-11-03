@@ -51,6 +51,19 @@ XAUTH=/home/web/.Xauthority
 rm -f "$XAUTH"
 xauth -f "$XAUTH" add :0 . "$COOKIE"
 chown 1000:1000 "$XAUTH"
+# Linux console handlers are not enough for Xorg/libinput: the guest must
+# have the evdev event interface. A real v55 QEMU guest displayed only
+# "Handlers=sysrq kbd" with no eventX, and Firefox ignored virtual input.
+for driver in evdev psmouse mousedev; do
+  if /sbin/modprobe -v "$driver" > /dev/ttyS0 2>&1; then
+    echo "PUPPY50_V56_INPUT_MODULE_LOADED=$driver" >/dev/ttyS0 2>/dev/null || true
+  else
+    echo "PUPPY50_V56_INPUT_MODULE_FAILED=$driver" >/dev/ttyS0 2>/dev/null || true
+  fi
+done
+echo 'PUPPY50_V56_INPUT_HANDLERS_BEFORE_XORG' >/dev/ttyS0 2>/dev/null || true
+cat /proc/bus/input/devices >/dev/ttyS0 2>/dev/null || true
+ls -la /dev/input >/dev/ttyS0 2>/dev/null || true
 echo 'PUPPY50_WEB_V45_XORG_START' > /dev/ttyS0 2>/dev/null || true
 Xorg :0 vt1 -nolisten tcp -auth "$XAUTH" > /var/log/Xorg0.log 2>&1 &
 XPID=$!
@@ -65,6 +78,13 @@ if ! kill -0 "$XPID" 2>/dev/null; then
   exit 1
 fi
 echo 'PUPPY50_WEB_V45_XORG_RUNNING' > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_INPUT_DEVICES_BEGIN' > /dev/ttyS0 2>/dev/null || true
+cat /proc/bus/input/devices > /dev/ttyS0 2>/dev/null || true
+ls -la /dev/input > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_XORG_INPUT_LOG_BEGIN' > /dev/ttyS0 2>/dev/null || true
+grep -Ei 'input|keyboard|mouse|libinput|evdev|device added' /var/log/Xorg0.log > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_XORG_INPUT_LOG_END' > /dev/ttyS0 2>/dev/null || true
+echo 'PUPPY50_V55_INPUT_DEVICES_END' > /dev/ttyS0 2>/dev/null || true
 su -s /bin/sh web -c 'DISPLAY=:0 XAUTHORITY=/home/web/.Xauthority openbox' >/var/log/openbox.log 2>&1 &
 sleep 2
 echo 'PUPPY50_WEB_V45_FIREFOX_REQUESTED' > /dev/ttyS0 2>/dev/null || true
@@ -102,7 +122,33 @@ strong{color:#ffe498}
 <p><strong>384 MiB target — experimental build.</strong></p>
 <p>This local page proves browser rendering without needing an internet connection.</p>
 <p>The normal Firefox address bar, tabs and downloads remain available.</p>
-</main></body></html>
+</main>
+<script>
+(function() {
+  // Three visually distinct stages: JavaScript, pointer click, keyboard.
+  // Avoid requiring focus merely to prove that JavaScript executed.
+  const root=document.documentElement,body=document.body;
+  const title=document.querySelector('h1');
+  body.style.borderTop='80px solid #ffc044';
+  title.textContent='SCRIPT READY — PUPPY50 WEB';
+  root.dataset.testStage='script-ready';
+  window.addEventListener('click', function(){
+    if(root.dataset.testStage==='key-confirmed')return;
+    root.dataset.testStage='click-confirmed';
+    body.style.background='#d48c27';
+    title.textContent='CLICK CONFIRMED';
+  },true);
+  window.addEventListener('keydown',function(event){
+    if(event.key==='t'||event.key==='T'){
+      root.dataset.testStage='key-confirmed';
+      root.style.background='#2bcc71';
+      body.style.background='#2bcc71';
+      document.querySelector('main').style.background='#2bcc71';
+      title.textContent='KEYBOARD CONFIRMED';
+    }
+  },true);
+})();
+</script></body></html>
 EOF
 # Enable services through audited OpenRC wiring. This corrects the former
 # broken ../../../init.d links (must be ../../init.d under /etc/runlevels/*)
