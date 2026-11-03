@@ -16,7 +16,7 @@ DRIVER_SEEDS={
     # Intel i3-540 GMA/i915 and other basic graphics/console
     'i915','drm','drm_kms_helper','drm_display_helper','ttm','fbdev','simpledrm','bochs','virtio_gpu',
     # Keyboard/mouse, USB, HID and common hubs
-    'usbhid','hid','hid_generic','i8042','atkbd','psmouse','xhci_hcd','xhci_pci',
+    'usbhid','hid','hid_generic','i8042','atkbd','psmouse','evdev','mousedev','serio_raw','xhci_hcd','xhci_pci',
     'ehci_hcd','ehci_pci','uhci_hcd','usbcore','usb_common',
     # Audio, sound devices, basic cameras
     'snd_hda_intel','snd_hda_codec_realtek','snd_hda_codec_hdmi','snd_hda_codec_generic',
