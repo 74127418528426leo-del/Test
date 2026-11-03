@@ -5,7 +5,7 @@ spec=importlib.util.spec_from_file_location('p91',SRC)
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class TestPatch(unittest.TestCase):
  def root(self,p):
-  for name in ['usr/bin/firefox-esr','usr/bin/lightdm','usr/share/xsessions/openbox.desktop','etc/skel/.config/openbox/autostart','usr/local/sbin/puppy50-network-probe','etc/ssl/certs/ca-certificates.crt']:
+  for name in ['usr/bin/firefox-esr','usr/sbin/lightdm','usr/share/xsessions/openbox.desktop','etc/skel/.config/openbox/autostart','usr/local/sbin/puppy50-network-probe','etc/ssl/certs/ca-certificates.crt']:
    f=p/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_text('untouched')
   f=p/'etc/lightdm/lightdm.conf.d/50-puppy50.conf';f.parent.mkdir(parents=True,exist_ok=True);f.write_text('[Seat:*]\nautologin-user=user\n')
  def test_preserves_browser_and_network(self):
