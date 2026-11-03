@@ -24,13 +24,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/puppy50-v64-online-qemu.yml/runs?branch=puppy50-v64-online-qemu&status=completed&per_page=30" > /tmp/online-runs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" > /tmp/online-runs.json
           python3 - <<'PY'
           import json,os
           runs=json.load(open('/tmp/online-runs.json')).get('workflow_runs',[])
           matched=[x for x in runs if x.get('status')=='completed' and
                    x.get('conclusion')=='success' and
-                   x.get('head_branch')=='puppy50-v64-online-qemu']
+                   x.get('head_branch')=='puppy50-v64-online-qemu' and
+                   x.get('name')=='Puppy50 v64 - QEMU e1000 DHCP DNS HTTPS online Firefox test']
           if not matched:raise SystemExit('No successful real online KVM run exists. Public upload is forbidden.')
           r=matched[0]
           print('Real online KVM run:',r['id'],'SHA:',r['head_sha'])
