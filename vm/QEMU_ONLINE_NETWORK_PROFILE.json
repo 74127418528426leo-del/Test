@@ -1,0 +1,21 @@
+{
+  "schema":"PUPPY50_QEMU_ONLINE_GUEST_V1",
+  "machine":"pc",
+  "vcpus":2,
+  "guest_ram_mib":1024,
+  "guest_disk":null,
+  "boot":"readonly live ISO, copied into guest RAM",
+  "network_device":"Intel e1000 emulation",
+  "network_backend":"unprivileged QEMU user-mode NAT",
+  "network_profile":"guest eth0 obtains address by DHCP, uses NAT DNS and host outbound Internet",
+  "host_links":["Wi-Fi","Ethernet","phone hotspot if the host is online"],
+  "guest_selects_physical_wifi_network":false,
+  "enterprise_and_captive_portal_guaranteed":false,
+  "inbound_port_forwards":false,
+  "verified_external_tls_by_guest":"required before any release",
+  "general_browser_page_content_manual_review":"required",
+  "offline_toggle":"PUPPY50_NETWORK=off bash launch_linux_online.sh",
+  "384mib_interactive_browser_proven":false,
+  "security_updates_certified":false,
+  "physical_hardware_supported":false
+}
