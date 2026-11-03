@@ -16,6 +16,9 @@ on:
       - '.github/workflows/puppy50-v62-preview-iso.yml'
       - 'web62/**'
   workflow_dispatch:
+concurrency:
+  group: puppy50-v62-iso-preview
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -33,6 +36,8 @@ jobs:
           python3 -m unittest discover -s web51/tests -p 'test_*.py' -v
           python3 -m unittest discover -s web54/tests -p 'test_*.py' -v
           python3 -m unittest discover -s web56/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web62/tests -p 'test_*.py' -v
+          python3 -m py_compile web62/preview_gate.py
           python3 -m py_compile web56/qemu_input_v56.py web56/frame_stages.py
           sh -n web54/build_mesa_softpipe.sh
           sh -n web45/configure_browser_session.sh web45/wire_openrc_services.sh
@@ -312,7 +317,8 @@ jobs:
             --iso dist/Puppy50_Web_QEMU_Preview_v62.iso \
             --results output/reports/V62_REAL_KVM_RESULTS.json \
             --evidence output/evidence \
-            --output dist/Puppy50_QEMU_Preview_v62_manifest.json
+            --output dist/Puppy50_QEMU_Preview_v62_manifest.json \
+            --commit "${GITHUB_SHA}"
           (cd dist && sha256sum Puppy50_Web_QEMU_Preview_v62.iso > SHA256SUMS)
           cp web62/QEMU_PREVIEW_README.md dist/README_QEMU_ONLY.md
           echo "Experimental QEMU-only ISO passed 1024MiB offline DOM click/key proof. NOT certified for 384MiB browser, real hardware, online browsing or updates." >> "${GITHUB_STEP_SUMMARY}"
