@@ -86,7 +86,7 @@ def write(path,content,mode=0o644):
 def patch(root):
     root=Path(root).resolve(strict=True)
     if root==Path("/") or not root.is_dir():raise ValueError("Never modify real system root")
-    mandatory=['usr/bin/firefox-esr','usr/bin/lightdm',
+    mandatory=['usr/bin/firefox-esr','usr/sbin/lightdm',
       'usr/share/xsessions/openbox.desktop','etc/skel/.config/openbox/autostart',
       'usr/local/sbin/puppy50-network-probe','etc/ssl/certs/ca-certificates.crt']
     missing=[p for p in mandatory if not (root/p).exists()]
