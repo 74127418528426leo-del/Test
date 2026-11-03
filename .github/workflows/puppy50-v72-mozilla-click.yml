@@ -1,4 +1,4 @@
-name: Puppy50 v72 - Independent Mozilla public website click at 1 GiB
+name: Puppy50 v72 - Real Mozilla link via accessible keyboard navigation
 on:
   push:
     branches: [puppy50-v72-mozilla-real-site]
@@ -71,7 +71,7 @@ jobs:
             --proxy http://127.0.0.1:3128 --noproxy '' \
             --proto '=https' --connect-timeout 10 --max-time 20 \
             -o /dev/null https://www.mozilla.org/
-      - name: Boot actual published ISO and click Mozilla tile in real Firefox
+      - name: Boot exact v70 ISO and activate Mozilla via real Tab and Enter in Firefox
         timeout-minutes: 7
         run: |
           set -euo pipefail
@@ -89,9 +89,9 @@ jobs:
           o={'schema':'PUPPY50_V72_MOZILLA_WEBSITE_DIAGNOSTIC',
             'real_1gib_guest_RAM_copy_and_cd_eject':bool(r.get('ram_root_copy') and r.get('ram_root_switch') and r.get('ejected')),
             'actual_v70_user_homepage_rendered':r.get('actual_user_homepage_visibly_rendered',False),
-            'real_mouse_event_sent':r.get('real_qemu_browser_link_click_submitted',False),
+            'real_keyboard_link_activation_sent':r.get('real_qemu_keyboard_mozilla_link_activation_submitted',False),
+            'three_focus_navigation_tabs_sent':r.get('keyboard_tab_count_proven',False),
             'home_page_disappeared_after_click':(r.get('Mozilla_link_pixel_transition') or {}).get('homepage_color_disappeared',False),
-            'qemu_mouse_move_to_Mozilla_requested':r.get('mozilla_pointer_move_requested',False),
             'mozilla_site_real_page_visually_reviewed':False,
             'external_Mozilla_HTTPS_host_preflight_succeeded':True,
             'guest_CA_verified_example_com_HTTPS':r.get('guest_public_CA_verified_HTTPS',False),
@@ -112,7 +112,7 @@ jobs:
             output/reports/
           retention-days: 14
           if-no-files-found: warn
-      - name: Fail closed if real link click did not change the rendered page
+      - name: Fail closed unless genuine Tab-Enter link activation changes rendered page
         if: always()
         run: |
           python3 - <<'PY'
@@ -122,8 +122,8 @@ jobs:
           if not p.exists():raise SystemExit('PUPPY50_V72_NO_GUEST_RESULT')
           r=json.loads(p.read_text())
           for key in ('real_1gib_guest_RAM_copy_and_cd_eject','actual_v70_user_homepage_rendered',
-                      'real_mouse_event_sent','home_page_disappeared_after_click','qemu_mouse_move_to_Mozilla_requested'):
+                      'real_keyboard_link_activation_sent','three_focus_navigation_tabs_sent','home_page_disappeared_after_click'):
               if r.get(key) is not True:raise SystemExit('PUPPY50_V72_LINK_CLICK_NOT_PROVEN '+key)
-          print('PUPPY50_V72_FIREFOX_REAL_LINK_CLICK_CHANGED_FRAMEBUFFER_PASS')
+          print('PUPPY50_V72_FIREFOX_REAL_KEYBOARD_LINK_ACTIVATION_FRAMEBUFFER_PASS')
           print('Manual screenshot review still required for Mozilla actual content')
           PY
