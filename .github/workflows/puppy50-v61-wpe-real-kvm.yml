@@ -59,7 +59,11 @@ jobs:
           sudo python3 web45/prune_hardware_v45.py \
             output/rootfs output/reports/kernel-module-closure.json
           VERSION=$(python3 -c 'import json;print(json.load(open("output/reports/kernel-module-closure.json"))["kernel_version"])')
-          sudo depmod -b output/rootfs "$VERSION"
+          # Avoid host-side depmod chasing Alpine's vmlinuz symlink
+          # against a Debian userspace staging tree. The official Alpine
+          # modules.dep is already present, and the ISO builder regenerates
+          # authoritative depmod indexes AFTER copying the selected modules
+          # into the matching real initrd.
           test -s output/rootfs/boot/vmlinuz-lts
           test -s "output/rootfs/usr/lib/modules/$VERSION/modules.dep"
           # Keep boot-only modules and kernel OUT of compressed root, but
