@@ -1,0 +1,30 @@
+# Puppy50 maintained browser pilot (Debian 13 / trixie)
+# This is a SEPARATE experimental OS, not a change to v70.
+# Required for standard updated Firefox from signed Debian security repos.
+linux-image-amd64
+live-boot
+live-config
+systemd-sysv
+ca-certificates
+curl
+iproute2
+network-manager
+network-manager-gnome
+wpasupplicant
+iw
+rfkill
+wireless-regdb
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-misc-nonfree
+xserver-xorg
+xinit
+lightdm
+openbox
+tint2
+dbus-x11
+dbus-user-session
+policykit-1-gnome
+firefox-esr
+fonts-dejavu-core
