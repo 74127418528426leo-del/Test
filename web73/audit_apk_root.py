@@ -59,10 +59,18 @@ def is_shared_library(path):
 
 def audit(root):
     root=Path(root).resolve()
-    db=root/"lib/apk/db/installed"
-    if not db.is_file():
-        raise ValueError("No Alpine /lib/apk/db/installed; do not invent package integrity")
-    entries,packages=parse_apk_installed(db.read_text(errors="replace"))
+    db_candidates=[
+        root/"lib/apk/db/installed",
+        root/"usr/lib/apk/db/installed",
+        root/"var/lib/apk/db/installed",
+    ]
+    db=next((candidate for candidate in db_candidates if candidate.is_file()),None)
+    # Minimal RAM-root images may omit APK metadata entirely. Report this as
+    # a release-blocking audit finding rather than aborting without evidence.
+    if db is None:
+        entries,packages={},[]
+    else:
+        entries,packages=parse_apk_installed(db.read_text(errors="replace"))
     by_package={p["name"]:p["version"] for p in packages}
     libs=[]
     for folder in ("lib","lib64","usr/lib","usr/lib64","usr/local/lib"):
@@ -104,7 +112,8 @@ def audit(root):
     return {
       "schema":"PUPPY50_APK_PACKAGE_COHERENCE_AUDIT_V1",
       "purpose":"Detect package database drift/unmanaged library overlays; not a full vulnerability audit",
-      "apk_database_present":True,
+      "apk_database_present":bool(db is not None),
+      "apk_database_location":str(db.relative_to(root)) if db is not None else None,
       "apk_package_records":len(packages),
       "firefox_package_version_in_database":browser,
       "mesa_package_versions_in_database":{k:v for k,v in by_package.items() if "mesa" in k.lower()},
@@ -118,6 +127,8 @@ def audit(root):
       "selected_file_owners":target_owners,
       "ca_bundle_exists":cert.is_file(),
       "ca_bundle_bytes":cert.stat().st_size if cert.is_file() else 0,
+      "package_manager_inventory_missing":bool(db is None),
+      "package_file_integrity_verifiable":bool(db is not None and checksum_checked>0),
       "security_updates_certified":False,
       "browser_sandbox_certified":False,
       "known_trusted_release_signature_present":False,
