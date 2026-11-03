@@ -86,7 +86,7 @@ jobs:
           import json
           d=Path('output/evidence/ram_1024MiB/result.json')
           r=json.loads(d.read_text()) if d.is_file() else {}
-          o={'schema':'PUPPY50_V72_SECOND_PUBLIC_SITE_DIAGNOSTIC',
+          o={'schema':'PUPPY50_V72_MOZILLA_WEBSITE_DIAGNOSTIC',
             'real_1gib_guest_RAM_copy_and_cd_eject':bool(r.get('ram_root_copy') and r.get('ram_root_switch') and r.get('ejected')),
             'actual_v70_user_homepage_rendered':r.get('actual_user_homepage_visibly_rendered',False),
             'real_mouse_event_sent':r.get('real_qemu_browser_link_click_submitted',False),
@@ -99,7 +99,7 @@ jobs:
             'security_certified':False,
             'no_new_ISO_rebuild':True
           }
-          Path('output/reports/V71_SECOND_PUBLIC_SITE_RESULTS.json').write_text(json.dumps(o,indent=2)+'\n')
+          Path('output/reports/V72_MOZILLA_SITE_RESULTS.json').write_text(json.dumps(o,indent=2)+'\n')
           print(json.dumps(o,indent=2))
           PY
       - name: Preserve real after-click browser framebuffer for independent review
@@ -118,7 +118,7 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          p=Path('output/reports/V71_SECOND_PUBLIC_SITE_RESULTS.json')
+          p=Path('output/reports/V72_MOZILLA_SITE_RESULTS.json')
           if not p.exists():raise SystemExit('PUPPY50_V72_NO_GUEST_RESULT')
           r=json.loads(p.read_text())
           for key in ('real_1gib_guest_RAM_copy_and_cd_eject','actual_v70_user_homepage_rendered',
