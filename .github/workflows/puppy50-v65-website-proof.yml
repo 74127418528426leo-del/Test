@@ -1,0 +1,148 @@
+name: Puppy50 v65 - Prove real host-served website in Firefox over QEMU NAT
+on:
+  push:
+    branches: [puppy50-v65-website-network-proof]
+    paths:
+      - 'web65/**'
+      - '.github/workflows/puppy50-v65-website-proof.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v65-website-diagnostic
+  cancel-in-progress: true
+jobs:
+  host-webpage-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test deterministic HTTP page and screenshot proof code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web65/tests -p 'test_*.py' -v
+          python3 -m py_compile web65/host_site.py web65/remote_pixels.py web65/qemu_host_site_v65.py
+          mkdir -p output/evidence/ram_1024MiB output/reports dist
+      - name: Install real QEMU for KVM test
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download SAME v64 candidate ISO previously tested under actual KVM
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v64_UNVERIFIED_ONLINE_CANDIDATE_ISO
+          run-id: 41573693962
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Validate candidate ISO and diagnose host direct versus proxy egress
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/Puppy50_Web_v64_Online_QEMU.iso
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import os,json
+          from pathlib import Path
+          d={x:bool(os.getenv(x)) for x in ('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','http_proxy','https_proxy','all_proxy')}
+          Path('output/reports/host_proxy_presence.json').write_text(json.dumps(d,indent=2)+'\n')
+          print('Host proxy variables present (values and credentials NEVER logged):',d)
+          PY
+          if curl --noproxy '*' --fail --silent --show-error --head --connect-timeout 8 --max-time 13 https://example.com/ -o /dev/null; then
+            echo 'HOST_DIRECT_HTTPS=PASS' | tee output/reports/host-direct-https.txt
+          else
+            echo 'HOST_DIRECT_HTTPS=FAIL_OR_RESTRICTED' | tee output/reports/host-direct-https.txt
+          fi
+          if curl --fail --silent --show-error --head --connect-timeout 8 --max-time 13 https://example.com/ -o /dev/null; then
+            echo 'HOST_NORMAL_HTTPS=PASS' | tee output/reports/host-normal-https.txt
+          else
+            echo 'HOST_NORMAL_HTTPS=FAIL_OR_RESTRICTED' | tee output/reports/host-normal-https.txt
+          fi
+      - name: Serve genuine deterministic HTTP website on QEMU host loopback
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web65/host_site.py \
+            --port 8000 --log output/reports/host_http_gets.log \
+            > output/reports/host_http_server.log 2>&1 < /dev/null &
+          echo $! > output/reports/host_server.pid
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',8000),timeout=1):
+                      print('Host HTTP test server listening at 127.0.0.1:8000')
+                      break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('No host HTTP server')
+          PY
+      - name: Prove Firefox browser can navigate to remote-host HTTP page via real QEMU network
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python3 web65/qemu_host_site_v65.py \
+            --iso dist/Puppy50_Web_v64_Online_QEMU.iso \
+            --out output/evidence/ram_1024MiB --ram 1024 --seconds 275
+      - name: Summarize real host server request and independent Firefox pixel proof
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=Path('output/evidence/ram_1024MiB/result.json')
+          result=json.loads(r.read_text()) if r.exists() else {}
+          log=Path('output/reports/host_http_gets.log')
+          hit='V65_HOST_ACCEPTED_BROWSER_GET path=/v65' in (log.read_text() if log.is_file() else '')
+          p=result.get('remote_site_visual_proof') or {}
+          proof={
+             'schema':'PUPPY50_V65_HOST_SITE_QEMU_NAT_PROOF',
+             'ram_root':bool(result.get('ram_copy_complete') and result.get('ram_root_switch') and result.get('media_ejection_verified')),
+             'offline_Firefox_input':bool(result.get('script_ready_visually_proven') and result.get('mouse_click_visually_proven') and result.get('keyboard_visually_proven')),
+             'host_received_actual_browser_path':hit,
+             'real_firefox_remote_site_pixel_change':bool(result.get('remote_site_visual_pass')),
+             'pixel_fractions':p,
+             'guest_DHCP':result.get('guest_dhcp_lease',False),
+             'guest_route':result.get('guest_default_route',False),
+             'guest_DNS':result.get('guest_dns_config',False),
+             'guest_CA_verified_external_HTTPS':result.get('guest_ca_verified_external_https',False),
+             'external_internet_proven':False,
+             'captive_portal_or_any_physical_wifi_proven':False,
+             'scope':'HTTP host webpage over NAT is distinct from external HTTPS and general internet',
+          }
+          out=Path('output/reports/V65_ACTUAL_HOST_WEBSITE_PROOF.json')
+          out.write_text(json.dumps(proof,indent=2)+'\n')
+          print(json.dumps(proof,indent=2))
+          PY
+      - name: Preserve KVM screenshots and guest+host logs, never imply external Internet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v65_real_QEMU_host_webpage_evidence
+          path: |
+            output/reports/
+            output/evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Fail closed if network-served website does not render inside Firefox
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          f=Path('output/reports/V65_ACTUAL_HOST_WEBSITE_PROOF.json')
+          if not f.exists():raise SystemExit('No real website evidence')
+          d=json.loads(f.read_text())
+          for k in ('ram_root','offline_Firefox_input','host_received_actual_browser_path',
+                    'real_firefox_remote_site_pixel_change','guest_DHCP','guest_route'):
+              if d.get(k) is not True:raise SystemExit(f'FAIL_CLOSED missing {k}')
+          print('PUPPY50_V65_REAL_HOST_WEBSITE_RENDERING_OVER_QEMU_NAT_PROVEN')
+          print('EXTERNAL HTTPS and physical network hardware still unverified.')
+          PY
