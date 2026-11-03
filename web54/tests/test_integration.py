@@ -41,6 +41,21 @@ class SoftpipeSafetyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     m.validate_tar(t,root)
 
+    def test_allows_normal_tar_root_directory_but_not_parent_traversal(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=self.fixture(d)
+            buf=io.BytesIO()
+            with tarfile.open(fileobj=buf,mode="w:gz") as t:
+                item=tarfile.TarInfo("./")
+                item.type=tarfile.DIRTYPE
+                t.addfile(item)
+                item2=tarfile.TarInfo("./usr/")
+                item2.type=tarfile.DIRTYPE
+                t.addfile(item2)
+            buf.seek(0)
+            with tarfile.open(fileobj=buf,mode="r:gz") as t:
+                self.assertEqual(len(m.validate_tar(t,root)),2)
+
     def test_rejects_absolute_symlink(self):
         with tempfile.TemporaryDirectory() as d:
             root=self.fixture(d)
