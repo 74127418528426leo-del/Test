@@ -26,7 +26,7 @@ python3 web45/direct_insmod_loader.py "$SCRATCH/initrd/lib/modules/$VERSION" "$S
 test -x "$SCRATCH/initrd/load_early_modules.sh"
 # A previous real KVM boot showed every module lookup failing in BusyBox.
 # Require an explicit uncompressed .ko entry for each essential early driver.
-for module in sr_mod scsi_mod cdrom ata_piix isofs squashfs loop overlay evdev psmouse mousedev; do
+for module in sr_mod scsi_mod cdrom ata_piix isofs squashfs loop overlay evdev psmouse mousedev e1000; do
   if ! grep -Eq "/${module}\\.ko:" "$SCRATCH/initrd/lib/modules/$VERSION/modules.dep"; then
     echo "PUPPY50_WEB_V46_FAIL_INITRD_MODDEP module=$module" >&2
     exit 4
@@ -40,6 +40,11 @@ for input in evdev psmouse mousedev; do
     exit 6
   fi
 done
+if ! grep -Fq 'module=e1000 status=' "$SCRATCH/initrd/load_early_modules.sh"; then
+  echo 'PUPPY50_V64_NETWORK_EARLY_E1000_LOADER_MISSING' >&2
+  exit 17
+fi
+echo 'PUPPY50_V64_NETWORK_EARLY_E1000_LOADER_PRESENT=PASS'
 echo 'PUPPY50_V58_EARLY_INPUT_LOADER_PRESENT=PASS'
 echo 'PUPPY50_WEB_V46_VALIDATED_INITRD_MODULE_DEPENDENCIES'
 (
