@@ -298,3 +298,28 @@ jobs:
             output/evidence/
           retention-days: 7
           if-no-files-found: warn
+
+      - name: Fail closed on missing 384MiB offline browser interactivity
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V57_REAL_KVM_RESULTS.json')
+          if not p.exists():
+              raise SystemExit('NO 384MiB OFFLINE BROWSER EVIDENCE: missing results file')
+          d=json.loads(p.read_text())
+          # Offline interaction gate is separate from secure HTTPS, WebGL,
+          # package updates and physical-hardware acceptance.
+          required=('ram_copy','root_switch','cd_ejected','script_ready',
+                    'mouse_event_visually_confirmed','keyboard_event_visually_confirmed')
+          for ram in ('1024','384'):
+              r=d.get(ram,{})
+              missing=[k for k in required if r.get(k) is not True]
+              print(f'PUPPY50_V57_OFFLINE_INTERACTION ram={ram} missing={missing}')
+              if missing:
+                  raise SystemExit(f'PUPPY50_V57_FAIL_CLOSED ram={ram}; missing={missing}')
+          print('PUPPY50_V57_384MIB_LOCAL_OFFLINE_INTERACTION_PASS')
+          print('HTTPS, browser security, real hardware and general Internet functionality remain unverified.')
+          PY
