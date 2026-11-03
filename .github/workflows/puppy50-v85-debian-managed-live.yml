@@ -32,29 +32,38 @@ jobs:
           grep -qx firmware-iwlwifi web85/config/package-lists/puppy50-browser.list.chroot
           grep -qx firmware-realtek web85/config/package-lists/puppy50-browser.list.chroot
           mkdir -p output/reports output/evidence
-      - name: Install live-build and signed Debian archive verification keys
+      - name: Install real QEMU, verify KVM and current Docker build environment
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            live-build debootstrap debian-archive-keyring \
-            squashfs-tools xorriso isolinux syslinux-common \
-            grub-pc-bin grub-efi-amd64-bin qemu-system-x86
+          sudo apt-get install -y --no-install-recommends squashfs-tools xorriso qemu-system-x86
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
-          lb --version
-      - name: Build isolated Debian 13 live ISO using APT signature verification
-        timeout-minutes: 32
+          docker --version
+          df -h "$GITHUB_WORKSPACE"
+      - name: Build in CURRENT DEBIAN 13, using correct signed trixie-security packages
+        timeout-minutes: 39
         shell: bash
         run: |
           set -euo pipefail
-          bash web85/build_live.sh "$PWD/output" \
-            > output/reports/debian_live_build.log 2>&1 || {
-            tail -n 100 output/reports/debian_live_build.log
-            exit 10
-          }
-          tail -n 25 output/reports/debian_live_build.log
+          docker run --privileged --rm \
+            -e DEBIAN_FRONTEND=noninteractive \
+            -v "$GITHUB_WORKSPACE:/source:ro" \
+            -v "$GITHUB_WORKSPACE/output:/out" \
+            debian:trixie bash -lc '
+              set -e
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                live-build debootstrap debian-archive-keyring \
+                xorriso squashfs-tools isolinux syslinux-common \
+                grub-pc-bin grub-efi-amd64-bin
+              bash /source/web85/build_live.sh /out
+            ' > output/reports/debian_live_build.log 2>&1 || {
+              tail -n 120 output/reports/debian_live_build.log
+              exit 10
+            }
+          tail -n 28 output/reports/debian_live_build.log
           (cd output && sha256sum -c SHA256SUMS)
           du -h output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso
       - name: Verify actual installed Firefox ESR version and NetworkManager from filesystem
