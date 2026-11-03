@@ -33,7 +33,7 @@ jobs:
           from qemu_debian_live_smoke import ppm_valid
           from pathlib import Path
           p=Path('/tmp/puppy50-v88-640x480.ppm')
-          p.write_bytes(b'P6\\n640 480\\n255\\n'+b'\\0'*(640*480*3))
+          p.write_bytes(b'P6\n640 480\n255\n'+b'\0'*(640*480*3))
           assert p.stat().st_size==921615 and ppm_valid(p)
           p.unlink()
           print('V88_REAL_640x480_SCREENSHOT_GATE_FIXED')
