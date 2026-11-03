@@ -50,6 +50,26 @@ The next test now issues three real `sendkey tab` events through QEMU (home link
 
 This is superior to arbitrary mouse movement hacks because keyboard accessibility is useful to actual people as well as automated tests, while the present guest/VM exposes conflicting mouse paths.
 
+## Third observed attempt: keyboard focus eventually moves; activation remains unproven
+
+Completed real KVM run: https://github.com/74127418528426leo-del/Test/actions/runs/41668861706
+
+The real guest again passed RAM-root, CD eject, DHCP/DNS and guest public HTTPS. QEMU accepted three real `sendkey tab` commands and one `sendkey ret` command; **no error was returned**. The 205s, 245s and 275s QEMU screenshots show a cyan focus/hover outline on the **Mozilla tile** and a Firefox status-bar link to `www.mozilla.org`, but the address bar still shows the **local Puppy50 homepage**. The framebuffer's homepage cyan fraction stayed around **0.039**, not an external webpage.
+
+**Do not claim Mozilla loaded.** Browser focus was reached, but a fixed-time Enter command did not establish completed link activation. An HMP monitor prompt does not prove the guest received the event at the expected time, especially on this CPU-constrained 1 GiB software-rendered browser.
+
+### Correct next architecture
+
+Stop inventing fixed time/coordinate scripts. Use a browser-aware, **state-driven** test harness:
+
+1. Boot and establish readiness from the guest serial log and a real rendered framebuffer, not arbitrary elapsed seconds.
+2. Focus links using Firefox's accessibility tree / XTest-driven local GUI input or an isolated, temporary test-only browser automation protocol. Never expose remote debugging over public networking.
+3. **Confirm the focused target before Enter** and wait for a real location change, loaded document and final screenshot.
+4. Separate the test harness from the downloadable production ISO; do not label test automation as a browser security feature.
+5. Repeat compatibility checks on at least 2 distinct public HTTPS sites and record actual performance, memory pressure, permissions and screenshots.
+
+This is a **testing harness limitation**, not evidence of a failure of public HTTPS or Firefox in the already verified v70/v71 user-facing setup.
+
 ## Larger product lessons
 
 - The VM's **authorized host network** can be Wi-Fi, Ethernet, or hotspot because the guest uses e1000/QEMU NAT; it does not contain a physical Wi-Fi SSID picker. No honest design can promise Internet across every secured or restricted network.
