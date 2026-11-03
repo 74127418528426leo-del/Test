@@ -1,0 +1,92 @@
+name: Puppy50 v95 - Real Browser Engine Low RAM Bakeoff
+on:
+  push:
+    branches: [puppy50-v95-lowram-browser-audit]
+    paths:
+      - 'web95/**'
+      - '.github/workflows/puppy50-v95-browser-bakeoff.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-v95-lowram-browser-bakeoff
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    container:
+      image: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {browser: dillo, package: dillo}
+          - {browser: netsurf, package: netsurf-gtk}
+          - {browser: links2, package: links2}
+          - {browser: cog, package: cog}
+          - {browser: surf, package: surf}
+          - {browser: luakit, package: luakit}
+          - {browser: falkon, package: falkon}
+          - {browser: firefox, package: firefox-esr}
+          - {browser: epiphany, package: epiphany-browser}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Debian trixie exact browser engine and Xvfb test utilities
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 ca-certificates curl xauth xvfb scrot \
+            dbus-x11 dbus-user-session util-linux procps "$PACKAGE"
+          useradd -m -u 1550 -s /bin/sh p50
+          mkdir -p /tmp/p50-runtime results
+          chown p50:p50 /tmp/p50-runtime
+          chmod 700 /tmp/p50-runtime
+          PYTHONPATH=web95 python3 -m unittest discover -s web95/tests -p 'test_*.py' -v
+          python3 -m py_compile web95/browser_probe.py
+          dpkg-query -W -f='${binary:Package} ${Version}\n' "$PACKAGE" >results/installed-package.txt
+          curl -fsSI --proto '=https' --connect-timeout 10 --max-time 30 https://example.com/ >results/host-https.txt
+      - name: Run actual browser as nonroot; sample PSS/USS and record real PNG screenshots
+        shell: bash
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          set -euo pipefail
+          # X11 access control is relaxed ONLY for isolated Xvfb test server,
+          # NEVER the Firefox sandbox, site isolation or HTTPS validation.
+          Xvfb :97 -screen 0 1280x800x24 -nolisten tcp -ac >results/xvfb.log 2>&1 &
+          XVFB_PID=$!
+          trap 'kill "$XVFB_PID" 2>/dev/null || true' EXIT
+          sleep 3
+          kill -0 "$XVFB_PID"
+          PYTHONUNBUFFERED=1 python3 web95/browser_probe.py \
+            --browser "$BROWSER" --output results --uid 1550 --display :97 --seconds 30 \
+            | tee results/summary.log
+      - name: Preserve real process PSS, logs, screenshots even if browser does not launch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v95_${{ matrix.browser }}_real_PSS_and_screenshots
+          path: results/
+          retention-days: 25
+          if-no-files-found: warn
+      - name: Gate actual process data without pretending screenshots prove site rendering
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          x=json.load(open('results/result.json'))
+          assert x['schema']=='PUPPY50_V95_HOST_LINUX_BROWSER_PSS_BAKEOFF'
+          assert len(x['results'])==3
+          for r in x['results']:
+              assert r['site_visually_verified'] is False
+              assert r['guest_RAM_only_OS_tested'] is False
+          if not any(r['peak_session_pss_mib'] is not None for r in x['results']):
+              raise SystemExit('No real measurable browser session; inspect logs')
+          print('REAL_USER_SESSION_PROCESS_PSS_MEASURED; manual actual webpage review required')
+          PY
