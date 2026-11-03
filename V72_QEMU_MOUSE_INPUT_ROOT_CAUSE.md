@@ -40,6 +40,16 @@ https://github.com/74127418528426leo-del/Test/actions/runs/41665965512
 The verified v70 ISO and current public release remain unchanged:
 https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-qemu-normal-v70
 
+## Second observed attempt: PS/2 selection was not enough
+
+The **real** second run https://github.com/74127418528426leo-del/Test/actions/runs/41667361961 demonstrated that `mouse_set 2` correctly changed the active monitor pointer from absolute vmmouse #4 to PS/2 #2, but subsequent `mouse_move 220 0` and click **still did not change the Firefox homepage**. All actual 1920x1080 screenshot stages had the same cyan accent fraction (`0.03874`). QEMU command acceptance and active device selection are therefore **not** equivalent to a guest Firefox pointer movement. Do not claim Mozilla webpage access from either mouse attempt.
+
+## Third test: accessible keyboard navigation instead of more pointer guessing
+
+The next test now issues three real `sendkey tab` events through QEMU (home links are ordered Example Domain, Wikipedia, Mozilla), captures focus screenshots at 155/165/175/185 seconds, then sends `sendkey ret` at 205 seconds to activate the focused link. It keeps the **same public v70 ISO**, actual 1 GiB RAM allocation, QEMU NAT with host TLS-preserving bridge, and strict browser-frame evidence gate. It will not claim a third public webpage until the actual site is visually reviewed.
+
+This is superior to arbitrary mouse movement hacks because keyboard accessibility is useful to actual people as well as automated tests, while the present guest/VM exposes conflicting mouse paths.
+
 ## Larger product lessons
 
 - The VM's **authorized host network** can be Wi-Fi, Ethernet, or hotspot because the guest uses e1000/QEMU NAT; it does not contain a physical Wi-Fi SSID picker. No honest design can promise Internet across every secured or restricted network.
