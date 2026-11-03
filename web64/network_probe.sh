@@ -53,7 +53,7 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 24
 fi
 # A non-zero curl status includes failed DNS/TCP/CA verification/HTTPS. We
-# deliberately NEVER set -k, --insecure or ignore a TLS certificate error.
+# deliberately NEVER bypass certificate verification or ignore TLS errors.
 if curl --fail --silent --show-error --location --proto '=https' \
      --tlsv1.2 --connect-timeout 12 --max-time 35 --retry 1 \
      --output /tmp/puppy50-example-https.html \
