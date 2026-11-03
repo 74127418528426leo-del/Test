@@ -17,6 +17,21 @@ if [ -x /load_early_modules.sh ]; then
 else
   echo PUPPY50_V46_DIRECT_INSMOD_LOADER_MISSING
 fi
+# Persistently load evdev and PS/2 drivers before switch_root. Loading
+# in initrd keeps these drivers resident in the kernel even after initrd
+# files are discarded; the final overlay lacks a working modprobe index.
+for input in evdev psmouse mousedev; do
+  if /busybox grep -Eq "^$input " /proc/modules; then
+    echo "PUPPY50_V58_INPUT_EARLY_LOADED=$input"
+  else
+    echo "PUPPY50_V58_INPUT_EARLY_MISSING=$input"
+  fi
+done
+if /busybox grep -Eq 'Handlers=.*event[0-9]+' /proc/bus/input/devices; then
+  echo PUPPY50_V58_EARLY_EVENT_HANDLER=PASS
+else
+  echo PUPPY50_V58_EARLY_EVENT_HANDLER=ABSENT
+fi
 echo "PUPPY50_WEB_V46_INITRD_MODULE_FILES $(/busybox find /lib/modules -name '*.ko*' | /busybox wc -l)"
 /busybox ls -la /lib/modules/ || true
 echo "PUPPY50_WEB_V46_DEVICE_MOUNT"
