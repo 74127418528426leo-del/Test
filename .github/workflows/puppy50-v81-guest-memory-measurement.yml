@@ -131,7 +131,7 @@ jobs:
           rec=sums[0].read_text().split()
           if len(rec)!=2 or rec[1]!=p.name or digest.hexdigest()!=rec[0]:
               raise SystemExit('V81_DIAGNOSTIC_ISO_SHA256_FAIL')
-          Path('output/reports/diag_iso_path').write_text(str(p.resolve())+'\\n')
+          Path('output/reports/diag_iso_path').write_text(str(p.resolve())+'\n')
           print('V81_EXACT_DIAGNOSTIC_ISO_SHA256_PASS',digest.hexdigest(),str(p))
           PY
       - name: Start restricted host-only HTTPS bridge with real public certificate check
