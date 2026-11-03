@@ -1,7 +1,7 @@
-name: Puppy50 v85 - Maintained Firefox ESR and physical Wi-Fi Debian Live pilot
+name: Puppy50 v88 - Real Debian Live QMP autoboot, Firefox and network evidence
 on:
   push:
-    branches: [puppy50-v85-maintained-debian-wifi-live]
+    branches: [puppy50-v88-qmp-autoboot-actual-kvm]
     paths:
       - 'web85/**'
       - '.github/workflows/puppy50-v85-debian-managed-live.yml'
@@ -27,6 +27,17 @@ jobs:
           sh -n web85/config/includes.chroot/etc/skel/.config/openbox/autostart
           sh -n web85/config/hooks/live/010-enable-network-browser.hook.chroot
           python3 -m py_compile web85/qemu_debian_live_smoke.py
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0,'web85')
+          from qemu_debian_live_smoke import ppm_valid
+          from pathlib import Path
+          p=Path('/tmp/puppy50-v88-640x480.ppm')
+          p.write_bytes(b'P6\\n640 480\\n255\\n'+b'\\0'*(640*480*3))
+          assert p.stat().st_size==921615 and ppm_valid(p)
+          p.unlink()
+          print('V88_REAL_640x480_SCREENSHOT_GATE_FIXED')
+          PY
           grep -qx firefox-esr web85/config/package-lists/puppy50-browser.list.chroot
           grep -qx network-manager web85/config/package-lists/puppy50-browser.list.chroot
           grep -qx firmware-iwlwifi web85/config/package-lists/puppy50-browser.list.chroot
@@ -168,7 +179,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50_v85_Debian_Managed_Firefox_Real_KVM_Evidence
+          name: Puppy50_v88_Debian_Live_QMP_Real_KVM_Evidence
           path: |
             output/reports/V85_*.json
             output/reports/debian_live_build.log
@@ -179,7 +190,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50_v85_Debian_Firefox_153_6_Physical_WiFi_TEST_ONLY_ISO
+          name: Puppy50_v88_Debian_Firefox_153_6_WiFi_TEST_ONLY_ISO
           path: |
             output/Puppy50_v85_Debian_Managed_Browser_WIFI_TEST_ONLY.iso
             output/SHA256SUMS
