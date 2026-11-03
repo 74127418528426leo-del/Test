@@ -1,0 +1,52 @@
+{
+  "schema": "PUPPY50_V81_HUMAN_REVIEWED_V79_SITE_CONTENT",
+  "underlying_run_id": 41682409363,
+  "review_method": "Direct visual inspection of unmodified QEMU P6 framebuffer screenshots, cross-checked against raw v79 KVM report. A navigation/color transition alone does not prove usable webpage content.",
+  "cases": [
+    {
+      "key": "package-complete-v78-1024",
+      "artifact": "Puppy50_v79_package-complete-v78_1024MiB_real_browser_images",
+      "guest_ram_mib": 1024,
+      "iso_sha256": "c7847811125c503041a01623b9bacff0e6bc2b363f5b05253678be3d5f45704d",
+      "automated_first_transition_seconds": 325,
+      "actual_page_status_at_405s": "blank_after_navigation",
+      "actual_full_Wikipedia_page_visually_present": false,
+      "screen_frame_sha256": {
+        "245": "a645ec50cba3f3629fef744c394302c439bb4e326d7992ca020a9b5aff16e343",
+        "405": "836fc7189067915382eb16f7fca536f443b89a02665dfe740a51c8d8c5284f80"
+      }
+    },
+    {
+      "key": "package-complete-v78-2048",
+      "artifact": "Puppy50_v79_package-complete-v78_2048MiB_real_browser_images",
+      "guest_ram_mib": 2048,
+      "iso_sha256": "c7847811125c503041a01623b9bacff0e6bc2b363f5b05253678be3d5f45704d",
+      "automated_first_transition_seconds": 185,
+      "actual_page_status_at_405s": "Wikipedia_homepage_rendered",
+      "actual_full_Wikipedia_page_visually_present": true,
+      "screen_frame_sha256": {
+        "245": "5810ac139716b3e9f64d2d2839e0de9c00826a42b54f2d2155a89eacc5b10f01",
+        "405": "5810ac139716b3e9f64d2d2839e0de9c00826a42b54f2d2155a89eacc5b10f01"
+      }
+    },
+    {
+      "key": "stock-v76-1024",
+      "artifact": "Puppy50_v79_stock-v76_1024MiB_real_browser_images",
+      "guest_ram_mib": 1024,
+      "iso_sha256": "1bfa7344a7130180acaeaee9405b08b49cf7ba97a11d143eb3b0a5bcf177d058",
+      "automated_first_transition_seconds": 325,
+      "actual_page_status_at_405s": "partially_rendered_Wikipedia",
+      "actual_full_Wikipedia_page_visually_present": false,
+      "screen_frame_sha256": {
+        "245": "50e6b6cd488d5fbb2cbcc0c2b07b740fe0501abf212f9210a5596105f79889db",
+        "405": "e5d9bf41187f09a5d136d9cbb450b661bfd0118876005d3cdd77f743f2f24213"
+      }
+    }
+  ],
+  "cautions": [
+    "These outcomes are single-run observations under one GitHub Actions KVM host and varying public website conditions.",
+    "Blank/partial at 405 seconds is not proof the browser could never finish loading.",
+    "ISO file size and APK inventory consistency do not establish browser performance at 1GiB.",
+    "No host physical Wi-Fi switch, captive portal, password login or automatic security updates were tested."
+  ]
+}
