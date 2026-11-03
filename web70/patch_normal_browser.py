@@ -25,7 +25,9 @@ def patch(root):
     for p in (session,probe,home,ca):
         if not p.is_file():
             raise ValueError("Required tested guest file missing: "+str(p))
-    if not firefox.is_dir():\n        raise ValueError("Tested Firefox installation directory missing")\n    old=session.read_text()
+    if not firefox.is_dir():
+        raise ValueError("Tested Firefox installation directory missing")
+    old=session.read_text()
     if old.count(NAV_START)!=1 or old.count(FIREFOX_COMMAND)!=1:
         raise ValueError("Native demo or original Firefox launch has changed")
     begin=old.index(NAV_START)
