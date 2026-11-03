@@ -130,7 +130,9 @@ def main():
     output["Firefox_ESR_version_checked_by_image_package_inventory_not_serial"]=True
     (a.out/"result.json").write_text(json.dumps(output,indent=2)+"\n")
     print(json.dumps(output,indent=2))
-    if not output.get("boot_menu_enter_sent"):\n        raise SystemExit("PUPPY50_V88_DEBIAN_LIVE_BOOT_ENTER_WAS_NOT_SENT")\n    if not output["screenshots"]:
+    if not output.get("boot_menu_enter_sent"):
+        raise SystemExit("PUPPY50_V88_DEBIAN_LIVE_BOOT_ENTER_WAS_NOT_SENT")
+    if not output["screenshots"]:
         raise SystemExit("PUPPY50_V85_NO_REAL_GUI_FRAME")
     if not output["guest_public_HTTPS_proven"]:
         raise SystemExit("PUPPY50_V85_NO_GUEST_STRICT_CA_EXTERNAL_HTTPS")
