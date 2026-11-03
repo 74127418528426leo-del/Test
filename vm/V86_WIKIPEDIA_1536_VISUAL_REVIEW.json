@@ -1,0 +1,17 @@
+{
+  "schema": "PUPPY50_V86_HUMAN_REVIEWED_REAL_1536MIB_PUBLIC_V70",
+  "source_run_id": 41695446129,
+  "source_artifact": "Puppy50_v84_published-v70_1536MiB_real_browser",
+  "iso_sha256": "26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e",
+  "frame_405_sha256": "a4d929d358e29553de48ccfc413bacccb1e67fc8fcb56bf7c9a0b0ada6e68a66",
+  "guest_ram_mib": 1536,
+  "reviewed_real_QEMU_PPM": true,
+  "real_Wikipedia_homepage_and_text_visible": true,
+  "guest_certificate_verified_public_https": true,
+  "source_iso_is_original_public_v70": true,
+  "guest_Ram_only_boot": true,
+  "host_physical_WiFi_switch_tested": false,
+  "Firefox_security_updates_current": false,
+  "other_large_sites_tested": false,
+  "scope": "Single KVM run on November 3, 2026. Firefox Wikipedia homepage, Wikipedia search field, globe, multi-language links and fundraising overlay visibly rendered. This is not a universal browser compatibility or safety certificate."
+}
