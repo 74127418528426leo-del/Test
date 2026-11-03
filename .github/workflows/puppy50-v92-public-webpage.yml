@@ -1,0 +1,86 @@
+name: Puppy50 v92 - Actual Firefox public HTTPS URL and screenshot
+on:
+  push:
+    branches: [puppy50-v92-browser-public-https-visual]
+    paths:
+      - 'web92/**'
+      - '.github/workflows/puppy50-v92-public-webpage.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v92-browser-public-web
+  cancel-in-progress: true
+jobs:
+  qemu_public_page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify QMP HTTPS keyboard plan and real KVM requirements
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web92/tests -p 'test_*.py' -v
+          python3 -m py_compile web92/browser_keyboard.py web92/qemu_external_website.py
+          mkdir -p input output/evidence output/reports
+      - name: Install real QEMU and verify KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download exact previously real-boot-tested v91 ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify original v91 ISO checksum and do not rebuild Linux
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          test -s input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso
+          echo 'V92 exact v91 byte-for-byte unchanged'
+      - name: Start original loopback-only TLS-transparent host fallback
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 > output/reports/bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(45):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('host-local bridge unavailable')
+          print('host-local bridge ready; not guest website proof')
+          PY
+      - name: Real KVM boots unchanged RAM system and types public HTTPS in Firefox
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python3 web92/qemu_external_website.py --iso input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso --out output/evidence --ram 4096 --seconds 300 | tee output/reports/V92_VISUAL_TEST.json.log
+      - name: Preserve actual VM screenshots and logs even if page stays blank
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v92_Real_Firefox_Example_Domain_Screenshots
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 20
+          if-no-files-found: warn
+      - name: Never equate keyboard request with actual website rendering
+        if: success()
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('output/evidence/result.json'))
+          assert r['real_guest_ca_verified_public_https'] is True
+          assert r['real_nonroot_firefox_process'] is True
+          assert r['real_QMP_browser_navigation_requested'] is True
+          assert r['external_webpage_manually_verified'] is False
+          print('V92_REAL_BROWSER_URL_REQUESTED; screenshots MUST be independently reviewed')
+          PY
