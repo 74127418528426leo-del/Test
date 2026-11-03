@@ -1,0 +1,18 @@
+{
+  "schema": "PUPPY50_V70_EXACT_ISO_INDEPENDENT_SCREENSHOT_REVIEW",
+  "run_id": 41660921113,
+  "reviewed_screenshot": true,
+  "normal_homepage_visible": true,
+  "reviewed_frame_name": "frame_220.ppm",
+  "reviewed_frame_sha256": "50e6b6cd488d5fbb2cbcc0c2b07b740fe0501abf212f9210a5596105f79889db",
+  "iso_sha256": "26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e",
+  "screenshot_review_description": "Actual 1920x1080 QEMU screenshot shows visible Firefox window with Puppy50 Web dark-navy RAM-only homepage, cyan PUPPY50 WEB header, Browse the web heading, clickable Example Domain, Wikipedia, Mozilla and Google shortcuts, Network status and Browser settings tiles, and no forced external tab.",
+  "visual_source": "Original unmodified QEMU framebuffer frame_220.ppm, real KVM run 41660921113",
+  "evidence_source": "Puppy50_v70_normal_browser_KVM_evidence artifact in the same run",
+  "release_scope": "Normal home + guest CA verified HTTPS + RAM-only root / removable media. Does not independently prove Wikipedia, Google, Mozilla web rendering or every physical network.",
+  "limitations": {
+    "mib384_functional_browser": false,
+    "physical_wifi_verified": false,
+    "safe_for_sensitive_accounts": false
+  }
+}
