@@ -35,7 +35,7 @@ done
 # Critical input drivers must be loaded from the initial RAM disk before
 # switch_root destroys the only uncompressed module tree. Refuse bad images.
 for input in evdev psmouse mousedev; do
-  if ! grep -Eq "module=${input} status=\\$\\?" "$SCRATCH/initrd/load_early_modules.sh"; then
+  if ! grep -Fq "module=${input} status=" "$SCRATCH/initrd/load_early_modules.sh"; then
     echo "PUPPY50_V58_INPUT_EARLY_LOAD_NOT_GENERATED module=$input" >&2
     exit 6
   fi
