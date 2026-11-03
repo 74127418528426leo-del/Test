@@ -12,6 +12,8 @@ fs/overlay.ko:
 drivers/evdev.ko:
 drivers/psmouse.ko:
 drivers/mousedev.ko:
+drivers/e1000.ko:
+drivers/virtio_net.ko:
 '''
 class Tests(unittest.TestCase):
  def test_recursion_order(self):
@@ -20,11 +22,12 @@ class Tests(unittest.TestCase):
   self.assertLess(o.index('drivers/scsi_mod.ko'),o.index('drivers/sr_mod.ko'))
  def test_full_dependencies_included(self):
   sh,o=generate(TEST,'6.18.60')
-  self.assertEqual(len(o),10)
+  self.assertEqual(len(o),12)
   self.assertIn('insmod "/lib/modules/6.18.60/drivers/sr_mod.ko"',sh)
   self.assertIn('insmod "/lib/modules/6.18.60/drivers/evdev.ko"',sh)
   self.assertIn('insmod "/lib/modules/6.18.60/drivers/psmouse.ko"',sh)
   self.assertIn('insmod "/lib/modules/6.18.60/drivers/mousedev.ko"',sh)
+  self.assertIn('insmod "/lib/modules/6.18.60/drivers/e1000.ko"',sh)
  def test_missing_module_rejected(self):
   with self.assertRaises(ValueError):generate('fs/overlay.ko:\n','6.18.60')
  def test_bad_external_dependency(self):
