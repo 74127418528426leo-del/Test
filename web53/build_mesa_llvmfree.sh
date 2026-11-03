@@ -47,4 +47,10 @@ test ! -s "$OUT/llvm-dynamic-links.txt" || {
 }
 du -sb /tmp/mesa-install > "$OUT/staged-installed-files-raw-bytes.txt"
 find /tmp/mesa-install -type f -size +10M -printf '%s %p\n' | sort -rn | head -30 > "$OUT/largest-binaries.txt"
+# Preserve staged program files (including symlinks) so an independently
+# audited integration job can actually test the replacement in real QEMU.
+tar -C /tmp/mesa-install -czf "$OUT/mesa-softpipe-root.tar.gz" .
+sha256sum "$OUT/mesa-softpipe-root.tar.gz" > "$OUT/mesa-softpipe-root.sha256"
+tar -tzf "$OUT/mesa-softpipe-root.tar.gz" > "$OUT/mesa-softpipe-root-manifest.txt"
+echo "PUPPY50_V53_SOFTPIPE_ARCHIVE_BYTES=$(wc -c < "$OUT/mesa-softpipe-root.tar.gz")"
 echo 'PUPPY50_V53_SOFTPIPE_ONLY_LLVMFREE_ABI_PASS_NO_GPU_TEST'
