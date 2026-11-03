@@ -21,7 +21,7 @@ def patch(root):
     core=root/"usr/local/libexec/puppy50-network-probe-core"
     home=root/"usr/share/puppy50web/index.html"
     ca=root/"etc/ssl/certs/ca-certificates.crt"
-    firefox=root/"usr/lib/firefox-esr/firefox"
+    firefox=root/"usr/lib/firefox-esr"
     for p in (session,probe,home,ca):
         if not p.is_file():
             raise ValueError("Required tested guest file missing: "+str(p))
