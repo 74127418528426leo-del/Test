@@ -67,7 +67,7 @@ jobs:
           set -euo pipefail
           OLD=$(cat output/reports/V70_ISO_PATH)
           NEW=$(cat output/reports/V76_ISO_PATH)
-          mkdir -p output/unpacked-old output/unpacked-control
+          mkdir -p output/unpacked-old output/unpacked-control output/oldroot output/newroot
           7z e -y -ooutput/unpacked-old "$OLD" puppy_dpupbw64_10.0.12.sfs > output/reports/v70-extract.log
           7z e -y -ooutput/unpacked-control "$NEW" puppy_dpupbw64_10.0.12.sfs > output/reports/v76-extract.log
           sudo unsquashfs -d output/oldroot/rootfs output/unpacked-old/puppy_dpupbw64_10.0.12.sfs > output/reports/v70-unsquashfs.log
