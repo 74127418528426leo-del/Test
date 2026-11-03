@@ -1,0 +1,183 @@
+name: Puppy50 v69 - Verify real Firefox public HTTPS page via native new-tab
+on:
+  push:
+    branches: [puppy50-v69-actual-firefox-https-page]
+    paths:
+      - 'web69/**'
+      - '.github/workflows/puppy50-v69-native-firefox-website.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v69-real-website
+  cancel-in-progress: true
+jobs:
+  real-guest-https-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test TLS bridge and RAM-root overlay source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web66/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s web69/tests -p 'test_*.py' -v
+          python3 -m py_compile web69/patch_native_nav.py web69/qemu_native_nav.py web66/host_https_bridge.py
+          sh -n web67/online_probe.sh
+          mkdir -p output/reports output/extract dist
+      - name: Install real ISO, SquashFS and QEMU testing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso p7zip-full squashfs-tools qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Retrieve exact original v64 NAT+input KVM-tested ISO, no rebuilt kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v67_unverified_guest_HTTPS_bridge_ISO
+          run-id: 41624174586
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Verify original ISO and unpack its live Linux RAM-root only
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          7z e -y -ooutput/extract \
+            dist/Puppy50_Web_v67_HTTPS_Bridge_Experimental.iso \
+            puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz \
+            > output/reports/original-iso-extraction.log
+          test -s output/extract/puppy_dpupbw64_10.0.12.sfs
+          test -s output/extract/vmlinuz
+          test -s output/extract/initrd.gz
+          sudo unsquashfs -d output/rootfs \
+            output/extract/puppy_dpupbw64_10.0.12.sfs \
+            > output/reports/unsquashfs.log
+          sudo python3 web69/patch_native_nav.py output/rootfs
+          test -s output/rootfs/usr/local/bin/puppy50-network-probe
+      - name: Recompress changed software root, retaining original kernel and initrd
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/puppy50-v69-native-browser-root.sfs \
+             -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+             -exit-on-error -noappend -no-progress \
+             > output/reports/v69-squashfs.log 2>&1
+          stat -c 'PUPPY50_V69_REBUILT_RAM_ROOT_BYTES=%s' output/puppy50-v69-native-browser-root.sfs
+          xorriso -indev dist/Puppy50_Web_v67_HTTPS_Bridge_Experimental.iso \
+             -outdev dist/Puppy50_Web_v69_Native_Browser_Experimental.iso \
+             -map output/puppy50-v69-native-browser-root.sfs /puppy_dpupbw64_10.0.12.sfs \
+             -boot_image any replay -commit -end \
+             > output/reports/v69-xorriso.log 2>&1 || {
+               tail -60 output/reports/v69-xorriso.log
+               exit 12
+             }
+          mkdir -p output/verify
+          7z e -y -ooutput/verify \
+            dist/Puppy50_Web_v69_Native_Browser_Experimental.iso \
+            puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz \
+            > output/reports/v69-extraction.log
+          cmp output/extract/vmlinuz output/verify/vmlinuz
+          cmp output/extract/initrd.gz output/verify/initrd.gz
+          cmp output/puppy50-v69-native-browser-root.sfs output/verify/puppy_dpupbw64_10.0.12.sfs
+          (cd dist && sha256sum Puppy50_Web_v67_HTTPS_Bridge_Experimental.iso > SHA256SUMS)
+          echo 'PUPPY50_V69_REAL_BOOT_KERNEL_INITRD_BYTE_IDENTICAL=PASS'
+      - name: Preserve UNVERIFIED experimental candidate ISO for audit (NOT public release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v69_unverified_real_Firefox_webpage_ISO
+          path: |
+            dist/Puppy50_Web_v69_Native_Browser_Experimental.iso
+            dist/SHA256SUMS
+          retention-days: 5
+          if-no-files-found: error
+      - name: Launch host-only public-address HTTPS CONNECT bridge without TLS interception
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 \
+            > output/reports/v67-host-bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for i in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):
+                      print('PUPPY50_V67_HOST_TLS_BRIDGE_READY')
+                      break
+              except OSError: time.sleep(.2)
+          else:raise SystemExit('host bridge missing')
+          PY
+          # TLS and certificate checks on host. Actual guest check is separate.
+          curl --proxy http://127.0.0.1:3128 --noproxy '' \
+            --fail --silent --show-error --head --proto '=https' \
+            --connect-timeout 9 --max-time 20 https://example.com/ -o /dev/null
+      - name: Test actual Firefox and CA-verified external HTTPS in real 1024MiB KVM guest
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          mkdir -p output/evidence/ram_1024MiB
+          python3 web69/qemu_native_nav.py \
+            --iso dist/Puppy50_Web_v69_Native_Browser_Experimental.iso \
+            --out output/evidence/ram_1024MiB --ram 1024 --seconds 375
+      - name: Summarize direct versus bridged guest Internet access honestly
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('output/evidence/ram_1024MiB')
+          result=json.loads((p/'result.json').read_text()) if (p/'result.json').exists() else {}
+          serial=(p/'serial.log').read_text(errors='replace') if (p/'serial.log').exists() else ''
+          obj={'schema':'PUPPY50_V67_ACTUAL_GUEST_TLS_CONNECT_TEST',
+             'real_RAM_root_and_CD_ejection':bool(result.get('ram_copy_complete') and result.get('ram_root_switch') and result.get('media_ejection_verified')),
+             'guest_DHCP':result.get('guest_dhcp_lease',False),
+             'guest_DNS':result.get('guest_dns_config',False),
+             'direct_guest_TLS': 'PUPPY50_V67_EXTERNAL_TLS_DIRECT=PASS' in serial,
+             'host_bridge_guest_TLS': 'PUPPY50_V67_EXTERNAL_TLS_VIA_HOST_CONNECT=PASS' in serial,
+             'guest_strict_CA_HTTPS': 'PUPPY50_V67_EXTERNAL_TLS_CA_VERIFIED=PASS' in serial,
+             'Firefox_enterprise_proxy_policy_created': 'PUPPY50_V67_FIREFOX_HTTPS_PROXY_POLICY=APPLIED' in serial,
+             'offline_Firefox_input':bool(result.get('script_ready_visually_proven') and result.get('mouse_click_visually_proven') and result.get('keyboard_visually_proven')),
+             'native_firefox_tab_requested':result.get('native_firefox_navigation_requested',False),
+             'native_firefox_tab_command_exit_zero':result.get('native_firefox_navigation_exit_code') == 0,
+             'external_Firefox_page_manually_inspected':False,
+             'full_secure_browsing_certified':False,
+             '384MiB_browser_functional':False,
+             'physical_any_network_verified':False,
+             'guest_proxy_credential_exposed':False}
+          (Path('output/reports')/'V69_REAL_BROWSER_RESULTS.json').write_text(json.dumps(obj,indent=2)+'\n')
+          print(json.dumps(obj,indent=2))
+          PY
+      - name: Preserve guest screenshots and network logs even if HTTPS fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v69_native_Firefox_public_website_evidence
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Fail closed unless guest certificate-verified public HTTPS works
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V69_REAL_BROWSER_RESULTS.json')
+          if not p.exists():raise SystemExit('PUPPY50_V67_FAIL_MISSING_EVIDENCE')
+          d=json.loads(p.read_text())
+          for k in ('real_RAM_root_and_CD_ejection','guest_DHCP','guest_DNS',
+                    'guest_strict_CA_HTTPS','offline_Firefox_input','native_firefox_tab_requested','native_firefox_tab_command_exit_zero'):
+              if d[k] is not True:raise SystemExit('PUPPY50_V67_FAIL_CLOSED '+k)
+          print('PUPPY50_V67_CA_VERIFIED_EXTERNAL_HTTPS_IN_REAL_GUEST_PASS')
+          print('Real Firefox screenshot must still be reviewed manually; a new-tab CLI command alone does NOT prove the page rendered.')
+          PY
