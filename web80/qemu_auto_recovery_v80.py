@@ -74,7 +74,7 @@ def main():
     with (args.out/"qemu.log").open("wb") as out:
         q=subprocess.Popen(cmd,stdout=out,stderr=subprocess.STDOUT)
         try:
-            for mark in [95,145,165,185,205,245,args.seconds]:
+            for mark in [95,145,165,185,205,245,285,325,365,args.seconds]:
                 while time.monotonic()-start < mark and q.poll() is None:
                     time.sleep(1)
                 if q.poll() is not None:break
@@ -187,11 +187,15 @@ def main():
     report["cyan_homepage_frames"]=fractions
     report["actual_user_homepage_visibly_rendered"]=any(x["fraction"]>0.014 for x in fractions)
     before=next((x["fraction"] for x in fractions if x["file"]=="frame_185.ppm"),None)
-    after=next((x["fraction"] for x in fractions if x["file"]=="frame_245.ppm"),None)
+    after=next((x["fraction"] for x in fractions if x["file"]==f"frame_{args.seconds:03}.ppm"),None)
+    later=[x for x in fractions if int(x["file"].split("_")[1].split(".")[0])>205]
+    first=next((int(x["file"].split("_")[1].split(".")[0]) for x in later if x["fraction"]<0.010),None)
+    report["first_homepage_to_external_transition_seconds"]=first
     report["Wikipedia_link_pixel_transition"]={
         "before_homepage_cyan":before,
-        "after_click_cyan":after,
-        "homepage_color_disappeared":bool(before is not None and after is not None and before>0.025 and after<0.010)}
+        "final_frame_cyan":after,
+        "homepage_color_disappeared":bool(before is not None and first is not None and before>0.025)}
+    report["full_Wikipedia_content_automatically_verified"]=False
     report["Wikipedia_public_page_visually_confirmed"]=False
     report["guest_network_link_off_on_commands_submitted"]=False
     report["host_https_bridge_auto_recovery_verified"]=(
