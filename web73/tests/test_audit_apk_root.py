@@ -46,10 +46,18 @@ class ApkAuditTests(unittest.TestCase):
         self.assertEqual(audit.expected_sha1(token),digest)
         self.assertIsNone(audit.expected_sha1("Q2unknown"))
         self.assertIsNone(audit.expected_sha1("Q1%%%"))
-    def test_no_apk_database_cannot_be_claimed_verified(self):
+    def test_no_apk_database_reported_as_release_blocker(self):
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(ValueError):
-                audit.audit(Path(d))
+            root=Path(d)
+            lib=root/"usr/lib"
+            lib.mkdir(parents=True)
+            (lib/"libuntracked.so.1").write_bytes(b"untracked")
+            result=audit.audit(root)
+            self.assertFalse(result["apk_database_present"])
+            self.assertTrue(result["package_manager_inventory_missing"])
+            self.assertEqual(result["apk_package_records"],0)
+            self.assertFalse(result["security_updates_certified"])
+            self.assertEqual(result["shared_library_files_without_apk_owner"],1)
     def test_unsafe_root_path_not_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
