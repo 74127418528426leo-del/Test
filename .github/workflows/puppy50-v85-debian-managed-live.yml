@@ -172,6 +172,7 @@ jobs:
                'any_real_physical_WiFi_chipset_tested':False,
                'live_image_security_certified':False,
                'full_online_browsing_public_release_eligible':False}
+          Path('output/reports').mkdir(parents=True,exist_ok=True)
           Path('output/reports/V85_RELEASE_GATE.json').write_text(json.dumps(obj,indent=2)+'\n')
           print(json.dumps(obj,indent=2))
           PY
