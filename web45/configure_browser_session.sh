@@ -45,6 +45,13 @@ else
   echo 'PUPPY50_WEB_V46_DEV_NULL_NONROOT_RW_FAILED' > /dev/ttyS0 2>/dev/null || true
   exit 44
 fi
+# v60 deliberately enables RAM-only compressed swap *before* launching the
+# graphical shell and Firefox. Nonzero exit fails this zram experiment closed.
+if ! /usr/local/bin/puppy50-zram-setup; then
+  echo 'PUPPY50_V60_BROWSER_NOT_LAUNCHED_ZRAM_FAILED' > /dev/ttyS0 2>/dev/null || true
+  exit 60
+fi
+/usr/local/bin/puppy50-zram-watch &
 chown 1000:1000 /home/web
 COOKIE=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 XAUTH=/home/web/.Xauthority
@@ -161,6 +168,10 @@ strong{color:#ffe498}
 })();
 </script></body></html>
 EOF
+# Install RAM-only swap experiment scripts, never a persistent disk service.
+cp web60/zram_setup.sh "$ROOT/usr/local/bin/puppy50-zram-setup"
+cp web60/zram_watch.sh "$ROOT/usr/local/bin/puppy50-zram-watch"
+chmod 755 "$ROOT/usr/local/bin/puppy50-zram-setup" "$ROOT/usr/local/bin/puppy50-zram-watch"
 # Enable services through audited OpenRC wiring. This corrects the former
 # broken ../../../init.d links (must be ../../init.d under /etc/runlevels/*)
 # and uses Alpine's actual udev service names and sysinit ordering.
