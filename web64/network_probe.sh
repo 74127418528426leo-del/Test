@@ -47,6 +47,29 @@ if [ ! -s /etc/resolv.conf ]; then
   exit 23
 fi
 echo 'PUPPY50_V64_DNS_CONFIG=PRESENT'
+echo 'PUPPY50_V64_PREBOOT_RESOLVERS_BEGIN'
+grep '^nameserver ' /etc/resolv.conf || true
+echo 'PUPPY50_V64_PREBOOT_RESOLVERS_END'
+# The VM is explicitly launched with QEMU's DEFAULT 10.0.2.0/24 user
+# networking. Its documented DNS forwarder lives at 10.0.2.3. The root
+# was staged inside a Docker builder and might inherit a host-specific
+# resolver that the isolated VM cannot reach. Use QEMU's actual DNS
+# forwarder instead of stale host/Docker DNS server addresses.
+printf 'nameserver 10.0.2.3\noptions timeout:3 attempts:2\n' > /etc/resolv.conf || {
+  echo 'PUPPY50_V64_QEMU_DNS_OVERRIDE=FAIL'
+  exit 26
+}
+echo 'PUPPY50_V64_QEMU_DNS_OVERRIDE=10.0.2.3'
+echo 'PUPPY50_V64_QEMU_DNS_LOOKUP_BEGIN'
+if command -v nslookup >/dev/null 2>&1; then
+  if nslookup example.com 10.0.2.3 >/tmp/puppy50-dns-probe.log 2>&1; then
+    echo 'PUPPY50_V64_QEMU_DNS_LOOKUP=PASS'
+  else
+    echo 'PUPPY50_V64_QEMU_DNS_LOOKUP=FAIL'
+    tail -8 /tmp/puppy50-dns-probe.log || true
+  fi
+fi
+echo 'PUPPY50_V64_QEMU_DNS_LOOKUP_END'
 if ! command -v curl >/dev/null 2>&1; then
   echo 'PUPPY50_V64_CURL_MISSING'
   echo 'PUPPY50_V64_NETWORK_READY=FAIL'
