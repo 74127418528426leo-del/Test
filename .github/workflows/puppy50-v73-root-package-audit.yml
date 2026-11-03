@@ -56,7 +56,7 @@ jobs:
           7z e -y -ooutput/extract dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
             puppy_dpupbw64_10.0.12.sfs > output/reports/iso-extraction.log
           test -s output/extract/puppy_dpupbw64_10.0.12.sfs
-          unsquashfs -d output/rootfs \
+          sudo unsquashfs -d output/rootfs \
             output/extract/puppy_dpupbw64_10.0.12.sfs \
             > output/reports/unsquashfs.log
           echo "Candidate APK package databases present inside actual root:"
