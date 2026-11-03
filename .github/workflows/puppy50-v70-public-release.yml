@@ -1,0 +1,116 @@
+name: Puppy50 v70 - Publish audited normal Firefox online QEMU VM
+on:
+  push:
+    branches: [puppy50-v70-normal-browsing]
+    paths:
+      - 'vm/V70_HOME_REVIEW.json'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v70-public-release
+  cancel-in-progress: true
+jobs:
+  audit-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify review and launcher source before any download
+        run: |
+          set -euo pipefail
+          test -s vm/V70_HOME_REVIEW.json
+          python3 -m py_compile vm/verify_v70_release.py vm/host_network_preflight_v70.py
+          bash -n vm/launch_linux_v70.sh
+          bash -n vm/connect_host_network_v70.sh
+          python3 -m unittest discover -s web66/tests -p 'test_*.py' -v
+          mkdir -p dist proof
+      - name: Download EXACT real 1GiB KVM-tested v70 ISO, SHA, manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Download unchanged raw serial logs and screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v70_normal_browser_KVM_evidence
+          run-id: 41660921113
+          github-token: ${{ github.token }}
+          path: proof
+      - name: Fail closed on actual guest HTTPS, live home pixels, RAM root, and exact hashes
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 vm/verify_v70_release.py \
+            --iso dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            --manifest dist/Puppy50_v70_manifest.json \
+            --evidence proof \
+            --review vm/V70_HOME_REVIEW.json \
+            --out dist/Puppy50_v70_Public_Release_Proof.json
+          echo "EXACT ISO + INDEPENDENT SCREENSHOT REVIEW + PUBLIC HTTPS PROVEN" >> "$GITHUB_STEP_SUMMARY"
+      - name: Make complete checksum-checked portable QEMU VM bundle
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile
+          dist=Path('dist')
+          src=[
+            ('vm/launch_linux_v70.sh','launch_linux_v70.sh'),
+            ('web66/host_https_bridge.py','host_https_bridge.py'),
+            ('vm/host_network_preflight_v70.py','host_network_preflight_v70.py'),
+            ('vm/connect_host_network_v70.sh','connect_host_network_v70.sh'),
+            ('vm/V70_NETWORK_PROFILE.json','V70_NETWORK_PROFILE.json'),
+            ('vm/README_V70.md','README_V70.md'),
+            ('vm/V70_HOME_REVIEW.json','V70_HOME_REVIEW.json')
+          ]
+          for path,name in src:
+            (dist/name).write_bytes(Path(path).read_bytes())
+          included=['Puppy50_Web_v70_Normal_Browser_Online.iso','SHA256SUMS',
+                    'Puppy50_v70_manifest.json',
+                    'Puppy50_v70_Public_Release_Proof.json']+[name for _,name in src]
+          package=dist/'Puppy50_Online_QEMU_VM_v70_Bundle.zip'
+          with zipfile.ZipFile(package,'w',compression=zipfile.ZIP_STORED,allowZip64=True) as z:
+            for name in included:z.write(dist/name,arcname=name)
+          with zipfile.ZipFile(package) as z:
+            assert sorted(z.namelist())==sorted(included)
+          h=hashlib.sha256()
+          with package.open('rb') as f:
+            for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+          (dist/'BUNDLE_SHA256SUMS').write_text(h.hexdigest()+'  '+package.name+'\n')
+          print('BUNDLE_BYTES',package.stat().st_size)
+          PY
+          bash -n dist/launch_linux_v70.sh
+          bash -n dist/connect_host_network_v70.sh
+      - name: Publish public EXPERIMENTAL v70 online normal-browser prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-qemu-normal-v70 >/dev/null 2>&1; then
+            echo "Refusing silent public release overwrite"
+            exit 19
+          fi
+          gh release create puppy50-qemu-normal-v70 \
+            dist/Puppy50_Online_QEMU_VM_v70_Bundle.zip \
+            dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
+            dist/SHA256SUMS \
+            dist/BUNDLE_SHA256SUMS \
+            dist/Puppy50_v70_manifest.json \
+            dist/Puppy50_v70_Public_Release_Proof.json \
+            dist/V70_NETWORK_PROFILE.json \
+            dist/README_V70.md \
+            dist/launch_linux_v70.sh \
+            dist/host_https_bridge.py \
+            dist/host_network_preflight_v70.py \
+            dist/connect_host_network_v70.sh \
+            --target "$GITHUB_SHA" \
+            --title "Puppy50 Web v70 — Normal online Firefox, RAM-only QEMU VM" \
+            --notes-file vm/V70_RELEASE_NOTES.md \
+            --prerelease --latest=false
+          gh release view puppy50-qemu-normal-v70 --json url,assets,tagName
+          echo "PUBLIC_VM=https://github.com/$GITHUB_REPOSITORY/releases/tag/puppy50-qemu-normal-v70" >> "$GITHUB_STEP_SUMMARY"
