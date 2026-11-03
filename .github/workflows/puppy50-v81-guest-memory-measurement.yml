@@ -1,0 +1,186 @@
+name: Puppy50 v81 - Guest Linux RAM and PSI measurement during real browsing
+on:
+  push:
+    branches: [puppy50-v81-guest-memory-pressure-probe]
+    paths:
+      - 'web81/**'
+      - '.github/workflows/puppy50-v81-guest-memory-measurement.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v81-guest-memory
+  cancel-in-progress: true
+jobs:
+  build_diagnostic_iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify read-only probe and safe disposable-only root patch
+        run: |
+          set -euo pipefail
+          sh -n web81/guest_memory_probe.sh
+          python3 -m unittest discover -s web81/tests -p 'test_*.py' -v
+          python3 -m py_compile web81/patch_guest_memory_probe.py web81/analyze_memory_serial.py
+          mkdir -p dist output/reports output/extract output/verify
+      - name: Install ISO extraction and compression utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools xorriso
+      - name: Download byte-identical v78 fully packaged experimental control image
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v78_UNVERIFIED_full_APK_inventory_QEMU_ISO
+          run-id: 41677336550
+          github-token: ${{ github.token }}
+          path: dist/source
+      - name: SHA256 guard and decompress the software root only
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          files=list(Path('dist/source').rglob('Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso'))
+          if len(files)!=1:raise SystemExit('Missing exact v78 source ISO')
+          f=files[0]
+          h=hashlib.sha256()
+          with f.open('rb') as handle:
+              for data in iter(lambda:handle.read(1048576),b''):h.update(data)
+          if h.hexdigest()!='c7847811125c503041a01623b9bacff0e6bc2b363f5b05253678be3d5f45704d':
+              raise SystemExit('Source v78 ISO hash mismatch')
+          Path('output/reports/ORIGINAL_ISO_PATH').write_text(str(f)+'\n')
+          print('PUPPY50_V81_ORIGINAL_v78_SHA_VALIDATED')
+          PY
+          SRC=$(cat output/reports/ORIGINAL_ISO_PATH)
+          7z e -y -ooutput/extract "$SRC" puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz > output/reports/extraction.log
+          test -s output/extract/puppy_dpupbw64_10.0.12.sfs
+          sudo unsquashfs -d output/rootfs output/extract/puppy_dpupbw64_10.0.12.sfs > output/reports/unsquashfs.log
+          sudo python3 web81/patch_guest_memory_probe.py output/rootfs > output/reports/patch_validation.json
+      - name: Produce separate v81 diagnostic ISO preserving exact kernel and initrd
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/diagnostic-root.sfs \
+            -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+            -exit-on-error -noappend -no-progress > output/reports/squashfs.log 2>&1
+          SRC=$(cat output/reports/ORIGINAL_ISO_PATH)
+          xorriso -indev "$SRC" \
+            -outdev dist/Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso \
+            -map output/diagnostic-root.sfs /puppy_dpupbw64_10.0.12.sfs \
+            -boot_image any replay -commit -end > output/reports/xorriso.log 2>&1
+          7z e -y -ooutput/verify dist/Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso \
+            puppy_dpupbw64_10.0.12.sfs vmlinuz initrd.gz > output/reports/reextract.log
+          cmp output/extract/vmlinuz output/verify/vmlinuz
+          cmp output/extract/initrd.gz output/verify/initrd.gz
+          cmp output/diagnostic-root.sfs output/verify/puppy_dpupbw64_10.0.12.sfs
+          (cd dist && sha256sum Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso > V81_SHA256SUMS)
+          echo 'PUPPY50_V81_ORIGINAL_KERNEL_INITRD_IDENTICAL=PASS'
+      - name: Save unverified guest-only diagnostic ISO, NEVER public release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v81_TEST_ONLY_GUEST_MEMORY_PROBE_ISO
+          path: |
+            dist/Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso
+            dist/V81_SHA256SUMS
+            output/reports/patch_validation.json
+          retention-days: 5
+          if-no-files-found: error
+  real_guest_mem_profiles:
+    needs: build_diagnostic_iso
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ram: [1024,2048]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real QEMU/KVM and create evidence directories
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m py_compile web79/qemu_stable_link_page_load.py web81/analyze_memory_serial.py
+          mkdir -p output/evidence/guest output/reports dist
+      - name: Fetch SAME unchanged v81 memory-only diagnostic image
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v81_TEST_ONLY_GUEST_MEMORY_PROBE_ISO
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Verify exact diagnostic ISO SHA256 before boot
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c V81_SHA256SUMS)
+      - name: Start restricted host-only HTTPS bridge with real public certificate check
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 > output/reports/host-bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(40):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=.5):
+                      print('V81_HOST_LOCAL_TLS_BRIDGE_READY');break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Host bridge not listening')
+          PY
+          curl --fail --silent --show-error --head \
+            --proxy http://127.0.0.1:3128 --noproxy '' --proto '=https' \
+            --connect-timeout 8 --max-time 20 https://www.wikipedia.org/ -o /dev/null
+      - name: Run real KVM and capture in-guest RAM, PSI, OOM every 10s
+        timeout-minutes: 10
+        env:
+          GUEST_RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          set +e
+          python3 web79/qemu_stable_link_page_load.py \
+            --iso dist/Puppy50_v81_MEMORY_DIAGNOSTIC_QEMU_ONLY.iso \
+            --out output/evidence/guest --ram "$GUEST_RAM" --seconds 405
+          STATUS=$?
+          set -e
+          echo "V81_KVM_SCRIPT_EXIT_CODE=$STATUS" > output/reports/qemu-run-status.txt
+          echo "V81_KVM_SCRIPT_EXIT_CODE=$STATUS"
+          test -s output/evidence/guest/serial.log
+      - name: Parse actual Linux guest RAM and kernel memory pressure
+        if: always()
+        env:
+          GUEST_RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          if [ -s output/evidence/guest/serial.log ]; then
+            python3 web81/analyze_memory_serial.py \
+              --serial output/evidence/guest/serial.log \
+              --scenario v81-guest-memory --ram "$GUEST_RAM" \
+              --out output/reports/V81_GUEST_MEM_PRESSURE.json
+          fi
+      - name: Preserve real serial, raw framebuffer and memory metrics, even on failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v81_${{ matrix.ram }}MiB_real_guest_mem_pressure_and_web_frames
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Fail if the real KVM guest didn't report enough Linux memory samples
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V81_GUEST_MEM_PRESSURE.json')
+          if not p.is_file():raise SystemExit('GUEST_MEM_REPORT_MISSING')
+          r=json.loads(p.read_text())
+          if r.get('samples',0)<20:raise SystemExit('INSUFFICIENT_REAL_GUEST_RAM_SAMPLES')
+          print('PUPPY50_V81_REAL_GUEST_RAM_INSTRUMENTATION_PASS')
+          print('Blank/loaded website outcomes require independent human screenshot review.')
+          PY
