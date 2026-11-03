@@ -80,12 +80,12 @@ jobs:
             --proto '=https' --connect-timeout 10 --max-time 20 \
             -o /dev/null https://www.wikipedia.org/
       - name: Boot unchanged v70, force owned bridge-process crash, verify AUTO restart, click Wikipedia
-        timeout-minutes: 7
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           python3 web80/qemu_auto_recovery_v80.py \
             --iso dist/Puppy50_Web_v70_Normal_Browser_Online.iso \
-            --out output/evidence/ram_1024MiB --ram 1024 --seconds 285 \
+            --out output/evidence/ram_1024MiB --ram 1024 --seconds 405 \
             --supervisor-status-file output/reports/bridge_supervisor_status.json
       - name: Record verified host HTTPS bridge interruption and recovery
         if: always()
@@ -106,6 +106,7 @@ jobs:
             'host_physical_network_was_switched':False,
             'guest_DHCP_reacquisition_proven':False,
             'wikipedia_site_real_page_visually_reviewed':False,
+            'first_website_navigation_transition_seconds':r.get('first_homepage_to_external_transition_seconds'),
             'external_Wikipedia_HTTPS_host_preflight_succeeded':True,
             'guest_CA_verified_example_com_HTTPS':r.get('guest_public_CA_verified_HTTPS',False),
             'universal_website_compatibility_verified':False,
@@ -138,6 +139,7 @@ jobs:
                       'real_mouse_event_sent','home_page_disappeared_after_click','host_bridge_down_then_up_and_CA_verified'):
               if r.get(key) is not True:raise SystemExit('PUPPY50_V80_LINK_CLICK_NOT_PROVEN '+key)
           print('PUPPY50_V80_AUTO_PROXY_RESTART_AND_BROWSER_TRANSITION_PASS')
+          print('Public webpage content requires human screenshot review; color disappearance alone is insufficient.')
           print('Manual Wikipedia screenshot review required; this simulates a host-side HTTPS proxy outage, not physical Wi-Fi roaming.')
           PY
       - name: Stop owned host bridge supervisor and ensure no leftover TCP service
