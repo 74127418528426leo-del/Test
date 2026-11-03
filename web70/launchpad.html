@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puppy50 Web | Your RAM-only browser</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#071020;color:#f1f6ff;font:16px/1.6 system-ui,sans-serif}
+.top{height:64px;background:#09c6ce;color:#051521;display:flex;align-items:center;padding:0 28px;font-weight:800;font-size:20px;letter-spacing:.6px}
+main{max-width:920px;margin:auto;padding:50px 30px 80px}
+h1{font-size:clamp(30px,5vw,52px);line-height:1.14;margin:0 0 18px}
+p{color:#b9cce3}
+.sub{font-size:18px;max-width:700px;margin:0 0 34px}
+h2{font-size:20px;margin:32px 0 16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+a.card{display:block;min-height:110px;background:#12243e;border:1px solid #37506c;border-radius:14px;color:#f1f6ff;padding:18px;text-decoration:none;transition:background .12s ease}
+a.card:hover,a.card:focus-visible{background:#1c3857;outline:2px solid #09c6ce;outline-offset:2px}
+a.card strong{display:block;font-size:18px}
+a.card small{color:#b8cde5}
+.note{margin-top:34px;padding:18px 22px;border-left:4px solid #09c6ce;background:#0d2138;border-radius:7px}
+.note p{margin:4px 0;color:#b9cce3}
+kbd{background:#23425d;border-radius:5px;padding:2px 6px;color:white}
+</style>
+</head>
+<body>
+<div class="top">PUPPY50 WEB <span style="font-size:13px;font-weight:500;margin-left:auto">RAM-ONLY BROWSER</span></div>
+<main>
+<h1>Browse the web.</h1>
+<p class="sub">This is your lightweight Linux workspace. Choose a website below or type any address in the Firefox address bar.</p>
+<h2>Open a website</h2>
+<div class="cards">
+<a class="card" href="https://example.com/"><strong>Example Domain</strong><small>Basic HTTPS page</small></a>
+<a class="card" href="https://www.wikipedia.org/"><strong>Wikipedia</strong><small>Knowledge and articles</small></a>
+<a class="card" href="https://www.mozilla.org/"><strong>Mozilla</strong><small>Browser information</small></a>
+<a class="card" href="https://www.google.com/"><strong>Google</strong><small>Web search</small></a>
+</div>
+<h2>Connection and help</h2>
+<div class="cards">
+<a class="card" href="file:///run/puppy50-network-status.html"><strong>Network status</strong><small>Guest connection test and mode</small></a>
+<a class="card" href="about:preferences#general"><strong>Browser settings</strong><small>Firefox preferences</small></a>
+</div>
+<div class="note">
+<strong>How to connect:</strong><p>Connect your host computer to Wi-Fi, Ethernet or a hotspot. Puppy50 uses its virtual Ethernet adapter to share the host's connection through QEMU NAT. In this preview, the VM does not directly select Wi-Fi networks.</p>
+<p>For the address bar, press <kbd>Ctrl</kbd>+<kbd>L</kbd>, enter an HTTPS address and press <kbd>Enter</kbd>. Nothing on this page automatically opens a website.</p>
+<p>This is experimental software. Avoid sensitive accounts until browser update and security audits are complete. Your VM session is not saved to disk.</p>
+</div>
+</main>
+</body>
+</html>
