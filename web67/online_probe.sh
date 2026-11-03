@@ -15,16 +15,19 @@ if ! ip -o -4 addr show dev eth0 | grep -q 'inet '; then
   exit 21
 fi
 log "PUPPY50_V67_DHCP=PASS"
+log "PUPPY50_V64_DHCP_IPV4=PASS"
 if ! ip -4 route show default | grep -q default; then
   log "PUPPY50_V67_ROUTE=FAIL"
   exit 22
 fi
 log "PUPPY50_V67_ROUTE=PASS"
+log "PUPPY50_V64_DEFAULT_ROUTE=PASS"
 # QEMU user-mode NAT fixes DNS at 10.0.2.3, regardless of stale
 # Docker staging resolv.conf baked into the filesystem.
 printf 'nameserver 10.0.2.3\noptions timeout:3 attempts:2\n' > /etc/resolv.conf
 if nslookup example.com 10.0.2.3 >/tmp/v67-dns.log 2>&1; then
   log "PUPPY50_V67_DNS=PASS"
+log "PUPPY50_V64_DNS_CONFIG=PRESENT"
 else
   log "PUPPY50_V67_DNS=FAIL"
   exit 23
