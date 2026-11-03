@@ -217,6 +217,22 @@ jobs:
             output/rootfs output/official-puppy.iso \
             dist/Puppy50_Web_v64_Online_QEMU.iso output/reports
           echo 'PUPPY50_V54_REAL_ISO_BUILT_AND_EMBEDDED_BYTES_VERIFIED'
+      - name: Keep the real ISO even if the online acceptance gate fails (UNVERIFIED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum Puppy50_Web_v64_Online_QEMU.iso > SHA256SUMS)
+          echo 'PUPPY50_V64_UNVERIFIED_ISO_PRESERVED_FOR_DEBUGGING'
+      - name: Upload UNVERIFIED diagnostic ISO, not a public online release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v64_UNVERIFIED_ONLINE_CANDIDATE_ISO
+          path: |
+            dist/Puppy50_Web_v64_Online_QEMU.iso
+            dist/SHA256SUMS
+          retention-days: 3
+          if-no-files-found: error
+
       - name: Real KVM e1000 NAT online browser tests at 384 and 1024 MiB
         shell: bash
         timeout-minutes: 17
