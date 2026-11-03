@@ -8,8 +8,6 @@ say() { printf '%s\n' "$1" >/dev/ttyS0 2>/dev/null || true; }
 MODE=offline
 mkdir -p /run/puppy50web
 POLICY=/usr/lib/firefox-esr/distribution/policies.json
-# Prevent a stale fallback in the in-memory session if the network changes.
-if [ -f "$POLICY" ] && grep -q 'PUPPY50_QEMU_HOST_BRIDGE' "$POLICY"; then rm -f "$POLICY"; fi
 say "PUPPY50_V85_NETWORK_PROBE_START"
 if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
   --noproxy '*' --connect-timeout 5 --max-time 12 -o /dev/null https://example.com/; then
