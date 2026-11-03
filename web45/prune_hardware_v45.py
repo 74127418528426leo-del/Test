@@ -10,7 +10,7 @@ from pathlib import Path
 
 DRIVER_SEEDS={
     # Ram-only loop mounts and bootable optical/USB storage
-    'loop','squashfs','overlay','isofs','sr_mod','cdrom','sd_mod','usb_storage','uas',
+    'loop','squashfs','overlay','zram','isofs','sr_mod','cdrom','sd_mod','usb_storage','uas',
     'ahci','libahci','ata_piix','libata','ext4','vfat','fat','nls_cp437','nls_iso8859_1',
     'nvme','virtio_blk','virtio_pci','virtio_net',
     # Intel i3-540 GMA/i915 and other basic graphics/console
