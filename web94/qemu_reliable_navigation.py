@@ -18,7 +18,7 @@ def homepage_visible(path):
     p=Path(path)
     if not p.is_file():return False
     raw=p.read_bytes()
-    m=re.match(rb'^P6\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s',raw[:100])
+    m=re.match(rb'^P6\s+(\d+)\s+(\d+)\s+(\d+)\s',raw[:100])
     if not m:return False
     w,h,mx=map(int,m.groups())
     if mx!=255 or len(raw)!=m.end()+3*w*h:return False
