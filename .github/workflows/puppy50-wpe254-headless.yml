@@ -1,0 +1,110 @@
+name: Puppy50 WPEPlatform 2.54 - real headless 384MiB cgroup feasibility
+on:
+  push:
+    branches: [puppy50-wpe254-headless-feasibility]
+    paths:
+      - 'wpe_feasibility/**'
+      - '.github/workflows/puppy50-wpe254-headless.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-wpe-headless:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real SquashFS measurement tool
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          mkdir -p wpe-output/rootfs wpe-output/reports
+      - name: Build actual Debian sid WPE WebKit with no development tools in runtime
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          docker build --pull -t puppy50-wpe-headless:feasibility \
+            -f wpe_feasibility/Dockerfile wpe_feasibility \
+            > wpe-output/reports/docker-build.log 2>&1 || {
+              tail -70 wpe-output/reports/docker-build.log
+              exit 1
+            }
+          docker image inspect --format '{{.Size}}' puppy50-wpe-headless:feasibility \
+            > wpe-output/reports/docker-layer-size-bytes.txt
+          docker create --name puppy50-wpe-root-measure puppy50-wpe-headless:feasibility
+          docker export puppy50-wpe-root-measure | tar -xf - -C wpe-output/rootfs
+          docker rm puppy50-wpe-root-measure
+          test -s wpe-output/rootfs/usr/local/bin/puppy50-wpe-headless
+      - name: Measure actual compressed WPE runtime root not developer layers
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo mksquashfs wpe-output/rootfs wpe-output/wpe-debian-runtime.sfs \
+             -comp xz -b 1M -Xbcj x86 -processors 2 -mem 1024M \
+             -exit-on-error -noappend -no-progress \
+             > wpe-output/reports/squashfs.log 2>&1
+          stat -c '%s' wpe-output/wpe-debian-runtime.sfs \
+            > wpe-output/reports/wpe-runtime-root-sfs-bytes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          f=Path('wpe-output/wpe-debian-runtime.sfs')
+          n=f.stat().st_size
+          print(f'WPE_RUNTIME_XZ_BYTES={n}; MiB={n/1048576:.3f}; 384MiB_RAM_AFTER_SFS_ONLY={384-n/1048576:.3f}')
+          PY
+      - name: Test security-preserving headless WPE local page under 384MiB cgroup
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          docker run -d --name puppy50-wpe-runtime \
+             --memory=384m --memory-swap=384m --pids-limit=160 \
+             --network none --cap-drop ALL --security-opt no-new-privileges \
+             puppy50-wpe-headless:feasibility > wpe-output/reports/container-id.txt
+          sleep 12
+          docker logs puppy50-wpe-runtime > wpe-output/reports/wpe-logs-mid.txt 2>&1 || true
+          docker exec puppy50-wpe-runtime cat /sys/fs/cgroup/memory.current \
+            > wpe-output/reports/cgroup-memory-12s.txt 2>&1 || true
+          docker exec puppy50-wpe-runtime cat /sys/fs/cgroup/memory.peak \
+            > wpe-output/reports/cgroup-peak-12s.txt 2>&1 || true
+          sleep 32
+          docker logs puppy50-wpe-runtime > wpe-output/reports/wpe-logs-final.txt 2>&1 || true
+          docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}} {{.State.Status}}' \
+            puppy50-wpe-runtime > wpe-output/reports/container-final-state.txt
+          docker stats --no-stream puppy50-wpe-runtime \
+            > wpe-output/reports/docker-stats.txt 2>&1 || true
+      - name: Conservative results and missing-proof accounting
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('wpe-output/reports')
+          logs=(p/'wpe-logs-final.txt').read_text(errors='replace') if (p/'wpe-logs-final.txt').exists() else ''
+          info=(p/'container-final-state.txt').read_text().split() if (p/'container-final-state.txt').exists() else []
+          sfs=int((p/'wpe-runtime-root-sfs-bytes.txt').read_text().strip()) if (p/'wpe-runtime-root-sfs-bytes.txt').exists() else None
+          report={'schema':'PUPPY50_WPE254_HEADLESS_CGROUP_PROOF',
+             'web_engine_installed_into_measured_debian_root':sfs is not None,
+             'debian_runtime_root_sfs_bytes':sfs,
+             'debian_runtime_root_sfs_mib':round(sfs/1048576,3) if sfs is not None else None,
+             'local_headless_page_load_finished': 'PUPPY50_WPE_HEADLESS_LOCAL_LOAD_FINISHED' in logs,
+             'engine_exit_without_error':len(info)>1 and info[1]=='0',
+             'container_oom_killed':info[0]=='true' if info else None,
+             'complete_384mib_ram_only_os_proven':False,
+             'graphical_browser_rendered_proven':False,
+             'keyboard_mouse_proven':False,
+             'https_network_webgl_proven':False,
+             'sandbox_verified':False,
+             'limitation':'Docker cgroup 384m does not include compressed root held in tmpfs as a real RAM-only guest would. Headless page loading and Docker image size cannot be treated as a complete browser or actual guest proof.'}
+          report['headless_cgroup_test_success']=bool(report['local_headless_page_load_finished'] and report['engine_exit_without_error'] and report['container_oom_killed'] is False)
+          p.mkdir(parents=True,exist_ok=True)
+          (p/'WPE254_RESULTS.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve source-level engine measurements only, no large Docker image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-wpe254-headless-384m-measured-evidence
+          path: wpe-output/reports/
+          retention-days: 7
+          if-no-files-found: warn
