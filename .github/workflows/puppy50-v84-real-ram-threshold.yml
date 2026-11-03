@@ -1,0 +1,171 @@
+name: Puppy50 v84 - Determine real RAM threshold for complete HTTPS webpage rendering
+on:
+  push:
+    branches: [puppy50-v84-minimum-usable-ram]
+    paths:
+      - 'web84/**'
+      - '.github/workflows/puppy50-v84-real-ram-threshold.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v84-memory-threshold
+  cancel-in-progress: true
+jobs:
+  memory_step:
+    name: ${{ matrix.name }} at ${{ matrix.ram }} MiB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 19
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: complete-v78
+            ram: 1280
+            artifact: Puppy50_v78_UNVERIFIED_full_APK_inventory_QEMU_ISO
+            from_run: 41677336550
+            iso: Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso
+            expected_sha: c7847811125c503041a01623b9bacff0e6bc2b363f5b05253678be3d5f45704d
+          - name: complete-v78
+            ram: 1536
+            artifact: Puppy50_v78_UNVERIFIED_full_APK_inventory_QEMU_ISO
+            from_run: 41677336550
+            iso: Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso
+            expected_sha: c7847811125c503041a01623b9bacff0e6bc2b363f5b05253678be3d5f45704d
+          - name: complete-v78
+            ram: 1792
+            artifact: Puppy50_v78_UNVERIFIED_full_APK_inventory_QEMU_ISO
+            from_run: 41677336550
+            iso: Puppy50_v78_APK_Complete_QEMU_Control_EXPERIMENTAL.iso
+            expected_sha: c7847811125c503041a01623b9bacff0e6bc2b363f5b05253678be3d5f45704d
+          - name: published-v70
+            ram: 1536
+            artifact: Puppy50_v70_QEMU_NORMAL_BROWSER_ISO
+            from_run: 41660921113
+            iso: Puppy50_Web_v70_Normal_Browser_Online.iso
+            expected_sha: 26a9b339c6de87a1c891512742d608a910f4bbfce66fe26a96159297c98f8e2e
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test new browser-body triage and keep original KVM harness reproducible
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile web84/frame_body_triage.py web79/qemu_stable_link_page_load.py
+          python3 -m unittest discover -s web84/tests -p 'test_*.py' -v
+          mkdir -p dist output/evidence/guest output/reports
+      - name: Install QEMU and enable real KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Fetch original ISO, unchanged from prior verified boot experiments
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          run-id: ${{ matrix.from_run }}
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Check ISO SHA-256 rather than trusting the artifact label
+        env:
+          ORIGINAL: ${{ matrix.iso }}
+          EXPECTED_SHA: ${{ matrix.expected_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,hashlib
+          arr=list(Path('dist').rglob(os.environ['ORIGINAL']))
+          if len(arr)!=1:raise SystemExit('Expected exactly one original ISO')
+          p=arr[0]
+          h=hashlib.sha256()
+          with p.open('rb') as f:
+              for block in iter(lambda:f.read(1048576),b''):h.update(block)
+          if h.hexdigest()!=os.environ['EXPECTED_SHA']:
+              raise SystemExit('Original ISO SHA256 mismatch')
+          Path('output/reports/iso_path').write_text(str(p.resolve())+'\n')
+          print('PUPPY50_V84_SOURCE_ISO_SHA_VERIFIED',p,h.hexdigest())
+          PY
+      - name: Start localhost HTTPS bridge preserving real guest CA validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 \
+            > output/reports/bridge.log 2>&1 < /dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for i in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):
+                      print('HOST_BRIDGE_READY')
+                      break
+              except OSError:time.sleep(.15)
+          else:raise SystemExit('Bridge did not start')
+          PY
+          curl --fail --silent --show-error --head --proto '=https' \
+            --proxy http://127.0.0.1:3128 --noproxy '' \
+            --max-time 25 https://www.wikipedia.org/ -o /dev/null
+      - name: Run real 405-second 1.25-1.75 GiB KVM browser interaction test
+        timeout-minutes: 10
+        env:
+          GUEST_RAM: ${{ matrix.ram }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 web79/qemu_stable_link_page_load.py \
+            --iso "$(cat output/reports/iso_path)" \
+            --out output/evidence/guest --ram "$GUEST_RAM" --seconds 405
+      - name: Assess actual webpage body pixels, never confuse blank white with success
+        if: always()
+        env:
+          SOURCE: ${{ matrix.name }}
+          GUEST_RAM: ${{ matrix.ram }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 web84/frame_body_triage.py \
+            --frames output/evidence/guest \
+            --source "$SOURCE" --ram "$GUEST_RAM" \
+            --out output/reports/V84_REAL_BODY_PIXELS.json
+          python3 - <<'PY'
+          import json
+          data=json.load(open('output/reports/V84_REAL_BODY_PIXELS.json'))
+          print('PUPPY50_V84_LIKELY_BLANK=',data['body_blank_at_final_screenshot'])
+          print('PUPPY50_V84_NONBLANK_CANDIDATE=',data['body_nonblank_content_candidate'])
+          print('No claim that Wikipedia site contents were visually verified by this classifier')
+          PY
+      - name: Always preserve real screenshots, KVM serial and memory threshold evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v84_${{ matrix.name }}_${{ matrix.ram }}MiB_real_browser
+          path: |
+            output/evidence/
+            output/reports/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Fail closed if original guest HTTPS or real nonblank page evidence missing
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/reports/V84_REAL_BODY_PIXELS.json')
+          if not p.is_file():raise SystemExit('PUPPY50_V84_NO_REAL_BROWSER_FRAME_REPORT')
+          data=json.loads(p.read_text())
+          for key in ('real_ram_boot','guest_strict_CA_public_HTTPS','real_virtual_mouse_click_requested',
+                      'network_adapter_stayed_online'):
+              if data.get(key) is not True:
+                  raise SystemExit('PUPPY50_V84_MISSING_'+key)
+          if data.get('body_blank_at_final_screenshot'):
+              raise SystemExit('PUPPY50_V84_BLANK_WEBPAGE_NOT_USABLE')
+          if not data.get('body_nonblank_content_candidate'):
+              raise SystemExit('PUPPY50_V84_NO_NONBLANK_SITE_EVIDENCE')
+          print('PUPPY50_V84_GUEST_HTTPS_AND_NONBLANK_FRAME_CANDIDATE')
+          print('Independent screenshot inspection is still required.')
+          PY
