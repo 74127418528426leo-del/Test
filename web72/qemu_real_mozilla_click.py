@@ -87,10 +87,22 @@ def main():
                         # neighbor. The QEMU monitor mouse_move command is
                         # relative; capture a PRE-CLICK frame to independently
                         # verify the actual hovered destination.
+                        # This QEMU guest exposes TWO pointer devices:
+                        # PS/2 Mouse #2 and active absolute vmmouse #4.
+                        # Relative HMP mouse_move did not move vmmouse;
+                        # explicitly activate PS/2 before sending deltas.
+                        before=hmp(monitor,"info mice")
+                        chosen=hmp(monitor,"mouse_set 2")
+                        after=hmp(monitor,"info mice")
+                        if "Mouse #2: QEMU PS/2 Mouse" not in after or "* Mouse #2:" not in after:
+                            raise RuntimeError("Could not activate QEMU PS/2 mouse: "+after[-450:])
                         reply=hmp(monitor,"mouse_move 220 0")
                         if any(t in reply.lower() for t in ("unknown command","invalid parameter","error:")):
                             raise RuntimeError("QEMU rejected mouse_move: "+reply[-250:])
                         report["mozilla_pointer_move_requested"]=True
+                        report["explicit_ps2_mouse_selected"]=True
+                        report["before_mouse_list"]=before[-400:]
+                        report["after_mouse_list"]=after[-400:]
                         report["pointer_move_hmp_reply"]=reply[-250:]
                     except Exception as exc:
                         report["mozilla_pointer_move_requested"]=False
@@ -148,6 +160,7 @@ def main():
         "after_click_cyan":after,
         "homepage_color_disappeared":bool(before is not None and after is not None and before>0.025 and after<0.010)}
     report["Mozilla_public_page_visually_confirmed"]=False
+    report["mouse_input_fix"]="explicit active PS/2 mouse_set 2 before mouse_move; previous active device was absolute vmmouse"
     report["Mozilla_preview_pointer_hover_frame"]="frame_165.ppm"
 
     report["public_external_website_retested_in_this_build"]=False
@@ -159,7 +172,7 @@ def main():
             "xorg_started","firefox_launch_requested","guest_DHCP","guest_DNS",
             "guest_public_CA_verified_HTTPS","guest_status_page_written",
             "timed_demo_not_requested","actual_user_homepage_visibly_rendered",
-            "guest_did_not_exit_early","mozilla_pointer_move_requested","real_qemu_browser_link_click_submitted")
+            "guest_did_not_exit_early","mozilla_pointer_move_requested","explicit_ps2_mouse_selected","real_qemu_browser_link_click_submitted")
     missing=[c for c in checks if report.get(c) is not True]
     if missing:raise SystemExit("PUPPY50_V72_FAIL_CLOSED: "+repr(missing))
 if __name__=="__main__":
