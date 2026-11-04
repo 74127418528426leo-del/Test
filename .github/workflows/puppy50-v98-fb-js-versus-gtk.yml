@@ -1,0 +1,70 @@
+name: Puppy50 v98 - NetSurf framebuffer JavaScript RAM versus GTK
+on:
+  push:
+    branches: [puppy50-v98-netsurf-framebuffer-js-ram]
+    paths:
+      - 'web98/**'
+      - '.github/workflows/puppy50-v98-fb-js-versus-gtk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-v98-fb-js
+  cancel-in-progress: true
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install genuine Debian NetSurf 3.11 GTK and native framebuffer packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            netsurf-fb netsurf-gtk python3 xauth xvfb scrot \
+            dbus-x11 dbus-user-session procps util-linux curl ca-certificates
+          useradd -m -u 1550 -s /bin/sh p50
+          mkdir -p /tmp/p50-runtime evidence
+          chmod 0700 /tmp/p50-runtime
+          chown p50:p50 /tmp/p50-runtime
+          PYTHONPATH=web98 python3 -m unittest discover -s web98/tests -p 'test_*.py' -v
+          python3 -m py_compile web98/fb_vs_gtk.py
+          dpkg-query -W -f='${binary:Package} ${Version}\n' netsurf-fb netsurf-gtk >evidence/package-versions.txt
+      - name: Start identical Xvfb 800x600 and deterministic local JavaScript webpage
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :97 -screen 0 800x600x24 -nolisten tcp -ac >evidence/xvfb.log 2>&1 &
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory web96/fixtures >evidence/http.log 2>&1 &
+          sleep 2
+          curl -fsS http://127.0.0.1:8765/01-execution.html | grep -Fq JS_BASIC_EXECUTED
+      - name: Real same-user PSS plus 4 independent NetSurf framebuffer/GTK screenshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u web98/fb_vs_gtk.py --out evidence --seconds 17 \
+            | tee evidence/summary.log
+      - name: Preserve raw PSS, browser logs and all original screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v98_Real_NetSurf_FB_Vs_GTK_JS_Ram_Proof
+          path: evidence/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Browser processes must actually be sampled; webpage visibility separately reviewed
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('evidence/results.json'))
+          assert len(r['results'])==4
+          good=[x for x in r['results'] if x['peak_pss_mib'] is not None]
+          if len(good)<2:raise SystemExit('Too few real browser PSS readings')
+          assert r['real_visual_review_required'] is True
+          print('V98_BROWSER_PSS_RECORDED; frame inspection mandatory before claiming JS')
+          PY
