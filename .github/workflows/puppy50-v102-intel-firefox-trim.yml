@@ -1,0 +1,186 @@
+name: Puppy50 v102 - Intel Firefox Live root trim and true 2GiB KVM proof
+on:
+  push:
+    branches: [puppy50-v102-intel-firefox-trim-real-kvm]
+    paths:
+      - 'web102/**'
+      - '.github/workflows/puppy50-v102-intel-firefox-trim.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v102-intel-trim-real-guest
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit test non-destructive Intel-only GPU firmware cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web102/tests -p 'test_*.py' -v
+          python3 -m py_compile web102/prune_intel_live.py
+          mkdir -p input out/{rootfs,extracted,verify,reports}
+      - name: Install squashfs + original boot preserving ISO tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+      - name: Download exact v100 guest-tested diagnostics-only Firefox ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify byte-identical original ISO and decompress temporary root
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          xorriso -osirrox on -indev input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso -extract /live/filesystem.squashfs out/extracted/root.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/rootfs out/extracted/root.squashfs >out/reports/unsquashfs.log
+          stat -c '%s' out/extracted/root.squashfs >out/reports/squashfs_original_bytes.txt
+          stat -c '%s' input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso >out/reports/ISO_original_bytes.txt
+      - name: Remove only unrelated GPU firmware and duplicated root boot copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 web102/prune_intel_live.py out/rootfs | tee out/reports/V102_ROOT_PRUNE.json
+          sudo test -d out/rootfs/usr/lib/firmware/i915
+          sudo test -d out/rootfs/usr/lib/firmware/rtw89
+          sudo test -d out/rootfs/usr/lib/firmware/ath11k
+          sudo test -f out/rootfs/usr/local/sbin/puppy50-network-probe
+          sudo test -f out/rootfs/etc/ssl/certs/ca-certificates.crt
+          sudo test -f out/rootfs/usr/bin/firefox-esr
+          sudo test ! -d out/rootfs/usr/lib/firmware/nvidia
+          sudo test ! -d out/rootfs/usr/lib/firmware/amdgpu
+      - name: Repack real bootable experimental ISO retaining original bootloader
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/rootfs out/V102_filesystem.squashfs -comp xz -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          xorriso -indev input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso -outdev out/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso -map out/V102_filesystem.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso -extract /live/filesystem.squashfs out/verify/filesystem.squashfs >out/reports/reextract.log 2>&1
+          cmp out/V102_filesystem.squashfs out/verify/filesystem.squashfs
+          stat -c '%s' out/V102_filesystem.squashfs >out/reports/squashfs_v102_bytes.txt
+          stat -c '%s' out/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso >out/reports/ISO_v102_bytes.txt
+          (cd out && sha256sum Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso >SHA256SUMS)
+          python3 - <<'PY'
+          from pathlib import Path
+          old_iso=int(Path('out/reports/ISO_original_bytes.txt').read_text())
+          new_iso=int(Path('out/reports/ISO_v102_bytes.txt').read_text())
+          old_sfs=int(Path('out/reports/squashfs_original_bytes.txt').read_text())
+          new_sfs=int(Path('out/reports/squashfs_v102_bytes.txt').read_text())
+          print(f'P50_V102_COMPRESSED_SFS_SAVINGS_MIB={(old_sfs-new_sfs)/1048576:.2f}')
+          print(f'P50_V102_ACTUAL_ISO_SAVINGS_MIB={(old_iso-new_iso)/1048576:.2f}')
+          if new_iso>=old_iso or new_sfs>=old_sfs:raise SystemExit('Actual image did not shrink')
+          PY
+      - name: Preserve original and measured new ISO file sizes and security audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_RootFS_Actual_Savings_Audit
+          path: out/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Upload separate TEST-ONLY intel-targeted compressed Firefox ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_Smaller_ISO_TEST_ONLY
+          path: |
+            out/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 5
+  real_kvm:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { ram: 2048, trial: a }
+          - { ram: 2048, trial: b }
+          - { ram: 2560, trial: control }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real hardware accelerated KVM/QEMU no writable virtual hard drive
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports}
+      - name: Download separate v102 experimental Intel ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_Smaller_ISO_TEST_ONLY
+          path: input
+      - name: Validate ISO checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Start restricted localhost bridge only when real guest direct HTTPS unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('HTTPS fallback not listening')
+          PY
+      - name: Real KVM test with Firefox keyboard external website and RAM-only media removal
+        timeout-minutes: 8
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 web94/qemu_reliable_navigation.py --iso input/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso --out evidence/qemu --ram "$RAM" --seconds 300 >evidence/reports/guest-test.log 2>&1
+          printf 'test_exit=%s\n' "$?" >evidence/reports/exit-code.txt
+          exit 0
+      - name: Analyze real guest memory pressure and Firefox HTTPS status
+        if: always()
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          python3 web99/analyze_guest.py --evidence evidence/qemu --out evidence/reports/V102_GUEST_AUDIT.json --mode original --ram "$RAM"
+      - name: Preserve original QEMU frames and guest serial even if Firefox does not work
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_${{ matrix.ram }}MiB_${{ matrix.trial }}_KVM_Proof
+          path: evidence/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Require actual non-root Firefox, CA-validated HTTPS and RAM-only ejection
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('evidence/reports/V102_GUEST_AUDIT.json'))
+          assert d['guest_CA_verified_public_https']
+          assert d['nonroot_firefox_seen']
+          assert d['boot_media_ejected']
+          assert d['guest_running_after_eject']
+          assert not d['zram_enabled_guest_verified']
+          assert d['zram_samples_count']>=5
+          print('V102_GUEST_PREREQUISITES_PASSED; external webpage still requires actual framebuffer review')
+          PY
