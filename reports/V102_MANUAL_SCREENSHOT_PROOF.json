@@ -1,0 +1,53 @@
+{
+  "schema": "PUPPY50_V102_MANUAL_QEMU_BROWSER_PROOF",
+  "source_run_id": 41751806750,
+  "source_iso_artifact_name": "Puppy50_v102_Intel_Firefox_Smaller_ISO_TEST_ONLY",
+  "iso_original_bytes": 990183424,
+  "iso_v102_bytes": 760545280,
+  "iso_savings_bytes": 229638144,
+  "old_squashfs_bytes": 844705792,
+  "new_squashfs_bytes": 614903808,
+  "test_frames": [
+    {
+      "trial": "a",
+      "ram_mib": 2048,
+      "source_artifact": "Puppy50_v102_Intel_Firefox_2048MiB_a_KVM_Proof",
+      "frame": "qemu/frame_300.ppm",
+      "sha256": "3593d1531a3c091fdc86f1eb8067c65c76096e64c8d338937d23362398c9767a",
+      "actual_public_web_page": true,
+      "correct_example_url": false,
+      "manual_review": "Live Google Search page after QMP dropped initial URL keystrokes",
+      "minimum_available_mib": 85.39
+    },
+    {
+      "trial": "b",
+      "ram_mib": 2048,
+      "source_artifact": "Puppy50_v102_Intel_Firefox_2048MiB_b_KVM_Proof",
+      "frame": "qemu/frame_300.ppm",
+      "sha256": "0eb926e7c7463eff80bad9100c6a86af593e1719e13d2378be11438db9f25dc8",
+      "actual_public_web_page": true,
+      "correct_example_url": true,
+      "manual_review": "Exact example.com public HTTPS website visibly rendered",
+      "minimum_available_mib": 127.95
+    },
+    {
+      "trial": "control",
+      "ram_mib": 2560,
+      "source_artifact": "Puppy50_v102_Intel_Firefox_2560MiB_control_KVM_Proof",
+      "frame": "qemu/frame_300.ppm",
+      "sha256": "e40c001f9263bfe85abf7069c99cfb4bc174ef775d1b5802da51c3bbbc0f78fe",
+      "actual_public_web_page": true,
+      "correct_example_url": true,
+      "manual_review": "Exact example.com public HTTPS website visibly rendered by 185s",
+      "minimum_available_mib": 762
+    }
+  ],
+  "browser_security_or_TLS_disabled": false,
+  "wifi_firmware_removed": false,
+  "GPU_firmware_nvidia_and_amdgpu_removed": true,
+  "physical_wifi_tested": false,
+  "every_network_working_guaranteed": false,
+  "reliable_2GiB_browser_proven": false,
+  "actual_384MiB_boot_proven": false,
+  "production_ready": false
+}
