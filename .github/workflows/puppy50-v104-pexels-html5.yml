@@ -1,0 +1,103 @@
+name: Puppy50 v104 - Decoding actual Pexels original 4K in real Firefox
+on:
+  push:
+    branches: [puppy50-v104-pexels-real-2160p-local-player]
+    paths:
+      - "web104/**"
+      - ".github/workflows/puppy50-v104-pexels-html5.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v104-native-video
+  cancel-in-progress: true
+jobs:
+  real_original_video:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate local original 4K player, actual player-resolution metrics and QMP keyboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web104/tests -p 'test_*.py' -v
+          python3 -m py_compile web104/kvm_play.py
+          mkdir -p input out/{qemu,reports}
+      - name: Install genuine KVM QEMU and HTTP test-host tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 curl
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Retrieve byte-identical verified Firefox guest ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify SHA-256 before streaming original Pexels video
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Start normal local page server and restricted authorized HTTPS fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u -m http.server 8766 --bind 0.0.0.0 --directory web104 >out/reports/local-player-http.log 2>&1 </dev/null &
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >out/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for port in [8766,3128]:
+              for _ in range(50):
+                  try:
+                      with socket.create_connection(('127.0.0.1',port),timeout=1):break
+                  except OSError:time.sleep(.2)
+              else:raise SystemExit('Host local service unavailable on port '+str(port))
+          PY
+          curl -fsS --max-time 15 http://127.0.0.1:8766/pexels.html -o out/reports/test-page.html
+          grep -Fq 12102943_3840_2160_30fps.mp4 out/reports/test-page.html
+          echo 'LOCAL_HTML5_TEST_PAGE_STREAMING_REMOTE_PEXELS_SOURCE_READY'
+      - name: Boot true Firefox KVM, stream original Pexels 4K, screenshot decoded dimensions and frames
+        timeout-minutes: 9
+        shell: bash
+        run: |
+          set +e
+          python3 -u web104/kvm_play.py \
+            --iso input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso \
+            --out out/qemu >out/reports/guest-result.log 2>&1
+          echo "GUEST_EXIT=$?" >out/reports/guest-exit.txt
+          exit 0
+      - name: Retain all real captured framebuffer pixels and serial logs even on video failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_Actual_Pexels_4K_HTML5_Firefox_Decoding_Proof
+          path: |
+            out/qemu/*.ppm
+            out/qemu/serial.log
+            out/qemu/qemu.log
+            out/qemu/result.json
+            out/reports/
+          retention-days: 25
+          if-no-files-found: warn
+      - name: Require actual guest Firefox CA-verified HTTPS and final QEMU screenshot
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/qemu/result.json').read_text())
+          assert r['local_test_page']=='http://10.0.2.2:8766/pexels.html'
+          assert r['actual_remote_video_source']=='https://videos.pexels.com/video-files/27251986/12102943_3840_2160_30fps.mp4'
+          assert r['guest_nonroot_firefox']
+          assert r['guest_HTTPS_CA_verified']
+          assert 'frame_415.ppm' in r['frames']
+          assert r['guest_4k_decoding_verified'] is False
+          print('REAL_GUEST_FRAME_CAPTURED; human review must confirm resolution and playback')
+          PY
