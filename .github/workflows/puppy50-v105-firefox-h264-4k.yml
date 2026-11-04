@@ -1,0 +1,170 @@
+name: Puppy50 v105 - Add Debian FFmpeg codec then retest original Pexels 4K
+on:
+  push:
+    branches: [puppy50-v105-firefox-h264-4k-codec]
+    paths:
+      - 'web105/**'
+      - '.github/workflows/puppy50-v105-firefox-h264-4k.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v105-firefox-h264-codec
+  cancel-in-progress: true
+jobs:
+  codec_iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO repack tools and record official codec intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools xorriso
+          mkdir -p input output/{extract,rootfs,recheck,reports}
+          grep -Fq 'libavcodec61' web105/README.md
+          grep -Fq 'getVideoPlaybackQuality' web104/pexels.html
+      - name: Download unchanged previously real-booted Puppy50 v100 Firefox ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify SHA and extract original RAM-only filesystem
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          xorriso -osirrox on -indev input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso -extract /live/filesystem.squashfs output/extract/filesystem.squashfs >output/reports/original-root-extraction.log 2>&1
+          sudo unsquashfs -d output/rootfs output/extract/filesystem.squashfs >output/reports/unsquashfs.log
+          (cd output/rootfs && sha256sum usr/bin/firefox-esr usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt) >output/reports/security-files-before
+          (cd output/rootfs && dpkg-query --admindir=var/lib/dpkg -W -f='${binary:Package} ${Version}\n' firefox-esr 2>/dev/null) >output/reports/firefox-version-before || true
+          test -f output/rootfs/etc/apt/sources.list || test -d output/rootfs/etc/apt/sources.list.d
+      - name: Install only official signed Debian libavcodec61 and required dependencies into extracted guest
+        shell: bash
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo cp -a output/rootfs/etc/resolv.conf output/reports/resolv-original
+          sudo rm -f output/rootfs/etc/resolv.conf
+          sudo cp /etc/resolv.conf output/rootfs/etc/resolv.conf
+          sudo chroot output/rootfs /usr/bin/apt-get update >output/reports/debian-apt-update.log 2>&1
+          sudo chroot output/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y --no-install-recommends libavcodec61 >output/reports/codec-apt-install.log 2>&1
+          sudo chroot output/rootfs dpkg-query -W -f='${binary:Package} ${Status} ${Version}\n' libavcodec61 >output/reports/codec-installed-verified.txt
+          sudo grep -Fq 'install ok installed' output/reports/codec-installed-verified.txt
+          sudo test -e output/rootfs/usr/lib/x86_64-linux-gnu/libavcodec.so.61
+          sudo chroot output/rootfs apt-get clean
+          sudo rm -rf output/rootfs/var/lib/apt/lists/*
+          sudo rm -f output/rootfs/etc/resolv.conf
+          sudo cp -a output/reports/resolv-original output/rootfs/etc/resolv.conf
+          (cd output/rootfs && sha256sum usr/bin/firefox-esr usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt) >output/reports/security-files-after
+          cmp output/reports/security-files-before output/reports/security-files-after
+          echo V105_SIGNED_H264_SOFTWARE_DECODER_INSTALLED_AND_FIREFOX_UNCHANGED
+      - name: Recompress Linux root with decoder while replaying identical bootloader
+        shell: bash
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/V105_root.squashfs -comp xz -b 1M -processors 3 -mem 2048M -exit-on-error -noappend -no-progress >output/reports/mksquashfs.log 2>&1
+          xorriso -indev input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso -outdev output/Puppy50_v105_Firefox_H264_4K_EXPERIMENTAL.iso -map output/V105_root.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >output/reports/repack.log 2>&1
+          xorriso -osirrox on -indev output/Puppy50_v105_Firefox_H264_4K_EXPERIMENTAL.iso -extract /live/filesystem.squashfs output/recheck/root.squashfs >output/reports/reextract.log 2>&1
+          cmp output/V105_root.squashfs output/recheck/root.squashfs
+          (cd output && sha256sum Puppy50_v105_Firefox_H264_4K_EXPERIMENTAL.iso >SHA256SUMS)
+      - name: Preserve codec audit including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v105_Codec_Signed_Debian_Build_And_Integrity_Audit
+          path: output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Share new experimental codec ISO for real KVM, not a public release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v105_Firefox_H264_4K_TEST_ONLY_ISO
+          path: |
+            output/Puppy50_v105_Firefox_H264_4K_EXPERIMENTAL.iso
+            output/SHA256SUMS
+          compression-level: 0
+          retention-days: 5
+  real_4k:
+    needs: codec_iso
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real QEMU and KVM acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 curl
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input output/{qemu,reports}
+      - name: Download exact signed-codec experimental Firefox ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v105_Firefox_H264_4K_TEST_ONLY_ISO
+          path: input
+      - name: Verify codec-ISO SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Run same known local HTML5 player, video still streamed from official Pexels HTTPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u -m http.server 8766 --bind 0.0.0.0 --directory web104 >output/reports/player-http.log 2>&1 </dev/null &
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for port in (8766,3128):
+              for _ in range(50):
+                  try:
+                      with socket.create_connection(('127.0.0.1',port),timeout=1):break
+                  except OSError:time.sleep(.2)
+              else:raise SystemExit('Local server missing')
+          PY
+          curl -fsS --max-time 15 http://127.0.0.1:8766/pexels.html -o output/reports/source-video-player.html
+      - name: Real KVM Firefox loads original 3840x2160 Pexels MP4 with installed software decoder
+        shell: bash
+        timeout-minutes: 9
+        run: |
+          set +e
+          python3 -u web104/kvm_play.py --iso input/Puppy50_v105_Firefox_H264_4K_EXPERIMENTAL.iso \
+            --out output/qemu >output/reports/real-video-test.log 2>&1
+          echo "GUEST_SCRIPT_EXIT=$?" >output/reports/guest-script-exit.txt
+          exit 0
+      - name: Preserve original screenshots, guest logs and diagnostic results even when video fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v105_Real_4K_H264_Codec_Pexels_KVM_Result
+          path: |
+            output/qemu/*.ppm
+            output/qemu/serial.log
+            output/qemu/qemu.log
+            output/qemu/result.json
+            output/reports/
+          retention-days: 25
+          if-no-files-found: warn
+      - name: Require unchanged real guest HTTPS, Firefox and actual screenshot evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('output/qemu/result.json').read_text())
+          assert d['guest_nonroot_firefox'] and d['guest_HTTPS_CA_verified']
+          assert 'frame_415.ppm' in d['frames']
+          assert d['actual_remote_video_source'].endswith('12102943_3840_2160_30fps.mp4')
+          assert d['guest_4k_decoding_verified'] is False, 'Human review required'
+          print('EXPERIMENTAL_CODEC_REAL_QEMU_COMPLETE_REQUIRE_ACTUAL_FRAME_REVIEW')
+          PY
