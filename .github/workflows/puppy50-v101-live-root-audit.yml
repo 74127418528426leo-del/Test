@@ -1,0 +1,84 @@
+name: Puppy50 v101 - Inspect RAM-only Firefox root filesystem sizes
+on:
+  push:
+    branches: [puppy50-v101-ram-rootfs-audit]
+    paths:
+      - 'web101/**'
+      - '.github/workflows/puppy50-v101-live-root-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v101-rootfs-readonly-size-audit
+  cancel-in-progress: true
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify parser and preservation of security/networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=web101 python3 -m unittest discover -s web101/tests -p 'test_*.py' -v
+          python3 -m py_compile web101/root_inventory.py
+          mkdir -p input out
+      - name: Install read-only ISO and SquashFS inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+      - name: Retrieve exact successful v100 Firefox Live diagnostic ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: Validate checksum, extract SFS read-only, obtain exact size metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          ISO=input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso
+          xorriso -osirrox on -indev "$ISO" -extract /live/filesystem.squashfs out/live.squashfs >out/iso-extract.log 2>&1
+          unsquashfs -s out/live.squashfs >out/squashfs-metadata.txt
+          unsquashfs -ll out/live.squashfs >out/all-files-listing.txt
+          python3 web101/root_inventory.py \
+            --listing out/all-files-listing.txt \
+            --output out/ROOT_FILESYSTEM_AUDIT.json \
+            --iso-size "$(stat -c '%s' "$ISO")" \
+            --squashfs-size "$(stat -c '%s' out/live.squashfs)" \
+            | tee out/audit-summary.txt
+      - name: Validate security relevant browser/network files exist in actual immutable ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'firefox-esr' out/all-files-listing.txt
+          grep -Fq 'ca-certificates.crt' out/all-files-listing.txt || true
+          grep -Fq 'puppy50-network-probe' out/all-files-listing.txt
+          grep -Eq 'NetworkManager|network-manager' out/all-files-listing.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('out/ROOT_FILESYSTEM_AUDIT.json'))
+          assert d['total_regular_file_entries']>2000
+          assert d['NOT_measured_384mib_boot']
+          assert d['NOT_measured_compressed_savings_from_removing_files']
+          print('V101_READONLY_REAL_SFS_INVENTORY_PROVEN')
+          PY
+      - name: Preserve size classification and raw content metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v101_Real_Firefox_RootFS_Savings_Audit
+          path: |
+            out/ROOT_FILESYSTEM_AUDIT.json
+            out/audit-summary.txt
+            out/squashfs-metadata.txt
+            out/iso-extract.log
+            out/all-files-listing.txt
+          retention-days: 21
+          if-no-files-found: warn
