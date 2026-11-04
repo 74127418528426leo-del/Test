@@ -1,0 +1,189 @@
+name: Puppy50 v99 - Firefox compressed RAM experiment and real KVM A-B
+on:
+  push:
+    branches: [puppy50-v99-firefox-zram-diagnostic-ab]
+    paths:
+      - 'web99/**'
+      - '.github/workflows/puppy50-v99-firefox-zram-ab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v99-firefox-compressed-ram-ab
+  cancel-in-progress: true
+jobs:
+  build_iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate guest-only zram implementation
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web99/tests -p 'test_*.py' -v
+          python3 -m py_compile web99/patch_live_zram.py web94/qemu_reliable_navigation.py
+          mkdir -p input output/{extracted,rootfs,verify,reports}
+      - name: Install squashfs and ISO tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools xorriso
+      - name: Download EXACT proven v91 updated Firefox Live ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: Check unchanged original ISO and extract read-only root
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          xorriso -osirrox on -indev input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso -extract /live/filesystem.squashfs output/extracted/filesystem.squashfs >output/reports/xorriso-extract.log 2>&1
+          sudo unsquashfs -d output/rootfs output/extracted/filesystem.squashfs >output/reports/unsquashfs.log
+          (cd output/rootfs && sha256sum usr/bin/firefox-esr usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt) >output/reports/ORIGINAL_SECURITY_FILES_SHA256
+      - name: Add Live-only compressed RAM swap and guest memory pressure telemetry
+        run: |
+          set -euo pipefail
+          sudo python3 web99/patch_live_zram.py output/rootfs | tee output/reports/V99_PATCH_MANIFEST.json
+          sudo systemctl --root="$PWD/output/rootfs" enable puppy50-zram-live.service
+          sudo systemctl --root="$PWD/output/rootfs" enable puppy50-memory-diagnostics.service
+          sudo sh -n output/rootfs/usr/local/sbin/puppy50-zram-live
+          sudo sh -n output/rootfs/usr/local/sbin/puppy50-memory-diagnostics
+          (cd output/rootfs && sha256sum usr/bin/firefox-esr usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt) >output/reports/AFTER_SECURITY_FILES_SHA256
+          cmp output/reports/ORIGINAL_SECURITY_FILES_SHA256 output/reports/AFTER_SECURITY_FILES_SHA256
+          grep -Fq 'After=puppy50-zram-live.service' output/rootfs/etc/systemd/system/lightdm.service.d/15-puppy50-zram-before-browser.conf
+          echo P50_V99_NO_FIREFOX_TLS_NETWORK_COMPONENTS_CHANGED
+      - name: Recompress verified root and preserve proven ISO bootloader unchanged
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          sudo mksquashfs output/rootfs output/V99_filesystem.squashfs -comp xz -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >output/reports/squashfs.log 2>&1
+          xorriso -indev input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso -outdev output/Puppy50_v99_Firefox_ZRAM_EXPERIMENTAL.iso -map output/V99_filesystem.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >output/reports/xorriso-repack.log 2>&1
+          xorriso -osirrox on -indev output/Puppy50_v99_Firefox_ZRAM_EXPERIMENTAL.iso -extract /live/filesystem.squashfs output/verify/filesystem.squashfs >output/reports/xorriso-reextract.log 2>&1
+          cmp output/V99_filesystem.squashfs output/verify/filesystem.squashfs
+          (cd output && sha256sum Puppy50_v99_Firefox_ZRAM_EXPERIMENTAL.iso >SHA256SUMS)
+          echo P50_V99_REAL_TEST_ISO_BUILT_NO_LOCAL_DISK_SWAP
+      - name: Preserve build provenance and test ISO even if VM tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v99_Build_Security_And_Configuration_Audit
+          path: output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Share only experimental ISO with the follow-on KVM test jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v99_Firefox_ZRAM_TEST_ONLY_ISO
+          path: |
+            output/Puppy50_v99_Firefox_ZRAM_EXPERIMENTAL.iso
+            output/SHA256SUMS
+          retention-days: 5
+          compression-level: 0
+  kvm_ab:
+    needs: build_iso
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: original, ram: 2048 }
+          - { mode: zram, ram: 2048 }
+          - { mode: zram, ram: 2560 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real hardware-accelerated QEMU and verify KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input output/{evidence,reports}
+      - name: Download original ISO for real control
+        if: matrix.mode == 'original'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: Download experimental verified-build ISO for real zram trials
+        if: matrix.mode == 'zram'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v99_Firefox_ZRAM_TEST_ONLY_ISO
+          path: input
+      - name: Verify exact unchanged ISO bytes before real boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Start same limited localhost fallback HTTPS bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Host-local TLS-byte bridge not ready')
+          PY
+      - name: Real QEMU Firefox HTTPS navigation at RAM allocation with or without zram
+        timeout-minutes: 8
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          if [ "$MODE" = zram ]; then
+            ISO="input/Puppy50_v99_Firefox_ZRAM_EXPERIMENTAL.iso"
+          else
+            ISO="input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso"
+          fi
+          python3 web94/qemu_reliable_navigation.py --iso "$ISO" --out output/evidence --ram "$RAM" --seconds 300 >output/reports/browser-test.log 2>&1
+          echo "guest_test_exit=$?" >output/reports/guest_exit.txt
+          exit 0
+      - name: Calculate guest memory pressure and zram use from real guest serial
+        if: always()
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+          RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          python3 web99/analyze_guest.py --evidence output/evidence --out output/reports/V99_ANALYSIS.json --mode "$MODE" --ram "$RAM"
+      - name: Retain actual screenshots, serial evidence and diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v99_Real_Firefox_${{ matrix.mode }}_${{ matrix.ram }}MiB
+          path: |
+            output/evidence/
+            output/reports/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Fail closed if zram not actually active or Firefox never starts
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          r=json.load(open('output/reports/V99_ANALYSIS.json'))
+          assert r['guest_CA_verified_public_https']
+          assert r['nonroot_firefox_seen']
+          assert r['boot_media_ejected']
+          assert r['guest_running_after_eject']
+          if os.environ['MODE']=='zram':
+              assert r['zram_enabled_guest_verified']
+              assert r['zram_samples_count']>=3
+          print('V99_KVM_BOOT_NETWORK_MEMORY_PREREQUISITES_PASS; webpage manually review screenshots')
+          PY
