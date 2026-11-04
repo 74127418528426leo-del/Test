@@ -102,7 +102,7 @@ def main():
     with (out/'qemu.log').open('wb') as log:
         vm=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT)
         start=time.monotonic()
-        schedule=([18,110,150,225,290,305,330,365,415,455,470]
+        schedule=([18,110,150,225,290,305,310,330,365,415,455,470]
                   if a.site=="youtube4k" else [18,110,150,225,290,310,350,390])
         try:
             for mark in schedule:
