@@ -15,7 +15,9 @@ jobs:
   wpe_modern_js:
     runs-on: ubuntu-24.04
     timeout-minutes: 16
-    container: debian:forky
+    container:
+      image: debian:forky
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@v4
       - name: Install modern WPEPlatform 2.54 from official Debian forky packages
@@ -31,6 +33,10 @@ jobs:
           mkdir -p /tmp/p50-runtime results
           chmod 0700 /tmp/p50-runtime
           chown p50:p50 /tmp/p50-runtime
+          # Outer Docker must permit the browser to create its OWN sandbox.
+          # Browser/WebKit sandbox remains enabled. No external pages or secrets.
+          runuser -u p50 -- unshare --user --map-root-user -- true
+          echo P50_V97_UNPRIVILEGED_SANDBOX_NAMESPACES_AVAILABLE
           PYTHONPATH=web97 python3 -m unittest discover -s web97/tests -p 'test_*.py' -v
           pkg-config --modversion wpe-webkit-2.0 | tee results/wpe-version.txt
           dpkg-query -W -f='${binary:Package} ${Version}\n' libwpewebkit-2.0-1 > results/package-versions.txt
