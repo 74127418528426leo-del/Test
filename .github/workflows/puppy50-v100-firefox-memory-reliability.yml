@@ -1,0 +1,171 @@
+name: Puppy50 v100 - Firefox 2GiB repeated real-browser memory diagnostic
+on:
+  push:
+    branches: [puppy50-v100-firefox-2gb-reliability-audit]
+    paths:
+      - 'web100/**'
+      - '.github/workflows/puppy50-v100-firefox-memory-reliability.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v100-readonly-memory-diagnostics
+  cancel-in-progress: true
+jobs:
+  diagnostic_iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify diagnosis-only patch never creates zram or changes browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web100/tests -p 'test_*.py' -v
+          python3 -m py_compile web100/patch_diagnostics_only.py
+          mkdir -p input out/{extract,rootfs,verify,reports}
+      - name: Install ISO and squashfs tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools xorriso
+      - name: Download original real-booted v91 Firefox ESR 153.6 ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v91_Debian_Live_ISO_NOT_RELEASED
+          run-id: 41716546515
+          github-token: ${{ github.token }}
+          path: input
+      - name: Check source hash and unpack original RAM-only filesystem
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          xorriso -osirrox on -indev input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso -extract /live/filesystem.squashfs out/extract/filesystem.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/rootfs out/extract/filesystem.squashfs >out/reports/unsquashfs.log
+          (cd out/rootfs && sha256sum usr/bin/firefox-esr usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt) >out/reports/security-files-before
+      - name: Inject ONLY read-only telemetry into a temporary Live root
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 web100/patch_diagnostics_only.py out/rootfs | tee out/reports/V100_ONLY_DIAGNOSTICS.json
+          sudo systemctl --root="$PWD/out/rootfs" enable puppy50-memory-diagnostics.service
+          sudo sh -n out/rootfs/usr/local/sbin/puppy50-memory-diagnostics
+          (cd out/rootfs && sha256sum usr/bin/firefox-esr usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt) >out/reports/security-files-after
+          cmp out/reports/security-files-before out/reports/security-files-after
+          sudo test ! -e out/rootfs/etc/systemd/system/puppy50-zram-live.service
+          echo V100_NO_SWAP_OR_FIREFOX_SECURITY_CHANGES
+      - name: Rebuild exact bootloader with diagnostics-only Firefox root
+        timeout-minutes: 13
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/rootfs out/V100_root.squashfs -comp xz -b 1M -processors 3 -mem 2048M -exit-on-error -noappend -no-progress >out/reports/compress.log 2>&1
+          xorriso -indev input/Puppy50_v91_Debian_Live_Browser_TEST_ONLY.iso -outdev out/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso -map out/V100_root.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso -extract /live/filesystem.squashfs out/verify/root.squashfs >out/reports/reextract.log 2>&1
+          cmp out/V100_root.squashfs out/verify/root.squashfs
+          (cd out && sha256sum Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso >SHA256SUMS)
+      - name: Upload immutable diagnostic ISO and its checksum, test only
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          path: |
+            out/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 5
+      - name: Preserve build and security audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v100_ISO_Security_Build_Audit
+          path: out/reports/
+          retention-days: 20
+          if-no-files-found: warn
+  repeat_kvm:
+    needs: diagnostic_iso
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { ram: 2048, trial: a }
+          - { ram: 2048, trial: b }
+          - { ram: 2560, trial: control }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real KVM QEMU and open no host disks
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports}
+      - name: Download exact read-only diagnostics-only browser image
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          path: input
+      - name: Verify ISO before starting guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Start same localhost-only host CONNECT fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('HTTPS bridge missing')
+          PY
+      - name: Real QEMU Firefox external-HTTPS navigation at exact RAM limit
+        timeout-minutes: 8
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 web94/qemu_reliable_navigation.py --iso input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso --out evidence/qemu --ram "$RAM" --seconds 300 >evidence/reports/guest.log 2>&1
+          printf 'test_exit=%s\n' "$?" >evidence/reports/test-exit.txt
+          exit 0
+      - name: Decode actual guest memory pressure and real certificate proof
+        if: always()
+        shell: bash
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          python3 web99/analyze_guest.py --evidence evidence/qemu --out evidence/reports/V100_MEMORY_REVIEW.json --mode original --ram "$RAM"
+      - name: Preserve all original VM screenshots, memory samples, failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_${{ matrix.ram }}MiB_${{ matrix.trial }}_KVM_Proof
+          path: evidence/
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Require real browser, CA verified guest HTTPS, live boot and samples
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('evidence/reports/V100_MEMORY_REVIEW.json'))
+          assert d['guest_CA_verified_public_https']
+          assert d['nonroot_firefox_seen']
+          assert d['boot_media_ejected']
+          assert d['guest_running_after_eject']
+          assert d['zram_enabled_guest_verified'] is False
+          assert d['zram_samples_count'] >= 5
+          print('V100_REAL_FIREFOX+GUEST_MEM_PROVEN; screenshots require human page review')
+          PY
