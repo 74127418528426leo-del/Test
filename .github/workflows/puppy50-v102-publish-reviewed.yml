@@ -1,0 +1,165 @@
+name: Puppy50 v102 - Publish verified Intel Firefox prerelease only
+on:
+  push:
+    branches: [puppy50-v102-intel-firefox-trim-real-kvm]
+    paths:
+      - '.github/workflows/puppy50-v102-publish-reviewed.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v102-pinned-iso-public-prerelease
+  cancel-in-progress: false
+jobs:
+  publish_pinned_iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require pinned independent frame proof and accurate limitations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p iso proofA proofB proofControl audit dist
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('reports/V102_MANUAL_SCREENSHOT_PROOF.json').read_text())
+          assert p['source_run_id']==41751806750
+          assert p['iso_savings_bytes']==229638144
+          assert p['actual_384MiB_boot_proven'] is False
+          assert p['physical_wifi_tested'] is False
+          assert p['every_network_working_guaranteed'] is False
+          assert p['production_ready'] is False
+          assert p['test_frames'][0]['correct_example_url'] is False
+          assert p['test_frames'][1]['correct_example_url'] is True
+          assert p['test_frames'][2]['correct_example_url'] is True
+          print('V102_PINNED_HUMAN_VISUAL_REVIEW_AND_LIMITATIONS_ACCEPTED')
+          PY
+      - name: Download exact built and tested smaller Live ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_Smaller_ISO_TEST_ONLY
+          run-id: 41751806750
+          github-token: ${{ github.token }}
+          path: iso
+      - name: Retrieve actual 2 GiB trial A (keyboard error honestly documented)
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_2048MiB_a_KVM_Proof
+          run-id: 41751806750
+          github-token: ${{ github.token }}
+          path: proofA
+      - name: Retrieve actual 2 GiB trial B (exact external HTTPS page)
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_2048MiB_b_KVM_Proof
+          run-id: 41751806750
+          github-token: ${{ github.token }}
+          path: proofB
+      - name: Retrieve real 2.5 GiB stable RAM control
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_Firefox_2560MiB_control_KVM_Proof
+          run-id: 41751806750
+          github-token: ${{ github.token }}
+          path: proofControl
+      - name: Retrieve actual immutable ISO and preserved Firefox/network audit
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v102_Intel_RootFS_Actual_Savings_Audit
+          run-id: 41751806750
+          github-token: ${{ github.token }}
+          path: audit
+      - name: Validate exactly reviewed QEMU screen bytes, guest HTTPS, and safe firmware prune
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd iso && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          reviewed=json.load(open('reports/V102_MANUAL_SCREENSHOT_PROOF.json'))
+          test_folders={'a':Path('proofA'),'b':Path('proofB'),'control':Path('proofControl')}
+          assert len(reviewed['test_frames'])==3
+          for t in reviewed['test_frames']:
+              folder=test_folders[t['trial']]
+              raw=(folder/t['frame']).read_bytes()
+              assert hashlib.sha256(raw).hexdigest()==t['sha256']
+              guest=json.load(open(folder/'qemu/result.json'))
+              analysis=json.load(open(folder/'reports/V102_GUEST_AUDIT.json'))
+              assert guest['guest_memory_mib']==t['ram_mib']
+              assert analysis['guest_CA_verified_public_https'] is True
+              assert analysis['nonroot_firefox_seen'] is True
+              assert analysis['boot_media_ejected'] is True
+              assert analysis['guest_running_after_eject'] is True
+              assert analysis['max_oom_kill_counter']==0
+              assert analysis['zram_enabled_guest_verified'] is False
+              assert analysis['min_mem_available_mib']==t['minimum_available_mib']
+          prune=json.load(open('audit/V102_ROOT_PRUNE.json'))
+          assert prune['all_wireless_firmware_intentionally_preserved']
+          assert prune['intel_i915_firmware_preserved']
+          assert prune['security_sandbox_not_modified']
+          assert prune['amd_nvidia_gpu_firmware_removed']
+          assert prune['measured_compressed_iso_savings'] is False
+          assert len(prune['immutable_browser_network_ca_and_live_startup_sha256'])==5
+          old=int(Path('audit/ISO_original_bytes.txt').read_text())
+          new=int(Path('audit/ISO_v102_bytes.txt').read_text())
+          iso=Path('iso/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso')
+          assert old==reviewed['iso_original_bytes']
+          assert new==reviewed['iso_v102_bytes']==iso.stat().st_size
+          assert old-new==reviewed['iso_savings_bytes']
+          print('PUPPY50_V102_TRUSTED_SHA256_ISO+THREE_REAL_GUEST_SCREENSHOTS+NETWORK_TLS+NO_OOM+NO_ZRAM+GPU_FIRMWARE_LIMITATIONS=PASS')
+          PY
+      - name: Copy byte-identical ISO with clearly scoped experimental public name
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=iso/Puppy50_v102_Intel_Firefox_RAM_ONLY_TEST.iso
+          dst=dist/Puppy50_v102_Intel_Firefox_ESR_RAM_ONLY_EXPERIMENTAL.iso
+          cp --reflink=auto "$src" "$dst"
+          cmp "$src" "$dst"
+          (cd dist && sha256sum Puppy50_v102_Intel_Firefox_ESR_RAM_ONLY_EXPERIMENTAL.iso >SHA256SUMS)
+          cp reports/V102_MANUAL_SCREENSHOT_PROOF.json dist/
+          cp reports/V102_EXPERIMENTAL_RELEASE_NOTES.md dist/README_V102_EXPERIMENTAL.md
+          cp audit/V102_ROOT_PRUNE.json dist/V102_ROOT_PRUNE_AND_PRESERVATION.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('dist/Puppy50_v102_Intel_Firefox_ESR_RAM_ONLY_EXPERIMENTAL.iso')
+          data={'schema':'PUPPY50_V102_PUBLIC_EXPERIMENTAL_RELEASE',
+                'filename':p.name,'size_bytes':p.stat().st_size,
+                'sha256':hashlib.file_digest(p.open('rb'),'sha256').hexdigest(),
+                'exact_byte_copy_of_build_41751806750':True,
+                'original_iso_bytes':990183424,'savings_bytes':229638144,
+                'intel_graphics_variant_only':True,
+                'physical_wifi_tested':False,'every_network_supported':False,
+                '2gib_reliability_certified':False,'384mib_goal_met':False,
+                'browser_sandbox_and_ca_disabled':False}
+          Path('dist/RELEASE_MANIFEST.json').write_text(json.dumps(data,indent=2)+'\n')
+          print(json.dumps(data,indent=2))
+          PY
+      - name: Publish only prerelease with honest Intel hardware warning
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "74127418528426leo-del/Test"
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq .private)" = false
+          if gh release view puppy50-intel-firefox-v102-small-https >/dev/null 2>&1; then
+            echo "Existing release: refusing overwrite";exit 19
+          fi
+          gh release create puppy50-intel-firefox-v102-small-https \
+            dist/Puppy50_v102_Intel_Firefox_ESR_RAM_ONLY_EXPERIMENTAL.iso \
+            dist/SHA256SUMS dist/RELEASE_MANIFEST.json \
+            dist/V102_MANUAL_SCREENSHOT_PROOF.json \
+            dist/V102_ROOT_PRUNE_AND_PRESERVATION.json \
+            dist/README_V102_EXPERIMENTAL.md \
+            --target "$GITHUB_SHA" \
+            --title "Puppy50 v102 - Intel Firefox RAM-Only Live ISO (EXPERIMENTAL)" \
+            --notes-file reports/V102_EXPERIMENTAL_RELEASE_NOTES.md \
+            --prerelease --latest=false
+          gh release view puppy50-intel-firefox-v102-small-https --json url,tagName,assets
+          echo "V102_PUBLIC_EXPERIMENTAL_RELEASE=https://github.com/$GITHUB_REPOSITORY/releases/tag/puppy50-intel-firefox-v102-small-https" >> "$GITHUB_STEP_SUMMARY"
