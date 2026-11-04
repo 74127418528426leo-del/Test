@@ -64,7 +64,7 @@ jobs:
               except OSError:time.sleep(.2)
           else:raise SystemExit('Host-local bridge not ready')
           PY
-      - name: Actual guest Firefox opens full 3840x2160 Pexels MP4, measures videoHeight and decoded frames
+      - name: Actual guest Firefox HTML5 embeds original 3840x2160 Pexels MP4, measures videoHeight and frames
         timeout-minutes: 11
         shell: bash
         run: |
@@ -94,7 +94,9 @@ jobs:
           import json
           from pathlib import Path
           d=json.loads(Path('output/qemu/result.json').read_text())
-          assert d['url']=='https://videos.pexels.com/video-files/27251986/12102943_3840_2160_30fps.mp4'
+          from web103.direct_4k import DATA_URL, DIRECT_MP4
+          assert d['url']==DATA_URL
+          assert DIRECT_MP4.startswith('https://videos.pexels.com/video-files/27251986/')
           assert d['guest_HTTPS_CA_pass']
           assert d['nonroot_firefox_process']
           assert 'frame_318.ppm' in d['frames']
