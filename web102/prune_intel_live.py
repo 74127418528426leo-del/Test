@@ -26,17 +26,17 @@ def hash_bytes(path):
     with open(path,"rb") as f:
         for block in iter(lambda:f.read(1024*1024),b""):h.update(block)
     return h.hexdigest()
-def secure_path(root,rel):
+def secure_path(root,rel,allow_internal_symlink=False):
     p=root/rel
     if not p.exists() and not p.is_symlink():raise ValueError("Missing target "+rel)
-    if p.is_symlink():raise ValueError("Refusing symlink target "+rel)
+    if p.is_symlink() and not allow_internal_symlink:raise ValueError("Refusing symlink target "+rel)
     resolved=p.resolve(strict=True)
     if not resolved.is_relative_to(root):raise ValueError("Target escapes extracted root")
     return resolved
 def patch(path):
     root=Path(path).resolve(strict=True)
     if root==Path("/") or not root.is_dir():raise ValueError("Never modify host root")
-    for f in PRESERVE: secure_path(root,f)
+    for f in PRESERVE: secure_path(root,f,allow_internal_symlink=True)
     if not (root/"etc/systemd/system/puppy50-memory-diagnostics.service").is_file():
         raise ValueError("Not the tested v100 diagnostics-only Firefox baseline")
     if (root/"etc/systemd/system/puppy50-zram-live.service").exists():
