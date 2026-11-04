@@ -1,0 +1,104 @@
+name: Puppy50 v103 - Actual Pexels original 4K MP4 Firefox decoder
+on:
+  push:
+    branches: [puppy50-v103-pexels-direct-2160p-media]
+    paths:
+      - "web103/**"
+      - ".github/workflows/puppy50-v103-native-pexels-4k.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v103-native-original-2160p
+  cancel-in-progress: true
+jobs:
+  original_4k:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm exact official Pexels source URL and native 4K test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web103/tests -p 'test_*.py' -v
+          python3 -m py_compile web103/direct_4k.py
+          mkdir -p input output/{qemu,reports}
+      - name: Install real QEMU/KVM and inspect original MP4 content-range
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 curl
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          set +e
+          curl --location --head --proto '=https' --connect-timeout 15 --max-time 35 \
+            https://videos.pexels.com/video-files/27251986/12102943_3840_2160_30fps.mp4 \
+            >output/reports/Pexels_Original_4K_Response_Headers.txt \
+            2>output/reports/Pexels_Original_4K_Curl_Diagnostics.txt
+          echo "ORIGINAL_MP4_HTTP_HEAD_EXIT=$?" >output/reports/source_status.txt
+      - name: Download unchanged actual working Firefox RAM-only ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify release image bytes before 4K test
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+      - name: Start unchanged QEMU authorized HTTPS bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Host-local bridge not ready')
+          PY
+      - name: Actual guest Firefox opens full 3840x2160 Pexels MP4, measures videoHeight and decoded frames
+        timeout-minutes: 11
+        shell: bash
+        run: |
+          set +e
+          python3 -u web103/direct_4k.py \
+            --iso input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso \
+            --ram 4096 --out output/qemu >output/reports/native_4K_browser.log 2>&1
+          echo "KVM_SCRIPT_EXIT=$?" >output/reports/native_4K_exit.txt
+          exit 0
+      - name: Preserve all real video-player frames and decoder data even if playback fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v103_Real_Pexels_3840_2160_Direct_Media_Evidence
+          path: |
+            output/qemu/*.ppm
+            output/qemu/serial.log
+            output/qemu/qemu.log
+            output/qemu/result.json
+            output/reports/
+          retention-days: 25
+          if-no-files-found: warn
+      - name: Require real Firefox guest and independent frame review
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('output/qemu/result.json').read_text())
+          assert d['url']=='https://videos.pexels.com/video-files/27251986/12102943_3840_2160_30fps.mp4'
+          assert d['guest_HTTPS_CA_pass']
+          assert d['nonroot_firefox_process']
+          assert 'frame_318.ppm' in d['frames']
+          assert 'frame_500.ppm' in d['frames']
+          assert d['actual_guest_4k_playback_verified'] is False
+          print('REAL_KVM_NATIVE_PEXELS_MP4_BROWSER_CAPTURED; 4K player results need visual inspection')
+          PY
