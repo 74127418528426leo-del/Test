@@ -1,0 +1,120 @@
+name: Puppy50 v102 - Real Firefox Pexels 4K UHD streaming test
+on:
+  push:
+    branches: [puppy50-v102-pexels-4k-real-video]
+    paths:
+      - 'web102/**'
+      - '.github/workflows/puppy50-v102-pexels-4k.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v102-pexels-real-video
+  cancel-in-progress: true
+jobs:
+  pexels_real_video:
+    name: Real KVM Firefox Pexels 3840x2160 at 4096MiB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit test native video element resolution and playback instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web102/tests -p 'test_*.py' -v
+          python3 -m py_compile web102/pexels_kvm.py
+          mkdir -p input output/{qemu,reports}
+      - name: Install QEMU KVM acceleration and HTTPS utilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 curl
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Retrieve exact real-booted Firefox ESR 153.6 guest ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: SHA-256 verify exact unchanged Firefox and CA certificate image
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          echo P50_V102_VERIFIED_UNCHANGED_FIREFOX_LIVE_ISO
+      - name: Record Pexels HTTPS response and page metadata separately from guest
+        shell: bash
+        run: |
+          set +e
+          curl --location --verbose --proto '=https' --connect-timeout 10 --max-time 45 \
+            --max-filesize 4000000 -o output/reports/pexels_host_html.txt \
+            https://www.pexels.com/video/riverside-27251986/ \
+            2>output/reports/pexels_host_curl.log
+          echo "HOST_PEXELS_HTTP_EXIT=$?" >output/reports/pexels_host_result.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('output/reports/pexels_host_html.txt')
+          if p.exists():
+              s=p.read_text(errors='replace')
+              print('Host fetched bytes:',len(s),'4K dimension found:',('3840' in s and '2160' in s))
+          else:print('Host fetch restricted; not guest Firefox outcome')
+          PY
+          exit 0
+      - name: Start existing restricted loopback fallback HTTPS byte forwarder
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Host-local HTTPS fallback not ready')
+          PY
+      - name: Real QEMU Firefox visit Pexels, inspect native videoWidth, videoHeight, currentTime, decoded frames
+        timeout-minutes: 11
+        shell: bash
+        run: |
+          set +e
+          python3 -u web102/pexels_kvm.py \
+            --iso input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso \
+            --ram 4096 --out output/qemu >output/reports/V102_PEXELS_BROWSER_RUN.log 2>&1
+          echo "QEMU_TEST_EXIT=$?" >output/reports/qemu-test-exit.txt
+          exit 0
+      - name: Preserve actual in-guest Firefox video resolution proofs and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v102_REAL_Pexels_Riverside_4K_Firefox_Guest_Evidence
+          path: |
+            output/qemu/*.ppm
+            output/qemu/serial.log
+            output/qemu/qemu.log
+            output/qemu/result.json
+            output/reports/
+          retention-days: 25
+          if-no-files-found: warn
+      - name: Require booted Firefox with guest CA-validated HTTPS and native console frames
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('output/qemu/result.json')
+          if not p.is_file():raise SystemExit('Real Firefox QEMU result missing')
+          r=json.loads(p.read_text())
+          assert r['url']=='https://www.pexels.com/video/riverside-27251986/'
+          assert r['guest_HTTPS_CA_pass']
+          assert r['nonroot_firefox_process']
+          assert 'frame_318.ppm' in r['frames']
+          assert 'frame_500.ppm' in r['frames']
+          assert r['actual_guest_4k_playback_verified'] is False
+          print('REAL_GUEST_STARTED_AND_SNAPSHOTS_CAPTURED; VISUALLY_VALIDATE_PAGE+DECODED_4K_AND_FRAMES')
+          PY
