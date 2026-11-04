@@ -27,6 +27,22 @@ class T(unittest.TestCase):
    self.assertFalse((root/"usr/lib/firmware/amdgpu").exists())
    self.assertFalse((root/"usr/lib/firmware/nvidia").exists())
    self.assertFalse(x["measured_compressed_iso_savings"])
+ def test_debian_firefox_internal_symlink_allowed(self):
+  with tempfile.TemporaryDirectory() as d:
+   r=self.root(Path(d))
+   p=r/"usr/bin/firefox-esr";p.unlink()
+   target=r/"usr/lib/firefox-esr/firefox-esr";target.parent.mkdir(parents=True,exist_ok=True)
+   target.write_text("Mozilla Firefox browser original")
+   p.symlink_to("../lib/firefox-esr/firefox-esr")
+   result=m.patch(r)
+   self.assertTrue(result["security_sandbox_not_modified"])
+   self.assertTrue(p.is_symlink())
+   self.assertEqual(p.read_text(),"Mozilla Firefox browser original")
+ def test_escaped_firefox_symlink_rejected(self):
+  with tempfile.TemporaryDirectory() as d:
+   r=self.root(Path(d))
+   p=r/"usr/bin/firefox-esr";p.unlink();p.symlink_to("/etc/passwd")
+   with self.assertRaises(ValueError):m.patch(r)
  def test_not_running_host(self):
   with self.assertRaises(ValueError):m.patch("/")
  def test_symlink_escaping_root_refused(self):
