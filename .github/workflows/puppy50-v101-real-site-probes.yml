@@ -1,0 +1,137 @@
+name: Puppy50 v101 - Actual Firefox CNN YouTube4K and Bible GitHub sites
+on:
+  push:
+    branches: [puppy50-v101-real-sites-cnn-youtube-bible]
+    paths:
+      - "web101/**"
+      - ".github/workflows/puppy50-v101-real-site-probes.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: puppy50-v101-sites-browser
+  cancel-in-progress: true
+jobs:
+  live_browser_sites:
+    name: Real KVM Firefox - ${{ matrix.site }} at ${{ matrix.ram }}MiB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {site: cnn, ram: 3072}
+          - {site: youtube4k, ram: 4096}
+          - {site: john, ram: 3072}
+          - {site: bible3d, ram: 4096}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate public targets and physical keyboard QMP encoding
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web101/tests -p 'test_*.py' -v
+          python3 -m py_compile web101/site_test.py
+          mkdir -p input output/{qemu,reports}
+      - name: Install real QEMU hardware-accelerated VM and image utils
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 curl
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Use v100 actually booted Firefox Live ISO with CA checks unchanged
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v100_Firefox_Memory_Diagnostic_ONLY_ISO
+          run-id: 41748934221
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact ISO sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          echo P50_V101_ORIGINAL_FIREFOX_SECURITY_FILES_UNMODIFIED
+      - name: Collect host-side URL transport clues, not acceptance criteria
+        shell: bash
+        env:
+          SITE: ${{ matrix.site }}
+        run: |
+          set +e
+          python3 - <<'PY' >output/reports/host_urls.json
+          import json
+          from web101.site_test import SITES
+          print(json.dumps(SITES,indent=2))
+          PY
+          URL=$(python3 -c "import os; from web101.site_test import SITES; print(SITES[os.environ['SITE']]['url'])")
+          curl -v -L -I --proto '=https' --connect-timeout 12 --max-time 40 "$URL" >output/reports/host-head.txt 2>output/reports/host-curl.log
+          echo "HOST_HEAD_EXIT=$?" >>output/reports/host-head.txt
+          exit 0
+      - name: Start restricted localhost-only QEMU HTTPS fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >output/reports/bridge.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for _ in range(50):
+              try:
+                  with socket.create_connection(('127.0.0.1',3128),timeout=1):break
+              except OSError:time.sleep(.2)
+          else:raise SystemExit('Limited fallback bridge unavailable')
+          PY
+      - name: Real Firefox QEMU KVM website navigation and HTML5 video diagnostic
+        timeout-minutes: 11
+        shell: bash
+        env:
+          SITE: ${{ matrix.site }}
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 -u web101/site_test.py \
+            --site "$SITE" --ram "$RAM" \
+            --iso input/Puppy50_v100_Firefox_Memory_Diagnostic_ONLY.iso \
+            --out output/qemu >output/reports/browser-run.log 2>&1
+          echo "QEMU_SCRIPT_EXIT_CODE=$?" >output/reports/exit-code.txt
+          exit 0
+      - name: Keep guest memory pressure data but do not conflate CA probe with site rendering
+        shell: bash
+        if: always()
+        run: |
+          set +e
+          grep 'P50_V99_RAM_SAMPLE' output/qemu/serial.log >output/reports/guest-memory.log
+          cp output/qemu/result.json output/reports/guest-result.json
+          exit 0
+      - name: Preserve all unedited real KVM evidence, including negative tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v101_REAL_${{ matrix.site }}_${{ matrix.ram }}MiB
+          path: |
+            output/qemu/*.ppm
+            output/qemu/serial.log
+            output/qemu/qemu.log
+            output/qemu/result.json
+            output/reports/
+          retention-days: 25
+          if-no-files-found: warn
+      - name: Require real guest Firefox boot, guest CA HTTPS and full RAM-only proof
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os
+          p='output/qemu/result.json'
+          if not os.path.isfile(p):raise SystemExit('No actual VM result')
+          r=json.load(open(p))
+          assert r['guest_CA_verified_public_HTTPS'], 'Guest CA-verified HTTPS not proven'
+          assert r['guest_nonroot_firefox_started'], 'Firefox not started as live user'
+          assert r['navigation_keystrokes_submitted'], 'External URL never entered'
+          assert r['live_media_ejected'] and r['running_after_ejection'], 'RAM-only boot lost'
+          assert r['has_real_final_frame'], 'No final QEMU screenshot'
+          assert r['youtube_2160p_proven'] is False, 'Never fabricate YouTube 4K proof'
+          assert r['website_visually_confirmed'] is False, 'Screenshots need human visual review'
+          print('REAL_BOOT_CA_NETWORK_AND_GUI_COMPLETE; actual site must be inspected')
+          PY
