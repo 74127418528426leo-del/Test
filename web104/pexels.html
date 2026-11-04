@@ -1,0 +1,27 @@
+<!doctype html><html lang="en"><meta charset="utf-8">
+<title>Puppy50 Firefox original Pexels 3840x2160 decoder test</title>
+<style>body{margin:14px;background:#061e32;color:white;font:24px sans-serif}
+video{display:block;width:100%;height:65vh;background:black;object-fit:contain}
+h1{font-size:26px}#s{font-size:22px;line-height:1.35;background:#142c4b;padding:10px}
+#status{font-size:19px;color:#f7ce87}</style>
+<h1>Puppy50: Pexels original MP4 · 3840 × 2160 source</h1>
+<video id="v" controls autoplay muted playsinline preload="auto"
+ src="https://videos.pexels.com/video-files/27251986/12102943_3840_2160_30fps.mp4"></video>
+<div id="s">Loading actual Pexels 4K media…</div><div id="status">Waiting for video metadata</div>
+<script>
+const v=document.getElementById('v'),s=document.getElementById('s'),st=document.getElementById('status');
+let last=0,lastT=performance.now();
+setInterval(function(){
+ let q=v.getVideoPlaybackQuality(),now=performance.now(),fps=(q.totalVideoFrames-last)*1000/(now-lastT);
+ s.textContent='VIDEO RES '+v.videoWidth+' × '+v.videoHeight+
+ ' | T='+v.currentTime.toFixed(1)+'s | fps='+fps.toFixed(1)+
+ ' | frames='+q.totalVideoFrames+' | dropped='+q.droppedVideoFrames+
+ ' | ready='+v.readyState+' | err='+(v.error?v.error.code:0);
+ last=q.totalVideoFrames;lastT=now;
+},1000);
+v.addEventListener('loadedmetadata',()=>{st.textContent='Metadata: '+v.videoWidth+' × '+v.videoHeight});
+v.addEventListener('playing',()=>{st.textContent='Playing Pexels original video'});
+v.addEventListener('waiting',()=>{st.textContent='Buffering source video'});
+v.addEventListener('error',()=>{st.textContent='VIDEO ERROR '+(v.error?v.error.code:0)});
+v.play().catch(e=>{st.textContent='Click Play: '+e.name});
+</script></html>
