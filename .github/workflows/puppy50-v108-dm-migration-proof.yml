@@ -1,0 +1,101 @@
+name: Disposable RAM migration design proof
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-dm-migration-proof.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install disposable test tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends squashfs-tools dmsetup util-linux kmod
+          mkdir -p evidence fixture-root mountpoint
+          test "$(stat -f -c %T /dev/shm)" = 'tmpfs'
+      - name: Switch a mounted read-only test filesystem to an identical RAM copy
+        run: |
+          set -euo pipefail
+          map_name="p50-proof-${GITHUB_RUN_ID}"
+          ram_dir=$(mktemp -d /dev/shm/p50-proof.XXXXXX)
+          mounted=0; map_created=0; old_loop=''; new_loop=''; worker=''
+          cleanup() {
+            touch evidence/stop 2>/dev/null || true
+            if [ -n "$worker" ]; then wait "$worker" 2>/dev/null || true; fi
+            if [ "$mounted" = 1 ]; then sudo umount "$PWD/mountpoint" || true; fi
+            if [ "$map_created" = 1 ]; then sudo dmsetup resume "$map_name" 2>/dev/null || true; sudo dmsetup remove "$map_name" || true; fi
+            if [ -n "$old_loop" ]; then sudo losetup -d "$old_loop" 2>/dev/null || true; fi
+            if [ -n "$new_loop" ]; then sudo losetup -d "$new_loop" 2>/dev/null || true; fi
+            rm -rf "$ram_dir"
+          }
+          trap cleanup EXIT
+          test ! -e "/dev/mapper/$map_name"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fixture-root/data.bin')
+          with p.open('wb') as f:
+              for i in range(16384): f.write(bytes(((i+j)%251 for j in range(512))))
+          Path('fixture-root/marker.txt').write_text('device-mapper proof fixture\n')
+          PY
+          mksquashfs fixture-root original.squashfs -comp zstd -processors 2 -noappend -no-progress -exit-on-error >evidence/mksquashfs.log
+          cp original.squashfs "$ram_dir/identical.squashfs"
+          cp original.squashfs "$ram_dir/different.squashfs"
+          printf 'changed' | dd of="$ram_dir/different.squashfs" conv=notrunc status=none
+          cmp -s original.squashfs "$ram_dir/identical.squashfs"
+          if cmp -s original.squashfs "$ram_dir/different.squashfs"; then echo 'Refusal check failed' >&2; exit 1; fi
+          echo 'Unequal content was rejected before any table switch.' >evidence/refusal-check.txt
+          old_loop=$(sudo losetup --find --show --read-only "$PWD/original.squashfs")
+          new_loop=$(sudo losetup --find --show --read-only "$ram_dir/identical.squashfs")
+          old_size=$(sudo blockdev --getsz "$old_loop"); new_size=$(sudo blockdev --getsz "$new_loop")
+          test "$old_size" = "$new_size"
+          sudo dmsetup create "$map_name" --readonly --table "0 $old_size linear $old_loop 0"
+          map_created=1
+          sudo mount -t squashfs -o ro "/dev/mapper/$map_name" "$PWD/mountpoint"
+          mounted=1
+          expected=$(sha256sum fixture-root/data.bin | cut -d' ' -f1)
+          test "$(sha256sum mountpoint/data.bin | cut -d' ' -f1)" = "$expected"
+          sudo dmsetup table "$map_name" >evidence/table-before.txt
+          before_target=$(lsblk -dn -o MAJ:MIN "$old_loop" | xargs)
+          after_target=$(lsblk -dn -o MAJ:MIN "$new_loop" | xargs)
+          grep -F " $before_target " evidence/table-before.txt
+          (
+            while [ ! -f evidence/stop ]; do
+              actual=$(sha256sum mountpoint/data.bin | cut -d' ' -f1) || { touch evidence/read-failed; exit 1; }
+              [ "$actual" = "$expected" ] || { touch evidence/read-failed; exit 1; }
+              echo pass >>evidence/read-passes.txt
+            done
+          ) &
+          worker=$!
+          for n in $(seq 1 100); do [ -s evidence/read-passes.txt ] && break; sleep .1; done
+          test -s evidence/read-passes.txt
+          sudo dmsetup reload "$map_name" --readonly --table "0 $new_size linear $new_loop 0"
+          sudo dmsetup suspend "$map_name"
+          sudo dmsetup resume "$map_name"
+          sudo dmsetup table "$map_name" >evidence/table-after.txt
+          grep -F " $after_target " evidence/table-after.txt
+          sudo losetup -d "$old_loop"
+          old_loop=''
+          rm original.squashfs
+          sleep 2
+          touch evidence/stop
+          wait "$worker"; worker=''
+          test ! -e evidence/read-failed
+          test "$(sha256sum mountpoint/data.bin | cut -d' ' -f1)" = "$expected"
+          test "$(cat mountpoint/marker.txt)" = 'device-mapper proof fixture'
+          printf 'data_sha256=%s\nreads=%s\n' "$expected" "$(wc -l <evidence/read-passes.txt)" >evidence/result.txt
+          echo 'A small disposable fixture stayed readable after switching to an identical tmpfs-backed loop; this is not an OS boot test.' | tee -a evidence/result.txt
+          cat evidence/table-before.txt evidence/table-after.txt evidence/result.txt
+      - name: Preserve proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-disposable-dm-migration-proof
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
