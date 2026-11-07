@@ -1,0 +1,50 @@
+name: Puppy50 v105 library-cache startup audit
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-cache-inspect.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p input out/{root,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-test-only
+          run-id: 42330235182
+          github-token: ${{ github.token }}
+          path: input
+      - name: Examine cache and all related first-boot units
+        run: |
+          set -euo pipefail
+          iso=input/Puppy50_v105_Autoboot_TEST_ONLY.iso
+          printf '%s  %s\n' 'b209d42bef6f69317b440d46608f4b3c88508c9e6cd6577d9cfd14e0dddea5c9' "$iso" | sha256sum -c -
+          xorriso -osirrox on -indev "$iso" -extract /live/filesystem.squashfs out/base.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/root out/base.squashfs >out/reports/unsquashfs.log
+          sudo grep -RHnE 'ConditionNeedsUpdate=.*(/etc|/var)' out/root/usr/lib/systemd/system out/root/etc/systemd/system >out/reports/conditional-units.txt || true
+          sudo cat out/root/usr/lib/systemd/system/ldconfig.service >out/reports/ldconfig.service.txt
+          sudo stat -c '%n %s bytes mtime=%y' out/root/usr out/root/etc/ld.so.cache out/root/etc/.updated out/root/var/.updated >out/reports/cache-timestamps.txt 2>&1 || true
+          sudo sha256sum out/root/etc/ld.so.cache >out/reports/cache-before.sha256
+          sudo chroot out/root /sbin/ldconfig -p | LC_ALL=C sort >out/reports/cache-index-before.txt
+          sudo chroot out/root /sbin/ldconfig -X
+          sudo sha256sum out/root/etc/ld.so.cache >out/reports/cache-after.sha256
+          sudo chroot out/root /sbin/ldconfig -p | LC_ALL=C sort >out/reports/cache-index-after.txt
+          diff -u out/reports/cache-index-before.txt out/reports/cache-index-after.txt >out/reports/cache-index-diff.txt || true
+          cat out/reports/conditional-units.txt out/reports/ldconfig.service.txt out/reports/cache-timestamps.txt out/reports/cache-before.sha256 out/reports/cache-after.sha256 out/reports/cache-index-diff.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Puppy50-v105-library-cache-audit
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
