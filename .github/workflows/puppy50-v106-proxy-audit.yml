@@ -1,0 +1,120 @@
+name: Puppy50 v106 traced proxy and network recovery audit
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v106-proxy-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [default-no-proxy, explicit-test-proxy]
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil xorriso squashfs-tools iptables
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports} fixture
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v106-guarded-test-only
+          run-id: 42350606105
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify default image, root and absence of preinstalled policy
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' 'input/Puppy50_v106_AutoBoot_TEST_ONLY.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/Puppy50_v106_AutoBoot_TEST_ONLY.iso -extract /live/filesystem.squashfs input/root.squashfs -extract /isolinux/live.cfg input/live.cfg >evidence/reports/extract.log 2>&1
+          unsquashfs -ll input/root.squashfs >evidence/reports/root-filelist.txt
+          if grep -F 'squashfs-root/usr/lib/firefox-esr/distribution/policies.json' evidence/reports/root-filelist.txt; then
+            echo 'Unexpected preinstalled Firefox proxy policy' >&2
+            exit 1
+          fi
+          if grep -F 'puppy50.test_bridge=1' input/live.cfg; then exit 1; fi
+      - name: Prepare opt-in-only test image
+        if: matrix.mode == 'explicit-test-proxy'
+        run: |
+          set -euo pipefail
+          chmod u+w input/live.cfg
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('input/live.cfg')
+          text = p.read_text()
+          old = 'append boot=live components toram quiet locales=en_US.UTF-8'
+          new = 'append boot=live components toram puppy50.test_bridge=1 quiet locales=en_US.UTF-8'
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new, 1))
+          PY
+          xorriso -indev input/Puppy50_v106_AutoBoot_TEST_ONLY.iso -outdev input/optin.iso -map input/live.cfg /isolinux/live.cfg -boot_image any replay -commit -end >evidence/reports/optin-repack.log 2>&1
+          xorriso -osirrox on -indev input/optin.iso -extract /live/filesystem.squashfs input/root-check.squashfs >evidence/reports/optin-root.log 2>&1
+          cmp input/root.squashfs input/root-check.squashfs
+          sha256sum input/optin.iso >evidence/reports/optin-sha256.txt
+      - name: Start traced localhost bridge and guest marker
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          touch evidence/reports/connect.log
+          sudo nohup python3 -u web105/trace_test_bridge.py --port 3128 --connect-log evidence/reports/connect.log >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Block direct HTTPS and observe actual proxy requests
+        env:
+          MODE: ${{ matrix.mode }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          runner_uid=$(id -u)
+          sudo iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT
+          cleanup() { if sudo iptables -C OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT 2>/dev/null; then sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT; fi; }
+          trap cleanup EXIT
+          if curl --noproxy '*' --silent --connect-timeout 3 --max-time 5 https://example.com/ >/dev/null; then
+            echo 'Direct HTTPS was not blocked; invalid test.' >&2; exit 1
+          fi
+          curl --proxy http://127.0.0.1:3128 --noproxy '' --fail --silent --connect-timeout 5 --max-time 20 https://example.com/ >/dev/null
+          grep -F 'example.com:443' evidence/reports/connect.log
+          : > evidence/reports/connect.log
+          if [ "$MODE" = explicit-test-proxy ]; then
+            python3 -u web105/boot_bench.py --iso input/optin.iso --out evidence/qemu --mode online --ram 2560 --seconds 210
+            grep -F 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' evidence/qemu/serial.log
+            grep -F 'example.com:443' evidence/reports/connect.log
+          else
+            (
+              for n in $(seq 1 180); do
+                if [ -f evidence/qemu/network_restore_requested ]; then
+                  sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT
+                  touch evidence/qemu/network_restored
+                  exit 0
+                fi
+                sleep 1
+              done
+              exit 1
+            ) &
+            watcher=$!
+            python3 -u web105/boot_bench.py --iso input/Puppy50_v106_AutoBoot_TEST_ONLY.iso --out evidence/qemu --mode online --ram 2560 --seconds 210 --expect-no-https --test-network-restore
+            wait "$watcher"
+            grep -F 'PUPPY50_V85_NETWORK_MODE=offline' evidence/qemu/serial.log
+            if grep -F 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' evidence/qemu/serial.log; then exit 1; fi
+            if [ -s evidence/reports/connect.log ]; then
+              echo 'The guest unexpectedly sent a request to the test proxy.' >&2
+              cat evidence/reports/connect.log
+              exit 1
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Puppy50-v106-traced-proxy-${{ matrix.mode }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
