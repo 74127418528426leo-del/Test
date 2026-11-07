@@ -1,0 +1,124 @@
+name: Puppy50 v107 lossless boot compression comparison
+on:
+  push:
+    branches: [puppy50-v107-startup-research]
+    paths: [.github/workflows/puppy50-v107-compression.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 38
+    strategy:
+      fail-fast: false
+      matrix:
+        codec: [xz-bcj, zstd15]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO tools and enable KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync qemu-system-x86 python3-pil time
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{root,verify,reports,base1,base2,cand1,cand2} fixture
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - name: Download and verify exact v106 baseline
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output input/v106.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v106-autoboot-guarded/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' 'input/v106.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/v106.iso -extract /live/filesystem.squashfs out/base.squashfs >out/reports/extract.log 2>&1
+          unsquashfs -s out/base.squashfs >out/reports/baseline-format.txt
+          sudo unsquashfs -d out/root out/base.squashfs >out/reports/unsquash.log
+      - name: Recompress the exact filesystem without removing files
+        env:
+          CODEC: ${{ matrix.codec }}
+        timeout-minutes: 17
+        run: |
+          set -euo pipefail
+          if [ "$CODEC" = xz-bcj ]; then
+            /usr/bin/time -p -o out/reports/compress-time.txt sudo mksquashfs out/root out/new.squashfs -one-file-system -comp xz -Xbcj x86 -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          else
+            /usr/bin/time -p -o out/reports/compress-time.txt sudo mksquashfs out/root out/new.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          fi
+          unsquashfs -s out/new.squashfs >out/reports/candidate-format.txt
+          stat -c '%n %s' out/base.squashfs out/new.squashfs >out/reports/root-sizes.txt
+          cat out/reports/root-sizes.txt out/reports/compress-time.txt
+      - name: Verify unchanged file contents and metadata
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -d out/verify/root out/new.squashfs >out/reports/verify-unsquash.log
+          sudo rsync -aHAXnci --delete --numeric-ids out/root/ out/verify/root/ >out/reports/filesystem-differences.txt
+          if [ -s out/reports/filesystem-differences.txt ]; then
+            cat out/reports/filesystem-differences.txt
+            exit 1
+          fi
+          echo 'All extracted files and compared ownership, permissions, links, xattrs and ACLs match.'
+      - name: Rebuild ISO while retaining boot options
+        run: |
+          set -euo pipefail
+          xorriso -indev input/v106.iso -outdev out/candidate.iso -map out/new.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract /live/filesystem.squashfs out/verify/reextracted.squashfs -extract /isolinux/live.cfg out/verify/live.cfg -extract /boot/grub/grub.cfg out/verify/grub.cfg >out/reports/reextract.log 2>&1
+          cmp out/new.squashfs out/verify/reextracted.squashfs
+          grep -F 'boot=live components toram ' out/verify/live.cfg
+          grep -F 'boot=live components toram ' out/verify/grub.cfg
+          sha256sum input/v106.iso out/candidate.iso >out/reports/iso-sha256.txt
+          stat -c '%n %s' input/v106.iso out/candidate.iso >out/reports/iso-sizes.txt
+      - name: Start a temporary host-only page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare boots in baseline-candidate-candidate-baseline order
+        timeout-minutes: 15
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web105/boot_bench.py --iso input/v106.iso --out "out/$1" --mode online --ram 3072 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280; }
+          candidate() { python3 -u web105/boot_bench.py --iso out/candidate.iso --out "out/$1" --mode online --ram 3072 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280; }
+          baseline base1
+          candidate cand1
+          candidate cand2
+          baseline base2
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          times={name:json.loads((Path('out')/name/'result.json').read_text())['first_home_seen_seconds'] for name in ['base1','cand1','cand2','base2']}
+          times['baseline_mean_seconds']=statistics.mean([times['base1'],times['base2']])
+          times['candidate_mean_seconds']=statistics.mean([times['cand1'],times['cand2']])
+          times['difference_seconds']=times['baseline_mean_seconds']-times['candidate_mean_seconds']
+          times['physical_hardware_tested']=False
+          Path('out/reports/comparison.json').write_text(json.dumps(times,indent=2)+'\n')
+          print(json.dumps(times,indent=2))
+          PY
+      - name: Preserve reports, guest screenshots and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-compression-${{ matrix.codec }}-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep tested candidate temporarily
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-compression-${{ matrix.codec }}-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-sha256.txt
+          compression-level: 0
+          retention-days: 3
