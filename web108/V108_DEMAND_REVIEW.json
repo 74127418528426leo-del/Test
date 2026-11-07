@@ -1,0 +1,20 @@
+{
+  "description": "Visually reviewed browser home, media-retained nonce, and example.com frames in all four trials; the medium was deliberately kept attached.",
+  "run_id": 42398459428,
+  "artifact_id": 13584379091,
+  "physical_acer_tested": false,
+  "screenshots_sha256": {
+    "base1/first_home.png": "55d01bbdf42b9397fc777692d7de50051b81a7e424fcab4da7ba09c51ccf7e4e",
+    "base1/after_input.png": "56f79322f4ec87b20b5e008dc3ce5989c19ff2439eb3b3ca54c7fa948780f4aa",
+    "base1/external_https.png": "5ba7218b3a06047b61f9a1a611313a53f8839f0287544337c222b1349eb6cc47",
+    "base2/first_home.png": "b777223c2b8f9c2535aa4af52bda15634d478663c1eca8253446c9ac89b2e94b",
+    "base2/after_input.png": "636a302f8b9b163eba25720843c3d31f90ee7be60df1af7004f7bf5e4994b3cd",
+    "base2/external_https.png": "5263f49a73a472718e991d4f7c49e81a199c358e35b9587ba84423d574e14966",
+    "cand1/first_home.png": "42a47b266c79c32dd5d5be8259b3bf622b07c44ef400096cbf56d1a732a761c1",
+    "cand1/after_input.png": "99cb91e42de49cb1b3bfc021bd3de8ef733cda49a41f3f569f3ed9f0ebedb4bb",
+    "cand1/external_https.png": "02b991f0086734d81e4114bc79e1f0cfff787a2ef8231a3e50248a8622ec4de1",
+    "cand2/first_home.png": "3330ac75efbf9b45e8058daaf0017a51bf23d7c6845c39d751d9d14b93b41771",
+    "cand2/after_input.png": "e1d3deda8fe2d7ce1988adb719dd687fc0c587a91be6559c176c6adc09519421",
+    "cand2/external_https.png": "11aed81a99d86baf87730810da490ace8eb2d82cf11b427468f2624e73f83fa9"
+  }
+}
