@@ -99,7 +99,8 @@ jobs:
           checks=Path('evidence/build/media-checksums.txt').read_text().splitlines()
           assert len(checks)==292 and all(line.endswith(': OK') for line in checks)
           comparison=json.loads(Path('evidence/comparison/reports/comparison.json').read_text())
-          assert comparison['baseline_mean_seconds']==60.585 and comparison['candidate_mean_seconds']==48.44
+          assert abs(comparison['baseline_mean_seconds']-60.585)<0.00001
+          assert abs(comparison['candidate_mean_seconds']-48.44)<0.00001
           westmere=root/'Puppy50-v107-boot-westmere-bios-3072'
           measured=json.loads((westmere/'reports/comparison.json').read_text())
           assert abs(measured['baseline_mean_seconds']-60.15)<0.00001
