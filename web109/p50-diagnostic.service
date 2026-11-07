@@ -1,0 +1,8 @@
+[Unit]
+Description=Temporary staged-boot service diagnostic
+After=systemd-journald.service
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/sbin/p50-diagnostic.sh
+[Install]
+WantedBy=multi-user.target
