@@ -52,6 +52,17 @@ def navigate(monitor, address):
     send_key(monitor, ['ret'], 110)
 
 
+def request_network_restore(out, timeout=60, interval=.2):
+    out = Path(out)
+    (out / 'network_restore_requested').touch()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (out / 'network_restored').exists():
+            return True
+        time.sleep(interval)
+    return False
+
+
 def main():
     from web85.qemu_debian_live_smoke import qmp
     p = argparse.ArgumentParser()
@@ -67,11 +78,15 @@ def main():
     p.add_argument('--media', choices=['optical', 'usb'], default='optical')
     p.add_argument('--expect-no-https', action='store_true',
                    help='Only for controlled tests where outbound HTTPS is intentionally blocked')
+    p.add_argument('--test-network-restore', action='store_true',
+                   help='Request host to restore HTTPS, then try browsing in the same session')
     p.add_argument('--emulate-acer-id', action='store_true',
                    help='Use Acer as virtual SMBIOS vendor to exercise the physical startup path')
     args = p.parse_args()
     if args.expect_no_https and args.mode != 'online':
         raise ValueError('This controlled condition requires a virtual NIC')
+    if args.test_network_restore and not args.expect_no_https:
+        raise ValueError('Restoration test requires intentionally blocked initial HTTPS')
     iso = args.iso.resolve(strict=True)
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -111,6 +126,7 @@ def main():
               'boot_menu_key_sent': False, 'first_home_seen_seconds': None,
               'timestamps_are_qemu_not_physical_acer': True,
               'media_ejected': False, 'input_sent_after_eject': False,
+              'network_restored_signal_observed': False, 'qemu_running_at_end': False,
               'errors': [], 'screenshots': [], 'serial_marker_first_seen_seconds': {}}
     markers = ['PUPPY50_V85_NETWORK_PROBE_START', 'PUPPY50_V85_NETWORK_MODE=',
                'P50_V91_LIGHTDM_AUTOLOGIN_PREPARED', 'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN']
@@ -171,7 +187,11 @@ def main():
                 time.sleep(18)
                 capture(monitor, out, 'after_input.png')
                 result['screenshots'].append('after_input.png')
-                if args.mode == 'online' and not args.expect_no_https:
+                if args.test_network_restore:
+                    result['network_restored_signal_observed'] = request_network_restore(out)
+                    if not result['network_restored_signal_observed']:
+                        raise RuntimeError('Host never acknowledged HTTPS restoration')
+                if args.mode == 'online' and (not args.expect_no_https or args.test_network_restore):
                     navigate(monitor, 'https://example.com/')
                     time.sleep(25)
                     capture(monitor, out, 'external_https.png')
@@ -198,6 +218,8 @@ def main():
         raise SystemExit('Benchmark did not reach and interact with browser after media ejection')
     if args.mode == 'online' and not args.expect_no_https and not result['guest_ca_https_probe']:
         raise SystemExit('Guest CA-verified HTTPS probe was not observed')
+    if args.test_network_restore and not result['network_restored_signal_observed']:
+        raise SystemExit('Network restoration handshake failed')
 
 
 if __name__ == '__main__':
