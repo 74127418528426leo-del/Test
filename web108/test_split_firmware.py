@@ -57,6 +57,18 @@ class FirmwareLayerTests(unittest.TestCase):
                 split_firmware(root, nested)
             self.assertTrue((firmware / 'network.bin').exists())
 
+    def test_layer_root_retains_source_root_permissions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, layer, _ = self.fixture(temp)
+            os.chmod(root, 0o755)
+            os.chmod(layer, 0o700)
+            os.utime(root, ns=(1_400_000_000_000_000_000, 1_400_000_000_000_000_000))
+            split_firmware(root, layer)
+            self.assertEqual(layer.stat().st_mode & 0o7777, root.stat().st_mode & 0o7777)
+            self.assertEqual(layer.stat().st_uid, root.stat().st_uid)
+            self.assertEqual(layer.stat().st_gid, root.stat().st_gid)
+            self.assertEqual(layer.stat().st_mtime_ns, root.stat().st_mtime_ns)
+
 
 if __name__ == '__main__':
     unittest.main()
