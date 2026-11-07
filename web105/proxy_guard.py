@@ -6,8 +6,9 @@ from pathlib import Path
 
 IP_TEST = "ip -o -4 addr show | grep -Eq 'inet 10\\.0\\.2\\.[0-9]+/' && \\\n"
 HELPER = '''#!/bin/sh
-# This bridge is for the developer's QEMU/KVM test environment only.
-# Unknown, unavailable, or failed detection must never enable a proxy.
+# This bridge is an opt-in test feature, not general network discovery.
+# Both explicit kernel opt-in and a detected QEMU/KVM guest are required.
+/usr/bin/grep -Eq '(^|[[:space:]])puppy50[.]test_bridge=1([[:space:]]|$)' "${1:-/proc/cmdline}" 2>/dev/null || exit 1
 kind=$(systemd-detect-virt --vm 2>/dev/null) || exit 1
 case "$kind" in
   qemu|kvm) exit 0 ;;
