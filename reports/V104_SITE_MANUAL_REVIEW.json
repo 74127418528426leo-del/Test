@@ -1,0 +1,27 @@
+{
+  "schema": "PUPPY50_V104_SITE_MANUAL_REVIEW",
+  "run_id": 42326668886,
+  "iso_sha256": "f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5",
+  "frames": [
+    {
+      "evidence_path": "cnn/qemu/frame_390.ppm",
+      "sha256": "c3c5da264399e8cf544c0f39cf2293e21ef89710960e7f329d9dea0174f049b1",
+      "observation": "CNN privacy and DRM notices"
+    },
+    {
+      "evidence_path": "john/qemu/frame_390.ppm",
+      "sha256": "ad31e5ed96f4c32aaac77e18e08e41451517a189d78ed16d5cbb2926b81278d9",
+      "observation": "John homepage visible"
+    },
+    {
+      "evidence_path": "bible3d/qemu/frame_390.ppm",
+      "sha256": "061e708c4d7e7cfbf7590be52c38138394306ec51c0b8b7289db13dc5d635603",
+      "observation": "Genesis 3D scene visible"
+    },
+    {
+      "evidence_path": "youtube4k/qemu/frame_470.ppm",
+      "sha256": "f061fd075e5f5616b0d0aedc6c24c8ea71e0f697aba96d9ea15e8a10b6ed2b1d",
+      "observation": "YouTube sign-in challenge; no video playback"
+    }
+  ]
+}
