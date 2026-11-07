@@ -25,6 +25,10 @@ while [ ! -f "$marker" ]; do
   if systemctl is-failed --quiet puppy50-network-probe.service 2>/dev/null; then
     exit 0
   fi
+  # A oneshot with RemainAfterExit becomes active only after it exits.
+  # If it completed but could not write the marker, no late policy write can occur.
+  state=$(systemctl show --property=ActiveState --value puppy50-network-probe.service 2>/dev/null || true)
+  [ "$state" = active ] && exit 0
   sleep 1
 done
 exit 0
