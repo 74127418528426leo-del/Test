@@ -1,0 +1,41 @@
+name: Inspect BIOS and UEFI recovery boot entries
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-menu-inspect.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Install media inspection tool
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+          mkdir -p input out
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input
+      - name: Read exact boot menu entries
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/combined.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/combined.iso -extract /isolinux/live.cfg out/bios.cfg -extract /boot/grub/grub.cfg out/grub.cfg >out/extract.log 2>&1
+          cat out/bios.cfg
+          cat out/grub.cfg
+      - name: Keep menu evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-menu-inspection
+          path: out/
+          if-no-files-found: warn
+          retention-days: 30
