@@ -29,7 +29,7 @@ def split_firmware(root: Path, layer: Path) -> None:
     layer_lib.mkdir()
     os.replace(source, layer_lib / 'firmware')
     os.utime(root_lib, ns=(lib_stat.st_atime_ns, lib_stat.st_mtime_ns))
-    for original, copied in ((root_lib, layer_lib), (root_usr, layer_usr)):
+    for original, copied in ((root_lib, layer_lib), (root_usr, layer_usr), (root, layer)):
         stat = original.stat()
         os.chown(copied, stat.st_uid, stat.st_gid)
         shutil.copystat(original, copied, follow_symlinks=False)
