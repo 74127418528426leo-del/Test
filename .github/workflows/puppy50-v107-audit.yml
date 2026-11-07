@@ -1,0 +1,117 @@
+name: Puppy50 v107 startup and image audit
+on:
+  push:
+    branches: [puppy50-v107-startup-research]
+    paths: [.github/workflows/puppy50-v107-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 32
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image and VM tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools initramfs-tools-core cpio file qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{live,root,reports,qemu,initrd} fixture
+      - name: Download the exact published image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output input/v106.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v106-autoboot-guarded/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' 'input/v106.iso' | sha256sum -c -
+      - name: Measure image, root and initramfs contents
+        run: |
+          set -euo pipefail
+          xorriso -osirrox on -indev input/v106.iso -extract /live out/live >out/reports/extract.log 2>&1
+          ls -lh out/live >out/reports/live-files.txt
+          stat -c '%n %s bytes' input/v106.iso out/live/* >out/reports/byte-sizes.txt
+          file out/live/* >out/reports/file-types.txt
+          unsquashfs -s out/live/filesystem.squashfs >out/reports/squashfs-format.txt
+          sudo unsquashfs -d out/root out/live/filesystem.squashfs >out/reports/unsquashfs.log
+          sudo du -xb --max-depth=3 out/root >out/reports/root-du-raw.txt
+          sort -nr out/reports/root-du-raw.txt | head -100 >out/reports/root-largest.txt || true
+          for p in usr/lib/firefox-esr usr/lib/firmware usr/lib/modules usr/lib/x86_64-linux-gnu usr/share usr/bin var; do
+            if [ -e "out/root/$p" ]; then sudo du -sb "out/root/$p"; fi
+          done >out/reports/root-components.txt
+          lsinitramfs out/live/initrd.img >out/reports/initrd-filelist.txt
+          sudo unmkinitramfs out/live/initrd.img out/initrd >out/reports/initrd-unpack.log 2>&1
+          sudo du -xb --max-depth=3 out/initrd >out/reports/initrd-du-raw.txt
+          sort -nr out/reports/initrd-du-raw.txt | head -80 >out/reports/initrd-largest.txt || true
+          cat out/reports/byte-sizes.txt out/reports/squashfs-format.txt out/reports/root-components.txt
+      - name: Add temporary guest mount and startup probe
+        run: |
+          set -euo pipefail
+          cat >out/p50-boot-audit <<'EOF'
+          #!/bin/sh
+          sleep 30
+          {
+            echo P50_V107_DIAGNOSTICS_BEGIN
+            echo P50_CMDLINE
+            cat /proc/cmdline
+            echo P50_ROOT_MOUNT
+            findmnt -nr -o TARGET,SOURCE,FSTYPE,OPTIONS /
+            echo P50_LIVE_MOUNTS
+            findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS | grep -E '(^/ |/run/live|/lib/live)' || true
+            echo P50_OVERLAY_PATHS
+            ls -ld /run/live /run/live/overlay /run/live/overlay/rw /lib/live/mount/overlay 2>/dev/null || true
+            echo P50_LDCONFIG_UNIT
+            systemctl cat ldconfig.service --no-pager || true
+            echo P50_TIMING
+            systemd-analyze time --no-pager || true
+            systemd-analyze critical-chain display-manager.service --no-pager || true
+            echo P50_V107_DIAGNOSTICS_END
+          } >/dev/ttyS0 2>&1
+          EOF
+          cat >out/p50-boot-audit.service <<'EOF'
+          [Unit]
+          Description=Temporary nonblocking boot diagnosis
+          After=systemd-journald.service
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/sbin/p50-boot-audit
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sudo install -m 0755 out/p50-boot-audit out/root/usr/local/sbin/p50-boot-audit
+          sudo install -m 0644 out/p50-boot-audit.service out/root/etc/systemd/system/p50-boot-audit.service
+          sudo ln -s ../p50-boot-audit.service out/root/etc/systemd/system/multi-user.target.wants/p50-boot-audit.service
+      - name: Repack diagnostic-only image
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/root out/diagnostic.squashfs -one-file-system -comp xz -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          xorriso -indev input/v106.iso -outdev out/diagnostic.iso -map out/diagnostic.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          sha256sum out/diagnostic.iso >out/reports/diagnostic-sha256.txt
+      - name: Start a local marker for after media removal
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot the diagnostic image and record the guest
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web105/boot_bench.py --iso out/diagnostic.iso --out out/qemu --mode online --ram 2560 --seconds 210 --emulate-acer-id | tee out/reports/benchmark.txt
+          grep -F 'P50_V107_DIAGNOSTICS_BEGIN' out/qemu/serial.log
+          grep -F 'P50_V107_DIAGNOSTICS_END' out/qemu/serial.log
+          sed -n '/P50_V107_DIAGNOSTICS_BEGIN/,/P50_V107_DIAGNOSTICS_END/p' out/qemu/serial.log >out/reports/guest-diagnostics.txt
+          cat out/reports/guest-diagnostics.txt
+      - name: Preserve actual evidence and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-startup-audit
+          path: |
+            out/reports/
+            out/qemu/
+          if-no-files-found: warn
+          retention-days: 30
