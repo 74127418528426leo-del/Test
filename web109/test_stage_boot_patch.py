@@ -11,6 +11,13 @@ class BootPatchTests(unittest.TestCase):
         self.assertIn('p50-staged-root',result)
         self.assertIn('${TORAM:-}',result)
         self.assertNotIn('echo $(setup_loop "${1}" \'0\' "${2}")',result)
+    def test_creates_and_checks_missing_mapper_device_node(self):
+        old='get_backing_device ()\n{\n\techo $(setup_loop "${1}" \'0\' "${2}")\n}\n'
+        result=patch_helpers(old)
+        self.assertIn('mknod /dev/mapper/p50-staged-root b',result)
+        self.assertIn('p50_major',result)
+        self.assertIn('p50_minor',result)
+        self.assertIn('root mapping device number mismatch',result)
     def test_requires_one_original_hook(self):
         with self.assertRaises(ValueError): patch_helpers('no matching function')
         line='echo $(setup_loop "${1}" \'0\' "${2}")'
