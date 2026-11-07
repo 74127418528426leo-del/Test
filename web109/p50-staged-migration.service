@@ -1,0 +1,12 @@
+[Unit]
+Description=Experimental Puppy50 move live system to RAM after launch
+After=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/run/p50-stage/tools/busybox sh /run/p50-stage/tools/p50-migrate.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target
