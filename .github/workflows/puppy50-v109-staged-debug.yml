@@ -17,13 +17,15 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools dmsetup busybox-static qemu-system-x86 python3-pil gcc libc6-dev
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools dmsetup busybox-static qemu-system-x86 python3-pil gcc libc6-dev libx11-dev
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           python3 -m unittest discover -s web109 -p 'test_*.py' -v
           for f in web109/p50-migrate.sh web109/dm-init web109/dm-run; do sh -n "$f"; done
           gcc -Wall -Wextra -Werror -DP50_SWITCH_NO_MAIN -o switch-test web109/test_p50_switch.c
           ./switch-test
+          gcc -D_GNU_SOURCE -DP50_STATUS_STATE_ONLY -Wall -Wextra -Werror -o status-test web109/test_p50_status.c
+          ./status-test
           mkdir -p input out/{reports,main,stage-tree,rechecked,tools/lib,qemu} fixture
           lscpu >out/reports/host-cpu.txt
       - uses: actions/download-artifact@v4
@@ -44,7 +46,10 @@ jobs:
           cp "$dm_path" out/tools/dmsetup
           cp /bin/busybox out/tools/busybox
           gcc -Wall -Wextra -Werror -static -O2 -s -o out/tools/p50-switch web109/p50-switch.c
-          cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service,p50-diagnostic.sh,p50-diagnostic.service} out/tools/
+          gcc -D_GNU_SOURCE -Wall -Wextra -Werror -O2 -o out/tools/p50-status web109/p50-status.c -lX11
+          out/tools/busybox --list | grep -Fx timeout
+          out/tools/busybox --list | grep -Fx setsid
+          cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service,p50-stage-failure.service,p50-diagnostic.sh,p50-diagnostic.service} out/tools/
           chmod 755 out/tools/{dm-init,dm-run,p50-migrate.sh,busybox,dmsetup}
           ldd "$dm_path" | tee out/reports/dmsetup-ldd.txt
           file out/tools/busybox | tee out/reports/busybox-type.txt
