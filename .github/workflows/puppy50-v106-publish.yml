@@ -1,0 +1,139 @@
+name: Publish Puppy50 v106 guarded automatic boot prerelease
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v106-publish.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm successful pinned build and guest tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42350606105 42351031652 42351348686; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+      - name: Retrieve reviewed image
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v106-guarded-test-only
+          run-id: 42350606105
+          github-token: ${{ github.token }}
+          path: iso
+      - name: Retrieve exact image build audit
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v106-build-audit
+          run-id: 42350606105
+          github-token: ${{ github.token }}
+          path: evidence/build
+      - name: Retrieve all six exact image test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v106-verified-*
+          run-id: 42351031652
+          github-token: ${{ github.token }}
+          path: evidence/virtual-tests
+      - name: Retrieve traced proxy test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v106-traced-proxy-*
+          run-id: 42351348686
+          github-token: ${{ github.token }}
+          path: evidence/traced-proxy
+      - name: Verify ISO, boot settings, measured results and manually reviewed frames
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' 'iso/Puppy50_v106_AutoBoot_TEST_ONLY.iso' | sha256sum -c -
+          (cd iso && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          review=json.loads(Path('web105/V106_MANUAL_REVIEW.json').read_text())
+          assert review['iso_sha256']=='537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e'
+          assert review['run_id']==42351031652 and len(review['cases'])==6
+          root=Path('evidence/virtual-tests')
+          for name,case in review['cases'].items():
+              folder=root/('Puppy50-v106-verified-'+name)
+              result=json.loads((folder/'qemu/result.json').read_text())
+              assert result['first_home_seen_seconds']==case['first_home_seconds']
+              assert not result['boot_menu_key_sent'] and result['media_ejected']
+              assert result['input_sent_after_eject'] and result['qemu_running_at_end']
+              for rel,expected in case['screenshots_sha256'].items():
+                  assert hashlib.sha256((folder/rel).read_bytes()).hexdigest()==expected,(name,rel)
+              if case.get('unique_post_ejection_marker_seen_in_fixture_log'):
+                  log=(folder/'reports/fixture.log').read_text()
+                  assert 'GET /after.html?nonce=P50-42351031652' in log and ' 200 ' in log
+          menu=json.loads((root/'Puppy50-v106-verified-bios-optical-online/menu/menu-result.json').read_text())
+          assert menu['default_seen'] and menu['recovery_highlight_seen']
+          assert review['traced_proxy_run_id']==42351348686
+          traced=Path('evidence/traced-proxy')
+          for name,case in review['traced_proxy'].items():
+              folder=traced/('Puppy50-v106-traced-proxy-'+name)
+              image=folder/'qemu/external_https.png'
+              assert hashlib.sha256(image.read_bytes()).hexdigest()==case['external_page_sha256']
+              connections=(folder/'reports/connect.log').read_text().splitlines()
+              assert len(connections)==case['proxy_connect_count']
+          assert review['traced_proxy']['default-no-proxy']['proxy_connect_count']==0
+          assert review['traced_proxy']['explicit-test-proxy']['proxy_connect_count']>0
+          bios=Path('evidence/build/cfg/live.cfg').read_text()
+          grub=Path('evidence/build/cfg/grub.cfg').read_text()
+          bios_default=bios.split('label live-amd64-failsafe')[0]
+          grub_default=grub.split('menuentry "Live system (amd64 fail-safe mode)"')[0]
+          assert 'menu default' in bios_default and re.search(r'\btoram\b',bios_default)
+          assert re.search(r'\btoram\b',grub_default)
+          assert 'puppy50.test_bridge=1' not in bios and 'puppy50.test_bridge=1' not in grub
+          assert 'The eight-second goal was not met.' in Path('web105/V106_RELEASE_NOTES.md').read_text()
+          print('Exact image, default boot entries and reviewed frame hashes match.')
+          PY
+      - name: Prepare public release assets
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/Puppy50_v106_AutoBoot_TEST_ONLY.iso dist/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso
+          cp web105/V106_RELEASE_NOTES.md dist/README_V106_EXPERIMENTAL.md
+          cp web105/V106_MANUAL_REVIEW.json dist/
+          (cd dist && sha256sum Puppy50_v106_AutoBoot_EXPERIMENTAL.iso >SHA256SUMS)
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          root=Path('evidence')
+          with ZipFile('dist/Puppy50_v106_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file() and not p.is_socket():
+                      z.write(p,p.as_posix())
+          PY
+      - name: Publish prerelease at the actual image-build commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v106-autoboot-guarded'
+          build_sha='bd2b8960b863989fc0d0857028cbc384a33a8140'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V106_EXPERIMENTAL.md dist/V106_MANUAL_REVIEW.json dist/Puppy50_v106_Test_Evidence.zip --verify-tag --title 'Puppy50 v106 - Automatic Boot Live ISO (EXPERIMENTAL)' --notes-file web105/V106_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify the publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          url='https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v106-autoboot-guarded/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso'
+          curl --fail --location --retry 3 --output /tmp/puppy50-v106-release-verification.iso "$url"
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' '/tmp/puppy50-v106-release-verification.iso' | sha256sum -c -
