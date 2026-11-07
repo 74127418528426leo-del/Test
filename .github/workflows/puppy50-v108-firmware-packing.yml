@@ -1,0 +1,42 @@
+name: Puppy50 v108 lossless firmware packing study
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-firmware-packing.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Install tools and download the exact baseline
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd rsync time
+          mkdir -p input out/{root,restore,reports}
+          curl --fail --location --retry 3 -o input/v107.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v107-zstd-fastboot-experimental/Puppy50_v107_FastBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'cbdf605f87d345ca60d1a0a3cebb20312864c81c2a286c8eacb5acb85769c0c2' input/v107.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v107.iso -extract /live/filesystem.squashfs input/root.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/root input/root.squashfs >out/reports/unsquash.log
+          test -d out/root/usr/lib/firmware/netronome
+      - name: Compare independent-block and shared-window firmware compression
+        run: |
+          set -euo pipefail
+          sudo du -sb out/root/usr/lib/firmware/netronome | tee out/reports/uncompressed.txt
+          /usr/bin/time -p -o out/reports/squashfs-time.txt sudo mksquashfs out/root/usr/lib/firmware/netronome out/netronome.squashfs -comp zstd -Xcompression-level 15 -b 1M -processors 3 -noappend -no-progress -exit-on-error >out/reports/squashfs.log 2>&1
+          /usr/bin/time -p -o out/reports/archive-time.txt bash -o pipefail -c 'sudo tar -C out/root/usr/lib/firmware -cf - netronome | zstd -q -12 --long=27 -T3 -o out/netronome.tar.zst'
+          /usr/bin/time -p -o out/reports/restore-time.txt bash -o pipefail -c 'zstd -q -dc --long=27 out/netronome.tar.zst | sudo tar -C out/restore -xf -'
+          sudo rsync -aHAXnci --delete --numeric-ids out/root/usr/lib/firmware/netronome/ out/restore/netronome/ >out/reports/differences.txt
+          test ! -s out/reports/differences.txt
+          stat -c '%n %s' out/netronome.squashfs out/netronome.tar.zst | tee out/reports/compressed-sizes.txt
+          cat out/reports/*-time.txt
+      - name: Preserve packing measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-lossless-firmware-packing-evidence
+          path: out/reports/
+          retention-days: 30
