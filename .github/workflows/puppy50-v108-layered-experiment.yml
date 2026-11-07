@@ -1,0 +1,184 @@
+name: Puppy50 v108 full firmware layered architecture experiment
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-layered-experiment.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 38
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image tools and check layer safety tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s web108 -p 'test_*.py' -v
+          mkdir -p input out/{original,core,layer,verify,reports,stage-tree,rechecked} fixture
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input
+      - name: Extract the exact full-firmware reference
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/combined.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/combined.iso -extract /live/filesystem.squashfs input/base.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/original/root input/base.squashfs >out/reports/unsquash.log
+          sudo cp -a out/original/root/. out/core/
+      - name: Split without losing cross-layer links or root permissions
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY' >out/reports/original-hardlinks.json
+          import os,stat,json
+          from pathlib import Path
+          root=Path('out/original/root'); groups={}
+          for here,dirs,files in os.walk(root,followlinks=False):
+              for name in files:
+                  p=Path(here)/name; s=p.lstat()
+                  if stat.S_ISREG(s.st_mode) and s.st_nlink>1:
+                      groups.setdefault((s.st_dev,s.st_ino),[]).append(str(p.relative_to(root)))
+          actual=sorted(sorted(g) for g in groups.values() if len(g)>1)
+          for group in actual:
+              inside=[name.startswith('usr/lib/firmware/') for name in group]
+              assert not (any(inside) and not all(inside)),group
+          print(json.dumps(actual,indent=2))
+          PY
+          sudo python3 web108/split_firmware.py --root out/core --layer out/layer
+          test -d out/layer/usr/lib/firmware
+          test ! -e out/core/usr/lib/firmware
+          stat -c '%n %u %g %a %Y' out/original/root out/core out/layer out/original/root/usr out/layer/usr out/original/root/usr/lib out/layer/usr/lib >out/reports/root-directory-metadata.txt
+      - name: Compress browser system and complete firmware separately
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/core out/core.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/core-compress.log 2>&1
+          sudo mksquashfs out/layer out/firmware.squashfs -one-file-system -comp xz -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/firmware-compress.log 2>&1
+          unsquashfs -s out/core.squashfs >out/reports/core-format.txt
+          unsquashfs -s out/firmware.squashfs >out/reports/firmware-format.txt
+          stat -c '%n %s' input/base.squashfs out/core.squashfs out/firmware.squashfs | tee out/reports/root-sizes.txt
+      - name: Reconstruct and compare all files before boot testing
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -d out/verify/core out/core.squashfs >out/reports/core-unpack.log
+          sudo unsquashfs -d out/verify/layer out/firmware.squashfs >out/reports/layer-unpack.log
+          sudo cp -a out/verify/layer/usr/lib/firmware out/verify/core/usr/lib/
+          sudo touch -r out/original/root/usr/lib out/verify/core/usr/lib
+          sudo rsync -aHAXnci --delete --numeric-ids out/original/root/ out/verify/core/ >out/reports/rsync-forward.txt
+          sudo rsync -aHAXnci --delete --numeric-ids out/verify/core/ out/original/root/ >out/reports/rsync-reverse.txt
+          test ! -s out/reports/rsync-forward.txt
+          test ! -s out/reports/rsync-reverse.txt
+          sudo python3 - <<'PY' >out/reports/reconstructed-hardlinks.json
+          import os,stat,json
+          from pathlib import Path
+          root=Path('out/verify/core'); groups={}
+          for here,dirs,files in os.walk(root,followlinks=False):
+              for name in files:
+                  p=Path(here)/name; s=p.lstat()
+                  if stat.S_ISREG(s.st_mode) and s.st_nlink>1:
+                      groups.setdefault((s.st_dev,s.st_ino),[]).append(str(p.relative_to(root)))
+          actual=sorted(sorted(g) for g in groups.values() if len(g)>1)
+          expected=json.loads(Path('out/reports/original-hardlinks.json').read_text())
+          assert actual==expected
+          print(json.dumps(actual,indent=2))
+          PY
+          sudo rm -rf out/verify out/original out/core out/layer
+      - name: Build layered ISO and add firmware layer to checksum list
+        run: |
+          set -euo pipefail
+          xorriso -indev input/combined.iso -outdev out/stage.iso -map out/core.squashfs /live/filesystem.squashfs -map out/firmware.squashfs /live/firmware.squashfs -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/stage-tree >out/reports/stage-extract.log 2>&1
+          test ! -e out/stage-tree/live/filesystem.module
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/stage-tree').resolve(); lines=[]; seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line); assert m,repr(line)
+              name=m.group(3); assert name.startswith('./') and name not in seen
+              seen.add(name); target=(root/name).resolve(strict=True); target.relative_to(root)
+              assert target.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024),b''): h.update(chunk)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==292 and './live/firmware.squashfs' not in seen
+          h=hashlib.sha256()
+          with (root/'live/firmware.squashfs').open('rb') as f:
+              for chunk in iter(lambda:f.read(1024*1024),b''): h.update(chunk)
+          lines.append(h.hexdigest()+'  ./live/firmware.squashfs')
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/layered.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/layered.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/core.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/firmware.squashfs out/rechecked/live/firmware.squashfs
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          grep -F './live/firmware.squashfs: OK' out/reports/media-checksums.txt
+          grep -F 'boot=live components toram ' out/rechecked/isolinux/live.cfg
+          grep -F 'boot=live components toram ' out/rechecked/boot/grub/grub.cfg
+          sha256sum out/layered.iso | tee out/reports/candidate-sha256.txt
+          stat -c '%n %s' input/combined.iso out/layered.iso | tee out/reports/iso-sizes.txt
+      - name: Start local website for post-removal test
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare exact combined reference and layered image
+        timeout-minutes: 16
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web108/boot_bench_fast.py --iso input/combined.iso --out "out/$1" --mode online --allow-no-startup-probe --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          candidate() { python3 -u web108/boot_bench_fast.py --iso out/layered.iso --out "out/$1" --mode online --allow-no-startup-probe --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          baseline base1
+          candidate cand1
+          candidate cand2
+          baseline base2
+          if grep -F 'PUPPY50_V85_NETWORK_PROBE_START' out/cand1/serial.log out/cand2/serial.log; then exit 1; fi
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          t={n:json.loads((Path('out')/n/'result.json').read_text())['first_home_seen_seconds'] for n in ['base1','cand1','cand2','base2']}
+          t['baseline_mean_seconds']=statistics.mean([t['base1'],t['base2']]); t['candidate_mean_seconds']=statistics.mean([t['cand1'],t['cand2']])
+          t['difference_seconds']=t['baseline_mean_seconds']-t['candidate_mean_seconds']; t['physical_acer_tested']=False
+          Path('out/reports/comparison.json').write_text(json.dumps(t,indent=2)+'\n'); print(json.dumps(t,indent=2))
+          PY
+      - name: Preserve comparison and guest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-layered-experiment-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep test-only layered ISO
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-layered-test-only-iso
+          path: |
+            out/layered.iso
+            out/reports/candidate-sha256.txt
+          compression-level: 0
+          retention-days: 3
