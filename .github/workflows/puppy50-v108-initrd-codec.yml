@@ -1,0 +1,133 @@
+name: Puppy50 v108 lossless initramfs architecture comparison
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-initrd-codec.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install media and virtualization tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{reports,tree,rechecked} fixture
+          lscpu >out/reports/host-cpu.txt
+      - name: Download exact reference image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o input/v107.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v107-zstd-fastboot-experimental/Puppy50_v107_FastBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'cbdf605f87d345ca60d1a0a3cebb20312864c81c2a286c8eacb5acb85769c0c2' input/v107.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v107.iso -extract /live/initrd.img input/original.initrd -extract /live/filesystem.squashfs input/base.squashfs >out/reports/extract.log 2>&1
+      - name: Losslessly recompress only the final initramfs cpio stream
+        run: |
+          set -euo pipefail
+          test "$(stat -c %s input/original.initrd)" -eq 118527092
+          head -c 45312000 input/original.initrd >out/early-prefix
+          tail -c +45312001 input/original.initrd >out/original-tail.gz
+          python3 - <<'PY'
+          from pathlib import Path
+          assert Path('out/original-tail.gz').read_bytes()[:3] == b'\x1f\x8b\x08'
+          PY
+          gzip -t out/original-tail.gz
+          gzip -dc out/original-tail.gz >out/main.cpio
+          zstd -q -3 -T2 -o out/main.cpio.zst out/main.cpio
+          zstd -q -dc out/main.cpio.zst >out/rechecked.cpio
+          cmp out/main.cpio out/rechecked.cpio
+          cat out/early-prefix out/main.cpio.zst >out/new.initrd
+          cmp -n 45312000 input/original.initrd out/new.initrd
+          sha256sum input/original.initrd out/new.initrd out/early-prefix out/main.cpio >out/reports/initrd-sha256.txt
+          stat -c '%n %s' input/original.initrd out/new.initrd out/main.cpio out/main.cpio.zst | tee out/reports/initrd-sizes.txt
+      - name: Make a test-only boot image and refresh its checksum list
+        run: |
+          set -euo pipefail
+          xorriso -indev input/v107.iso -outdev out/stage.iso -map out/new.initrd /live/initrd.img -map out/new.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve(); lines=[]; seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line); assert m,repr(line)
+              name=m.group(3); assert name.startswith('./') and name not in seen
+              seen.add(name); target=(root/name).resolve(strict=True); target.relative_to(root)
+              assert target.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==292
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp input/base.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/new.initrd out/rechecked/live/initrd.img
+          cmp out/new.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          grep -F './live/initrd.img: OK' out/reports/media-checksums.txt
+          grep -F 'boot=live components toram ' out/rechecked/isolinux/live.cfg
+          grep -F 'boot=live components toram ' out/rechecked/boot/grub/grub.cfg
+          if grep -F 'puppy50.test_bridge=1' out/rechecked/isolinux/live.cfg out/rechecked/boot/grub/grub.cfg; then exit 1; fi
+          sha256sum out/candidate.iso >out/reports/candidate-sha256.txt
+          stat -c '%n %s' input/v107.iso out/candidate.iso | tee out/reports/iso-sizes.txt
+      - name: Start local browsing fixture
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare unchanged reference and new initramfs in alternating order
+        timeout-minutes: 16
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web107/boot_bench.py --iso input/v107.iso --out "out/$1" --mode online --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          candidate() { python3 -u web107/boot_bench.py --iso out/candidate.iso --out "out/$1" --mode online --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          baseline base1
+          candidate cand1
+          candidate cand2
+          baseline base2
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          t={n:json.loads((Path('out')/n/'result.json').read_text())['first_home_seen_seconds'] for n in ['base1','cand1','cand2','base2']}
+          t['baseline_mean_seconds']=statistics.mean([t['base1'],t['base2']]); t['candidate_mean_seconds']=statistics.mean([t['cand1'],t['cand2']])
+          t['difference_seconds']=t['baseline_mean_seconds']-t['candidate_mean_seconds']; t['physical_acer_tested']=False
+          Path('out/reports/comparison.json').write_text(json.dumps(t,indent=2)+'\n'); print(json.dumps(t,indent=2))
+          PY
+      - name: Preserve timings, content verification and guest screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-initrd-zstd-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep test candidate temporarily
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-initrd-zstd-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/candidate-sha256.txt
+          compression-level: 0
+          retention-days: 3
