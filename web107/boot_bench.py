@@ -70,8 +70,8 @@ def main():
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--mode', choices=['online', 'offline'], required=True)
     p.add_argument('--ram', type=int, default=2560)
-    p.add_argument('--cpu-model', choices=['host', 'Westmere'], default='host',
-                   help='Westmere limits exposed instruction features; host speed is still virtual')
+    p.add_argument('--cpu-model', choices=['host', 'Westmere', 'i3-540-conservative'], default='host',
+                   help='Models restrict exposed features; host speed and devices remain virtual')
     p.add_argument('--seconds', type=int, default=210)
     p.add_argument('--bandwidth', type=int, default=0)
     p.add_argument('--boot-enter-at', type=float, default=None,
@@ -97,7 +97,9 @@ def main():
           else f'file={iso},if=none,id=livecd,format=raw,readonly=on')
     if args.bandwidth:
         cd += f',bps_rd={args.bandwidth}'
-    cmd = ['qemu-system-x86_64', '-machine', 'pc,accel=kvm', '-cpu', args.cpu_model,
+    cpu = ('Westmere,-aes,-pclmulqdq,-x2apic,-3dnowprefetch'
+           if args.cpu_model == 'i3-540-conservative' else args.cpu_model)
+    cmd = ['qemu-system-x86_64', '-machine', 'pc,accel=kvm', '-cpu', cpu,
            '-m', str(args.ram), '-smp', '2', '-drive', cd,
            '-boot', 'order=d' if args.media == 'optical' else 'order=c',
            '-display', 'none', '-vga', 'std', '-qmp', f'unix:{monitor},server=on,wait=off',
