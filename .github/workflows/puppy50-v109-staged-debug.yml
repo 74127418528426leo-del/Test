@@ -1,0 +1,157 @@
+name: Diagnose staged RAM boot prototype
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-staged-debug.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prototype:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and virtual-test tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools dmsetup busybox-static qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s web109 -p 'test_*.py' -v
+          sh -n web109/p50-migrate.sh web109/dm-init web109/dm-run
+          mkdir -p input out/{reports,main,stage-tree,rechecked,tools/lib,qemu} fixture
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input
+      - name: Extract original boot image and prepare isolated device-mapper tools
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/combined.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/combined.iso -extract /live/initrd.img out/original.initrd -extract /live/filesystem.squashfs out/original.squashfs -extract /isolinux/live.cfg out/bios.cfg -extract /boot/grub/grub.cfg out/grub.cfg >out/reports/extract.log 2>&1
+          head -c 45312000 out/original.initrd >out/early-prefix
+          tail -c +45312001 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          dm_path=$(command -v dmsetup)
+          cp "$dm_path" out/tools/dmsetup
+          cp /bin/busybox out/tools/busybox
+          cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service} out/tools/
+          chmod 755 out/tools/{dm-init,dm-run,p50-migrate.sh,busybox,dmsetup}
+          ldd "$dm_path" | tee out/reports/dmsetup-ldd.txt
+          file out/tools/busybox | tee out/reports/busybox-type.txt
+          grep -F 'statically linked' out/reports/busybox-type.txt
+          python3 - "$dm_path" <<'PY'
+          import re,shutil,subprocess,sys
+          from pathlib import Path
+          text=subprocess.check_output(['ldd',sys.argv[1]],text=True)
+          assert 'not found' not in text
+          seen=[]
+          for line in text.splitlines():
+              m=re.search(r'^\s*(\S+)\s+=>\s+(/\S+)',line)
+              if m: name,path=m.group(1),m.group(2)
+              else:
+                  m=re.search(r'^\s*(/\S*ld-linux\S+)',line)
+                  if not m: continue
+                  path=m.group(1); name=Path(path).name
+              shutil.copyfile(path,Path('out/tools/lib')/name,follow_symlinks=True);seen.append(name)
+          assert 'ld-linux-x86-64.so.2' in seen and any(n.startswith('libdevmapper') for n in seen)
+          print('Bundled isolated runtime libraries:',', '.join(seen))
+          PY
+          sudo mkdir -p out/main/usr/lib/p50-stage
+          sudo cp -a out/tools/. out/main/usr/lib/p50-stage/
+          sudo python3 web109/stage_boot_patch.py out/main
+          sha256sum out/original.initrd out/early-prefix out/original.squashfs >out/reports/input-sha256.txt
+      - name: Repack initramfs and derive a test-only media-boot image
+        run: |
+          set -euo pipefail
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/staged.initrd
+          cmp -n 45312000 out/original.initrd out/staged.initrd
+          tail -c +45312001 out/staged.initrd | zstd -q -dc | cmp out/modified.cpio -
+          chmod u+w out/bios.cfg out/grub.cfg
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in (Path('out/bios.cfg'),Path('out/grub.cfg')):
+              s=p.read_text(); assert s.count('boot=live components toram ')>=1
+              p.write_text(s.replace('boot=live components toram ','boot=live components console=ttyS0,115200 console=tty0 ignore_loglevel ').replace(' quiet ', ' '))
+          PY
+          xorriso -indev input/combined.iso -outdev out/stage.iso -map out/staged.initrd /live/initrd.img -map out/staged.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -map out/bios.cfg /isolinux/live.cfg -map out/grub.cfg /boot/grub/grub.cfg -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/stage-tree >out/reports/stage-extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/stage-tree').resolve();lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,repr(line)
+              name=m.group(3);assert name.startswith('./') and name not in seen
+              seen.add(name);target=(root/name).resolve(strict=True);target.relative_to(root)
+              assert target.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1048576),b''):h.update(chunk)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==292
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/staged.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/staged.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/original.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/staged.initrd out/rechecked/live/initrd.img
+          cmp out/bios.cfg out/rechecked/isolinux/live.cfg
+          cmp out/grub.cfg out/rechecked/boot/grub/grub.cfg
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          sha256sum out/staged.iso >out/reports/staged-sha256.txt
+          stat -c '%n %s' out/staged.iso out/staged.initrd | tee out/reports/sizes.txt
+      - name: Start local webpage
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot, wait for verified RAM switch, then remove virtual USB
+        timeout-minutes: 11
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web109/boot_bench_staged.py --iso out/staged.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 95 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          grep -Fx 'P50_STAGE_COPY_VERIFIED' out/qemu/serial.log
+          grep -Fx 'P50_STAGE_READY' out/qemu/serial.log
+          grep -F 'P50_STAGE_RAM_BACKING=/run/p50-stage/root.squashfs' out/qemu/serial.log
+          grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('out/qemu/result.json').read_text())
+          assert x['first_home_seen_seconds'] and x['staged_ram_ready_seconds'] and x['media_ejected'] and x['input_sent_after_eject']
+          assert x['staged_ram_ready_seconds']>=x['first_home_seen_seconds']
+          print('First browser frame:',x['first_home_seen_seconds'],'s; verified RAM marker:',x['staged_ram_ready_seconds'],'s')
+          PY
+      - name: Preserve prototype logs and screenshots even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-staged-debug-evidence
+          path: |
+            out/reports/
+            out/qemu/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep exact prototype temporarily if the tests pass
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-staged-debug-test-only-iso
+          path: |
+            out/staged.iso
+            out/reports/staged-sha256.txt
+          compression-level: 0
+          retention-days: 3
