@@ -1,0 +1,71 @@
+name: Puppy50 v103 - Real CNN Bible and Pexels browser tests
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v103-sites.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  websites:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { site: cnn, ram: 3072 }
+          - { site: john, ram: 3072 }
+          - { site: bible3d, ram: 4096 }
+          - { site: pexels4k, ram: 4096 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate tests and public website targets
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web103 -p 'test_*.py' -v
+          python3 -m py_compile web103/site_test.py
+          mkdir -p input evidence/{qemu,reports}
+      - name: Install KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download the exact previously built test-only ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          run-id: 42321979218
+          github-token: ${{ github.token }}
+          path: input
+      - name: Check image integrity
+        run: cd input && sha256sum -c SHA256SUMS
+      - name: Start optional host HTTPS fallback
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close()'
+      - name: Run real Firefox QEMU website trial
+        timeout-minutes: 11
+        env:
+          SITE: ${{ matrix.site }}
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 -u web103/site_test.py --site "$SITE" --ram "$RAM" --iso input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso --out evidence/qemu >evidence/reports/browser.log 2>&1
+          printf 'qemu_test_exit=%s\n' "$?" >evidence/reports/exit-code.txt
+          exit 0
+      - name: Preserve unedited frames, serial output, and negative results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v103_${{ matrix.site }}_${{ matrix.ram }}MiB_site_proof
+          path: evidence/
+          retention-days: 20
+          if-no-files-found: warn
