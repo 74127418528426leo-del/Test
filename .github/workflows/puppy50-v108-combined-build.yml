@@ -1,0 +1,121 @@
+name: Puppy50 v108 combined full firmware fast boot build
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-combined-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    outputs:
+      sha256: ${{ steps.finish.outputs.sha256 }}
+    steps:
+      - name: Install ISO and initramfs tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd
+          mkdir -p input out/{reports,stage-tree,rechecked}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-test-only-iso
+          run-id: 42382223948
+          github-token: ${{ github.token }}
+          path: input/no-probe
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-initrd-zstd-test-only-iso
+          run-id: 42381391425
+          github-token: ${{ github.token }}
+          path: input/zstd-initrd
+      - name: Verify both measured input images and initramfs equivalence
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '2f823061cd58db89a183716972b22bb1f8ab1d8ca65637fcb5ad246a72fa1904' input/no-probe/candidate.iso | sha256sum -c -
+          printf '%s  %s\n' '94402153a8c0eac96466b4e3188150f7b31ffcda97cda4e52df21ada2a2750f2' input/zstd-initrd/candidate.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/no-probe/candidate.iso -extract /live/filesystem.squashfs out/root.squashfs -extract /live/initrd.img out/baseline.initrd -extract /isolinux/isolinux.cfg out/isolinux.cfg -extract /boot/grub/config.cfg out/grub-config.cfg >out/reports/extract-base.log 2>&1
+          xorriso -osirrox on -indev input/zstd-initrd/candidate.iso -extract /live/initrd.img out/new.initrd >out/reports/extract-initrd.log 2>&1
+          printf '%s  %s\n' 'd25587ba7095563e7f49041bac262ae7afcabff952e461ff4ce48b0f0ef89e0c' out/baseline.initrd | sha256sum -c -
+          printf '%s  %s\n' 'bc7c741055bdd7938b0fbd5c5fcbe9c8d7e3477980de915afa57ef2d41c1db21' out/new.initrd | sha256sum -c -
+          cmp -n 45312000 out/baseline.initrd out/new.initrd
+          tail -c +45312001 out/baseline.initrd | gzip -dc >out/baseline-main.cpio
+          tail -c +45312001 out/new.initrd | zstd -q -dc >out/new-main.cpio
+          cmp out/baseline-main.cpio out/new-main.cpio
+          sha256sum out/baseline.initrd out/new.initrd out/baseline-main.cpio >out/reports/initrd-equivalence.sha256
+      - name: Shorten the default boot menu delay to one second
+        run: |
+          set -euo pipefail
+          chmod u+w out/isolinux.cfg out/grub-config.cfg
+          cp out/isolinux.cfg out/reports/isolinux-before.cfg
+          cp out/grub-config.cfg out/reports/grub-config-before.cfg
+          python3 - <<'PY'
+          from pathlib import Path
+          bios=Path('out/isolinux.cfg'); text=bios.read_text()
+          assert text.count('\ntimeout 20\n')==1
+          bios.write_text(text.replace('\ntimeout 20\n','\ntimeout 10\n',1))
+          grub=Path('out/grub-config.cfg'); text=grub.read_text()
+          assert text.count('\nset timeout=2\n')==1
+          grub.write_text(text.replace('\nset timeout=2\n','\nset timeout=1\n',1))
+          PY
+          cp out/isolinux.cfg out/reports/isolinux-after.cfg
+          cp out/grub-config.cfg out/reports/grub-config-after.cfg
+      - name: Combine the independently tested changes and refresh checksums
+        id: finish
+        run: |
+          set -euo pipefail
+          xorriso -indev input/no-probe/candidate.iso -outdev out/stage.iso -map out/new.initrd /live/initrd.img -map out/new.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -map out/isolinux.cfg /isolinux/isolinux.cfg -map out/grub-config.cfg /boot/grub/config.cfg -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/stage-tree >out/reports/stage-extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/stage-tree').resolve(); lines=[]; seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line); assert m,repr(line)
+              name=m.group(3); assert name.startswith('./') and name not in seen
+              seen.add(name); target=(root/name).resolve(strict=True); target.relative_to(root)
+              assert target.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024),b''): h.update(chunk)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==292
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/combined.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/final-repack.log 2>&1
+          xorriso -osirrox on -indev out/combined.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/root.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/new.initrd out/rechecked/live/initrd.img
+          cmp out/new.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+          cmp out/isolinux.cfg out/rechecked/isolinux/isolinux.cfg
+          cmp out/grub-config.cfg out/rechecked/boot/grub/config.cfg
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          grep -Fx 'timeout 10' out/rechecked/isolinux/isolinux.cfg
+          grep -Fx 'set timeout=1' out/rechecked/boot/grub/config.cfg
+          grep -F 'boot=live components toram ' out/rechecked/isolinux/live.cfg
+          grep -F 'boot=live components toram ' out/rechecked/boot/grub/grub.cfg
+          if grep -F 'puppy50.test_bridge=1' out/rechecked/isolinux/live.cfg out/rechecked/boot/grub/grub.cfg; then exit 1; fi
+          sha256sum out/combined.iso | tee out/reports/combined-sha256.txt
+          stat -c '%n %s' input/no-probe/candidate.iso out/combined.iso | tee out/reports/iso-sizes.txt
+          printf 'sha256=%s\n' "$(sha256sum out/combined.iso | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Preserve build verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-combined-build-evidence
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Retain exact candidate for guest verification
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          path: |
+            out/combined.iso
+            out/reports/combined-sha256.txt
+          compression-level: 0
+          retention-days: 3
