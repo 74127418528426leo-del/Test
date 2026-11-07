@@ -1,0 +1,129 @@
+{
+  "iso_sha256": "e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da",
+  "description": "Home, post-eject, HTTPS, RAM-ready or failure indicator, and selected fallback frames were visually reviewed; hashes bind observations to original evidence. A small VM test does not establish physical hardware behavior.",
+  "candidate_smoke": {
+    "run_id": 42422358970,
+    "artifact_id": 13593983493,
+    "screenshots_sha256": {
+      "qemu/first_home.png": "fd40cb913784ee92edc89e1d4a4aeb8b7862b915b68fc5367ebb881247f27c6b",
+      "qemu/after_input.png": "1a56c8dc2dcdacefbaefcd442053913e02eea836c9a9e146e636db55610dd6d1",
+      "qemu/external_https.png": "76baa0809fed77ffc8ee85099d2a85d6a052e59121b794e47dd94623490a50e6"
+    }
+  },
+  "validation_run_id": 42422727615,
+  "validation": {
+    "bios-usb-1536": {
+      "artifact_id": 13594307180,
+      "outcome": "failure",
+      "first_home_seconds": 19.46,
+      "ram_ready_seconds": null,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "2a892d88799a4a31a1f44ae1ffef535c46e3af5c790821205f7c40ff99573314"
+      }
+    },
+    "bios-usb-2048": {
+      "artifact_id": 13594302308,
+      "outcome": "success",
+      "first_home_seconds": 20.56,
+      "ram_ready_seconds": 44.78,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "9e351aa1b7929baf8113189e61109857abfecd5317056310544e382ce987cdbd",
+        "qemu/after_input.png": "33a0650b36cc322c2f0dd7dd85181dd5a1080e9fc6e7b8c0e370f65dbdd20d60",
+        "qemu/external_https.png": "d39493b6ed0205bdeeb51463fa5498a6b31bdd07a12935fc648d33dc35048a2d"
+      }
+    },
+    "uefi-optical-online-3072": {
+      "artifact_id": 13594153585,
+      "outcome": "success",
+      "first_home_seconds": 19.43,
+      "ram_ready_seconds": 28.56,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "9db606a254386b97b3ee863d484aa6c4297eca0feba74e908a18cfa5dcd7ed98",
+        "qemu/after_input.png": "33a0650b36cc322c2f0dd7dd85181dd5a1080e9fc6e7b8c0e370f65dbdd20d60",
+        "qemu/external_https.png": "7875f6cc74e5fef45cfe7b4da27ea297a62cb03fb4e1322db973fa053b217ae8"
+      }
+    },
+    "uefi-usb-offline-3072": {
+      "artifact_id": 13593957754,
+      "outcome": "success",
+      "first_home_seconds": 15.5,
+      "ram_ready_seconds": 24.71,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "2ea3409c26390a6319744bf6366d82f4b0b6c6bc4d9534b8c503c5da9aa84417",
+        "qemu/after_input.png": "a4485f0cee29d0332badb53ff98543bb8c7ceb27043c29754ce134bc522fefa9"
+      }
+    },
+    "bios-fullram-fallback": {
+      "artifact_id": 13593764645,
+      "outcome": "success",
+      "first_home_seconds": 45.07,
+      "ram_ready_seconds": null,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "0ba09fc6f58700ff115a79f56035f9cdb5fbd6b39ac7e6df6ed26b351f0b239f",
+        "qemu/after_input.png": "5ebd4f9fbde341838686d4ef2a9b73b26f3384b25ea23ce5da56e35529e9c72c",
+        "qemu/external_https.png": "16226da8c6a82d8c2c63d1ad6b0f93b8a8281ce8114c90e7165f1c6d36229da0",
+        "qemu/fallback-menu-default.png": "5b384b772cac4d93e31acafbcfb80241e8db1e7f9d1308b6473b9ff7b2f50018",
+        "qemu/fallback-menu-selected.png": "eef2f7471400c37cacc1de3f9c9ec04ee71a1661fa8ba113e842811c44c7384b"
+      }
+    },
+    "connectivity-restored": {
+      "artifact_id": 13593593353,
+      "outcome": "success",
+      "first_home_seconds": 20.55,
+      "ram_ready_seconds": 39.27,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "a7899a58b35be9395e322f069cae4dfb6ae1e08afcc7a359dfffe02d17702969",
+        "qemu/after_input.png": "79a1a5dd18abc8fde826cbe423a01a0df59c79c8e563561f710590e34b7d8ad7",
+        "qemu/external_https.png": "7875f6cc74e5fef45cfe7b4da27ea297a62cb03fb4e1322db973fa053b217ae8"
+      }
+    }
+  },
+  "invalid_copy": {
+    "run_id": 42422636222,
+    "artifact_id": 13594227725,
+    "screenshots_sha256": {
+      "qemu/first_home.png": "d29ce6bb1738148ff05e0b72eb73a942220b73113926dee356f790260d7f2e14",
+      "qemu/after_input.png": "16979f748ea8c7d557b3b54c001a6300b5f9f479085f1366e7bf99259cabd902",
+      "qemu/external_https.png": "449beeb319cee295846a9655047ed388b26c61fb13090361e791423ccc171873"
+    }
+  },
+  "limitations": [
+    "The 1.5 GiB VM refused RAM migration for insufficient available memory and reserve; the boot media was not removed.",
+    "Physical Acer, physical Wi-Fi, and Secure Boot are untested.",
+    "The fallback menu path has no RAM-ready indicator and retains an old home-page statement."
+  ],
+  "benchmark": {
+    "run_id": 42422773595,
+    "artifact_id": 13594975142,
+    "screenshots_sha256": {
+      "base1/first_home.png": "833579a2579229af6c77949543be2630008d568c088351c3db5fbbca0c6555f7",
+      "base1/after_input.png": "797f537386e4c507f404b87f0b4408062928242f575b253c465dcac0b1eb68fd",
+      "base1/external_https.png": "16226da8c6a82d8c2c63d1ad6b0f93b8a8281ce8114c90e7165f1c6d36229da0",
+      "cand1/first_home.png": "d2ecf739a005a5657259ee973010daa54534a6f560bfba8b12a918abd0dd5e07",
+      "cand1/after_input.png": "2a4fd6ef935289be6fb452535566773da1f58be18132e8290f5f9b9688169f14",
+      "cand1/external_https.png": "088aeadf59e23f2baebb3bc16ed2d745c09501679927aad3b9c6ce96943159ab",
+      "cand2/first_home.png": "9717c039836d0a73943eb500b25290178c3a8ea712f2e351308ad7b38b199fea",
+      "cand2/after_input.png": "b046960955e6a8a6c099f2691fd804ed8ba422140ec599dfdaa481082b1d6337",
+      "cand2/external_https.png": "db6e3ba94fb5295273328f530605f0ae46d9811feadafdcda4f1f8be5c9ba0bf",
+      "base2/first_home.png": "411efeae213d8d47323670bf6d1f032f20da5c6de89c50cd67d362920c597eeb",
+      "base2/after_input.png": "50b140563d5c566bb9e3c1b5f56b69446ec8d2206b8dba860d26ac9d687e94e5",
+      "base2/external_https.png": "6c980e69fa7e59329cff40a1dd3c04e66f5bc265164a7f0259c24146a5fd3faf"
+    }
+  },
+  "requested_sites": {
+    "run_id": 42422912399,
+    "artifact_id": 13594174544,
+    "screenshots_sha256": {
+      "qemu/site_cnn.png": "956171b457da27110203bf05b83ffafb278561de75f11ea64aa09f41c1ecd8de",
+      "qemu/site_john.png": "342d3393c00a39156fd961f958b041ce19171fda59d417d56a42968662614a98",
+      "qemu/site_youtube4k.png": "f25fededcf0c130196baa59f6dfcade1ecaf4488dcf1c1acee1651ce545a881d",
+      "qemu/site_pexels4k.png": "02654981d2ea3f76c9d09af9cd4d3a063dd033c4b0f8d3beef2b1b31fdf26884"
+    },
+    "observations": {
+      "cnn": "Homepage rendered with a consent prompt; DRM content reported unsupported/disabled.",
+      "john": "The Bible project home page rendered; verse and 3D interaction were not tested.",
+      "youtube4k": "The watch page rendered but requested a bot-verification sign-in; playback was not verified.",
+      "pexels4k": "A security-verification screen appeared; playback was not verified."
+    }
+  }
+}
