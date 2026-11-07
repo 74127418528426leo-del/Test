@@ -1,0 +1,86 @@
+name: Reject an invalid RAM copy without unplugging media
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-bad-copy-test.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install virtualization and media tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{reports,qemu} fixture
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-release-candidate-test-only-iso
+          run-id: 42422358970
+          github-token: ${{ github.token }}
+          path: input
+      - name: Change only the expected root checksum in a test-only image
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/staged.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/staged.iso -extract /sha256sum.txt out/original-checksums.txt >out/reports/extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/original-checksums.txt'); lines=p.read_text().splitlines(); hits=0
+          for i,line in enumerate(lines):
+              if line.endswith('  ./live/filesystem.squashfs'):
+                  assert len(line.split()[0])==64
+                  lines[i]=('0' if line[0]!='0' else '1')+line[1:];hits+=1
+          assert hits==1
+          Path('out/bad-checksums.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev input/staged.iso -outdev out/bad-copy.iso -map out/bad-checksums.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          echo 'This deliberately corrupted-manifest ISO is only for this failure test.'
+      - name: Start correctly labeled media-retained test page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cp web103/fixture_server.py fixture/server.py
+          sed -i 's/AFTER EJECT/MEDIA RETAINED/' fixture/server.py
+          nohup python3 -u fixture/server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Verify failure warning and browsing while USB remains attached
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web108/boot_bench_demand.py --iso out/bad-copy.iso --out out/qemu --mode online --allow-no-startup-probe --keep-media --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          tr -d '\r' <out/qemu/serial.log >out/reports/serial-clean.log
+          grep -Fx 'P50_STAGE_FAILED: copied hash differs from ISO manifest' out/reports/serial-clean.log
+          grep -Fx 'P50_STAGE_NOT_READY' out/reports/serial-clean.log
+          if grep -Fx 'P50_STAGE_READY' out/reports/serial-clean.log; then echo 'Unexpected ready signal' >&2; exit 1; fi
+          grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+          r=json.loads(Path('out/qemu/result.json').read_text())
+          assert r['keep_media_experiment'] and not r['media_ejected'] and r['input_sent'] and not r['errors']
+          im=Image.open('out/qemu/after_input.png').convert('RGB')
+          assert im.getpixel((830,740))==(255,138,128),im.getpixel((830,740))
+          print('The invalid checksum was rejected; the red warning was visible and the virtual USB remained connected.')
+          PY
+      - name: Keep failure-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-invalid-copy-evidence
+          path: |
+            out/reports/
+            out/qemu/
+          if-no-files-found: warn
+          retention-days: 30
