@@ -1,0 +1,149 @@
+name: Publish Puppy50 v109 checked Fast Start prerelease
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-publish.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v109-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned builds and test outcomes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42422358970 42422636222 42422727615 42422773595 42423246837 42420667688 42420960796 42421784558 42401546643 42422912399; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42422727615/jobs?per_page=100" --jq '.jobs[] | [.name,.conclusion] | @tsv' >jobs.txt
+          for trial in bios-usb-2048 uefi-usb-offline-3072 uefi-optical-online-3072 bios-fullram-fallback connectivity-restored; do
+            grep -Fx "$(printf 'test (%s)\tsuccess' "$trial")" jobs.txt
+          done
+          grep -Fx "$(printf 'test (bios-usb-1536)\tfailure')" jobs.txt
+          test "$(wc -l <jobs.txt)" -eq 6
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-release-candidate-test-only-iso
+          run-id: 42422358970
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-candidate-build-and-smoke-evidence
+          run-id: 42422358970
+          github-token: ${{ github.token }}
+          path: evidence/smoke
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v109-validation-*
+          run-id: 42422727615
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-invalid-copy-evidence
+          run-id: 42422636222
+          github-token: ${{ github.token }}
+          path: evidence/invalid-copy
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-vs-v108-comparison
+          run-id: 42422773595
+          github-token: ${{ github.token }}
+          path: evidence/comparison
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-initramfs-audit
+          run-id: 42423246837
+          github-token: ${{ github.token }}
+          path: evidence/initrd-audit
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-requested-websites-evidence
+          run-id: 42422912399
+          github-token: ${{ github.token }}
+          path: evidence/sites
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-status-ui-proof
+          run-id: 42420667688
+          github-token: ${{ github.token }}
+          path: evidence/status-ui-proof
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-tools-mount-proof
+          run-id: 42420960796
+          github-token: ${{ github.token }}
+          path: evidence/tools-mount-proof
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-ram-store-proof
+          run-id: 42421784558
+          github-token: ${{ github.token }}
+          path: evidence/ram-store-proof
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-static-switch-proof
+          run-id: 42401546643
+          github-token: ${{ github.token }}
+          path: evidence/static-switch-proof
+      - name: Verify exact image and reviewed test evidence
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' iso/staged.iso | sha256sum -c -
+          test "$(stat -c %s iso/staged.iso)" = '845479936'
+          python3 web109/verify_v109_release.py
+      - name: Prepare ISO, notes, source and evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/staged.iso dist/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso
+          cp web109/V109_RELEASE_NOTES.md dist/README_V109_EXPERIMENTAL.md
+          cp web109/V109_MANUAL_REVIEW.json dist/
+          (cd dist && sha256sum Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso >SHA256SUMS)
+          git rev-parse HEAD > evidence/release-packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v109_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web109')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_socket(): z.write(p,p.as_posix())
+              for p in sorted(Path('.github/workflows').glob('puppy50-v109-*.yml')):
+                  z.write(p,p.as_posix())
+          PY
+      - name: Publish separate prerelease at the image-build commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v109-faststart-ram-experimental'
+          build_sha='b0ec8274f84b58a78209a92f81400b272583a193'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V109_EXPERIMENTAL.md dist/V109_MANUAL_REVIEW.json dist/Puppy50_v109_Test_Evidence.zip --verify-tag --title 'Puppy50 v109 - Fast Start and RAM (EXPERIMENTAL)' --notes-file web109/V109_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          url='https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v109-faststart-ram-experimental/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso'
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v109-release-verification.iso "$url"
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' '/tmp/puppy50-v109-release-verification.iso' | sha256sum -c -
