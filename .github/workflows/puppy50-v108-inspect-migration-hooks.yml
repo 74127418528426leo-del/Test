@@ -1,0 +1,57 @@
+name: Inspect live boot migration integration points
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-inspect-migration-hooks.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Install read-only inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools initramfs-tools-core zstd
+          mkdir -p input out/{unpacked,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input
+      - name: Inspect exact live boot and device-mapper components
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/combined.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/combined.iso -extract /live/initrd.img out/initrd -extract /live/filesystem.squashfs out/root.squashfs >out/reports/extract.log 2>&1
+          sudo unmkinitramfs out/initrd out/unpacked >out/reports/unpack.log 2>&1
+          helpers=$(find out/unpacked -path '*/usr/lib/live/boot/9990-misc-helpers.sh' -type f -print -quit)
+          test -n "$helpers"
+          cp "$helpers" out/reports/live-helpers.sh
+          lsinitramfs out/initrd >out/reports/initrd-files.txt
+          unsquashfs -ll out/root.squashfs >out/reports/root-files.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('out/reports/live-helpers.sh').read_text()
+          for pattern in ['get_backing_device','setup_loop','setup_unionfs']:
+              m=re.search(r'(?m)^'+pattern+r'\s*\(\)',s)
+              print(pattern, 'present:',bool(m))
+          lines=Path('out/reports/root-files.txt').read_text().splitlines()
+          hits=[l for l in lines if re.search(r'/(dmsetup|libdevmapper[^/]*|libudev[^/]*)$',l)]
+          Path('out/reports/device-mapper-components.txt').write_text('\n'.join(hits)+'\n')
+          print('\n'.join(hits))
+          PY
+      - name: Preserve inspection report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-migration-hook-inspection
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
