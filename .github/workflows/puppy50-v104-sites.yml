@@ -1,0 +1,73 @@
+name: Puppy50 v104 - Real CNN YouTube and Bible website trials
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v104-sites.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sites:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { site: cnn, ram: 3072 }
+          - { site: john, ram: 3072 }
+          - { site: bible3d, ram: 4096 }
+          - { site: youtube4k, ram: 4096 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate test targets
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web103 -p 'test_*.py' -v
+          mkdir -p input evidence/{qemu,reports}
+      - name: Install KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download exact v104 ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Intel_Media_TEST_ONLY_ISO
+          run-id: 42325281517
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify pinned ISO
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'input/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso' | sha256sum -c -
+      - name: Start optional HTTPS fallback
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close()'
+      - name: Exercise actual Firefox navigation
+        timeout-minutes: 11
+        env:
+          SITE: ${{ matrix.site }}
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          python3 -u web103/site_test.py --site "$SITE" --ram "$RAM" --iso input/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso --out evidence/qemu >evidence/reports/guest-test.log 2>&1
+          result=$?
+          printf 'qemu_test_exit=%s\n' "$result" >evidence/reports/exit-code.txt
+          exit "$result"
+      - name: Preserve real frames and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_${{ matrix.site }}_${{ matrix.ram }}MiB_site_proof
+          path: evidence/
+          retention-days: 20
+          if-no-files-found: warn
