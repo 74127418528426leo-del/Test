@@ -26,12 +26,13 @@ class AsyncNetworkTests(unittest.TestCase):
         self.cmdline = self.root / 'cmdline'
         self.marker = self.root / 'network-mode'
         self.failflag = self.root / 'service-failed'
+        self.activeflag = self.root / 'service-active'
         fakebin = self.root / 'bin'
         fakebin.mkdir()
         fake = fakebin / 'systemctl'
-        fake.write_text('#!/bin/sh\n[ -e "$P50_FAKE_FAILURE" ]\n')
+        fake.write_text('#!/bin/sh\ncase "$1" in\n  is-failed) [ -e "$P50_FAKE_FAILURE" ] ;;\n  show) if [ -e "$P50_FAKE_ACTIVE" ]; then echo active; else echo activating; fi ;;\nesac\n')
         fake.chmod(0o755)
-        self.env = dict(os.environ, PATH=str(fakebin)+':/usr/bin:/bin', P50_FAKE_FAILURE=str(self.failflag))
+        self.env = dict(os.environ, PATH=str(fakebin)+':/usr/bin:/bin', P50_FAKE_FAILURE=str(self.failflag), P50_FAKE_ACTIVE=str(self.activeflag))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -71,6 +72,14 @@ class AsyncNetworkTests(unittest.TestCase):
         patch(self.root)
         self.cmdline.write_text('boot=live toram puppy50.test_bridge=1')
         self.failflag.touch()
+        waiter = self.root / 'usr/local/libexec/puppy50-wait-test-bridge'
+        self.assertEqual(subprocess.run([waiter, self.cmdline, self.marker], env=self.env, timeout=2).returncode, 0)
+        self.assertFalse(self.marker.exists())
+
+    def test_opt_in_stops_waiting_if_probe_completed_without_marker(self):
+        patch(self.root)
+        self.cmdline.write_text('boot=live toram puppy50.test_bridge=1')
+        self.activeflag.touch()
         waiter = self.root / 'usr/local/libexec/puppy50-wait-test-bridge'
         self.assertEqual(subprocess.run([waiter, self.cmdline, self.marker], env=self.env, timeout=2).returncode, 0)
         self.assertFalse(self.marker.exists())
