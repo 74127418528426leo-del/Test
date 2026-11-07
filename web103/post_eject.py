@@ -109,10 +109,12 @@ def run():
     result['guest_ca_verified_https_probe'] = (
         'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_DIRECT=PASS' in logs
         or 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' in logs)
+    result['guest_nonroot_firefox_started'] = 'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN' in logs
     result['guest_progress_evidence'] = captured_guest_progress(result)
     (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2), flush=True)
-    if not result['guest_progress_evidence'] or not result['guest_ca_verified_https_probe']:
+    if (not result['guest_progress_evidence'] or not result['guest_ca_verified_https_probe']
+            or not result['guest_nonroot_firefox_started']):
         raise SystemExit('Post-ejection guest heartbeat/input evidence not established')
     print('Guest heartbeat continued; screenshot requires visual review of the new URL.')
 
