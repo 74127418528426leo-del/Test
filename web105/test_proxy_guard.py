@@ -38,6 +38,7 @@ class ProxyGuardTests(unittest.TestCase):
         new = self.probe.read_text()
         self.assertIn('/usr/local/sbin/puppy50-qemu-bridge-allowed &&', new)
         self.assertIn('curl --proxy http://10.0.2.2:3128 https://example.com/', new)
+        self.assertEqual(new.replace('/usr/local/sbin/puppy50-qemu-bridge-allowed && \\\n     ', '', 1), ORIGINAL)
         self.assertEqual(self.probe.stat().st_mode & 0o777, 0o755)
 
     def test_detector_allows_only_qemu_and_kvm(self):
