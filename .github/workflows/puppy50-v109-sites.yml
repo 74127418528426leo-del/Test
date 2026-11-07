@@ -1,0 +1,66 @@
+name: Exercise requested websites after staged RAM boot
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-sites.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 19
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install guest tools and validate site-test guards
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s web109 -p 'test_site_smokes.py' -v
+          mkdir -p input out/{reports,qemu} fixture
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-release-candidate-test-only-iso
+          run-id: 42422358970
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify image and start local page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/staged.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Visit CNN, Bible project, YouTube and Pexels after unplug
+        timeout-minutes: 15
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web109/boot_bench_sites.py --iso input/staged.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --site-smokes --ram 4096 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('out/qemu');r=json.loads((p/'result.json').read_text())
+          assert r['media_ejected'] and r['input_sent_after_eject'] and r['staged_ram_ready_seconds']
+          assert [s['name'] for s in r['site_smokes']]==['cnn','john','youtube4k','pexels4k']
+          assert all((p/s['screenshot']).is_file() for s in r['site_smokes'])
+          print('Sites were visited and screens captured. Screens require visual review; 4K playback is not asserted.')
+          PY
+      - name: Preserve website screens and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-requested-websites-evidence
+          path: |
+            out/reports/
+            out/qemu/
+          if-no-files-found: warn
+          retention-days: 30
