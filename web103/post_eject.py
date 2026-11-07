@@ -3,6 +3,8 @@
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 import time
@@ -12,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from web85.qemu_debian_live_smoke import qmp, ppm_valid
 from site_test import send_key, type_text
 
-TARGET = 'https://example.com/?aftereject=1'
+EXTERNAL_TARGET = 'https://example.com/?aftereject=1'
 HEARTBEAT = 'P50_V99_RAM_SAMPLE '
 
 
@@ -20,8 +22,9 @@ def captured_guest_progress(result):
     before = result.get('heartbeat_at_eject', 0)
     after = result.get('heartbeat_at_end', 0)
     return bool(result.get('boot_cd_ejected') and result.get('qemu_running_at_end')
-                and result.get('post_eject_input_sent') and before > 0
-                and after > before and 'frame_360.ppm' in result.get('screenshots', []))
+                and result.get('local_input_sent') and result.get('external_input_sent')
+                and before > 0 and after > before
+                and {'frame_300.ppm', 'frame_360.ppm'}.issubset(result.get('screenshots', [])))
 
 
 def heartbeat_count(path):
@@ -36,6 +39,10 @@ def run():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--ram', type=int, required=True)
     args = parser.parse_args()
+    nonce = os.environ.get('P50_NONCE', '')
+    if not re.fullmatch(r'[A-Z0-9-]{5,50}', nonce):
+        raise ValueError('A unique uppercase P50_NONCE is required')
+    local_target = 'http://10.0.2.2:8765/after.html?nonce=' + nonce
     iso = args.iso.resolve(strict=True)
     if iso.stat().st_size < 700_000_000:
         raise ValueError('Incomplete Firefox Live ISO')
@@ -49,9 +56,10 @@ def run():
                '-qmp', f'unix:{monitor},server=on,wait=off',
                '-serial', f'file:{serial}', '-nic', 'user,model=e1000,ipv6=off',
                '-no-reboot']
-    result = {'guest_ram_mib': args.ram, 'target_url_after_eject': TARGET,
+    result = {'guest_ram_mib': args.ram, 'local_target_after_eject': local_target,
+              'external_target_after_eject': EXTERNAL_TARGET, 'nonce': nonce,
               'boot_cd_ejected': False, 'qemu_running_at_end': False,
-              'post_eject_input_sent': False, 'heartbeat_at_eject': 0,
+              'local_input_sent': False, 'external_input_sent': False, 'heartbeat_at_eject': 0,
               'heartbeat_at_end': 0, 'guest_heartbeat_continued': False,
               'post_eject_webpage_visually_verified': False,
               'screenshots': [], 'errors': []}
@@ -59,7 +67,7 @@ def run():
         vm = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
         start = time.monotonic()
         try:
-            for mark in (18, 145, 245, 260, 270, 320, 360):
+            for mark in (18, 145, 220, 230, 240, 300, 310, 360):
                 while time.monotonic() - start < mark and vm.poll() is None:
                     time.sleep(.5)
                 if vm.poll() is not None:
@@ -72,19 +80,19 @@ def run():
                     time.sleep(1.4)
                     type_text(monitor, 'https://example.com/', .3)
                     send_key(monitor, ['ret'], 110)
-                elif mark == 260:
+                elif mark == 230:
                     qmp(monitor, 'human-monitor-command', {'command-line': 'eject -f livecd'})
                     block = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info block livecd'})).lower()
                     result['boot_cd_ejected'] = 'not inserted' in block or 'no media' in block
                     result['heartbeat_at_eject'] = heartbeat_count(serial)
-                elif mark == 270:
+                elif mark in (240, 310):
                     if result['boot_cd_ejected']:
                         send_key(monitor, ['ctrl', 'l'], 145)
                         time.sleep(1.4)
-                        type_text(monitor, TARGET, .3)
+                        type_text(monitor, local_target if mark == 240 else EXTERNAL_TARGET, .3)
                         send_key(monitor, ['ret'], 110)
-                        result['post_eject_input_sent'] = True
-                elif mark in (245, 320, 360):
+                        result['local_input_sent' if mark == 240 else 'external_input_sent'] = True
+                elif mark in (220, 300, 360):
                     image = out / f'frame_{mark:03d}.ppm'
                     qmp(monitor, 'screendump', {'filename': str(image)})
                     if not image.is_file() or not ppm_valid(image):
