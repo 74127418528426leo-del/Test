@@ -1,0 +1,162 @@
+name: Puppy50 v107 exact compressed image validation
+on:
+  push:
+    branches: [puppy50-v107-startup-research]
+    paths: [.github/workflows/puppy50-v107-validation.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare-extracted-roots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync
+          mkdir -p input evidence/{base,candidate,base-boot,candidate-boot,base-isolinux,candidate-isolinux}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v107-checked-media-test-only-iso
+          run-id: 42372921677
+          github-token: ${{ github.token }}
+          path: input
+      - name: Compare file trees, hardlinks and boot configuration
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o input/base.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v106-autoboot-guarded/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' input/base.iso | sha256sum -c -
+          (cd input && sha256sum -c SHA256SUMS)
+          xorriso -osirrox on -indev input/base.iso -extract /live/filesystem.squashfs input/base.squashfs -extract /boot evidence/base-boot -extract /isolinux evidence/base-isolinux >evidence/base-extract.log 2>&1
+          xorriso -osirrox on -indev input/fixed.iso -extract /live/filesystem.squashfs input/candidate.squashfs -extract /boot evidence/candidate-boot -extract /isolinux evidence/candidate-isolinux >evidence/candidate-extract.log 2>&1
+          unsquashfs -s input/base.squashfs >evidence/base-squashfs.txt
+          unsquashfs -s input/candidate.squashfs >evidence/candidate-squashfs.txt
+          sudo unsquashfs -d evidence/base/root input/base.squashfs >evidence/base-unsquash.log
+          sudo unsquashfs -d evidence/candidate/root input/candidate.squashfs >evidence/candidate-unsquash.log
+          sudo rsync -aHAXnci --delete --numeric-ids evidence/base/root/ evidence/candidate/root/ >evidence/rsync-forward.txt
+          sudo rsync -aHAXnci --delete --numeric-ids evidence/candidate/root/ evidence/base/root/ >evidence/rsync-reverse.txt
+          test ! -s evidence/rsync-forward.txt
+          test ! -s evidence/rsync-reverse.txt
+          sudo python3 - <<'PY'
+          import os,stat,json
+          from pathlib import Path
+          def groups(root):
+              found={}
+              for here,dirs,files in os.walk(root,followlinks=False):
+                  for name in files:
+                      path=Path(here)/name
+                      st=path.lstat()
+                      if stat.S_ISREG(st.st_mode):
+                          found.setdefault((st.st_dev,st.st_ino),[]).append(str(path.relative_to(root)))
+              return sorted(sorted(paths) for paths in found.values() if len(paths)>1)
+          a,b=groups(Path('evidence/base/root')),groups(Path('evidence/candidate/root'))
+          Path('evidence/hardlinks.json').write_text(json.dumps({'baseline':a,'candidate':b},indent=2)+'\n')
+          assert a==b, 'Hardlink groups differ'
+          def configs(prefix):
+              result={}
+              for tree in ['boot','isolinux']:
+                  root=Path('evidence')/(prefix+'-'+tree)
+                  for p in root.rglob('*.cfg'):
+                      result[tree+'/'+str(p.relative_to(root))]=p.read_bytes()
+              return result
+          x,y=configs('base'),configs('candidate')
+          assert x and x==y, 'Boot configuration content or names differ'
+          assert any(b'toram' in data for data in y.values())
+          assert not any(b'puppy50.test_bridge=1' in data for data in y.values())
+          Path('evidence/boot-configs.txt').write_text('\n'.join(sorted(y))+'\n')
+          print('Extracted tree checks, hardlink groups and boot configs match.')
+          PY
+      - name: Preserve tree and boot configuration audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-equivalence-audit
+          path: |
+            evidence/*.txt
+            evidence/*.json
+            evidence/*.log
+          retention-days: 30
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    continue-on-error: ${{ matrix.trial == 'bios-usb-2048' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-usb-2048, bios-usb-2560, uefi-usb-2560, uefi-optical-2560, westmere-bios-3072]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and test utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil ovmf
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/reports fixture
+          lscpu >evidence/reports/host-cpu.txt
+          free -h >evidence/reports/host-memory.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v107-checked-media-test-only-iso
+          run-id: 42372921677
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact image and prepare old-CPU comparison
+        env:
+          TRIAL: ${{ matrix.trial }}
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          if [ "$TRIAL" = westmere-bios-3072 ]; then
+            curl --fail --location --retry 3 -o input/base.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v106-autoboot-guarded/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso'
+            printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' input/base.iso | sha256sum -c -
+          fi
+      - name: Start local test page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot default image and exercise Firefox after media removal
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          case "$TRIAL" in
+            bios-usb-2048) python3 -u web107/boot_bench.py --iso input/fixed.iso --out evidence/qemu --mode online --ram 2048 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280 ;;
+            bios-usb-2560) python3 -u web107/boot_bench.py --iso input/fixed.iso --out evidence/qemu --mode online --ram 2560 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280 ;;
+            uefi-usb-2560) python3 -u web107/boot_bench.py --iso input/fixed.iso --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi --media usb ;;
+            uefi-optical-2560) python3 -u web107/boot_bench.py --iso input/fixed.iso --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi --media optical ;;
+            westmere-bios-3072)
+              baseline() { python3 -u web107/boot_bench.py --iso input/base.iso --out "evidence/$1" --mode online --ram 3072 --seconds 210 --cpu-model Westmere --emulate-acer-id --media usb --bandwidth 31457280; }
+              candidate() { python3 -u web107/boot_bench.py --iso input/fixed.iso --out "evidence/$1" --mode online --ram 3072 --seconds 210 --cpu-model Westmere --emulate-acer-id --media usb --bandwidth 31457280; }
+              baseline base1
+              candidate cand1
+              candidate cand2
+              baseline base2
+              if grep -Ei 'warning.*(unsupported|not support|requested feature)' evidence/{base1,cand1,cand2,base2}/qemu.log; then echo 'CPU feature emulation warning' >&2; exit 1; fi
+              python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          x={n:json.loads((Path('evidence')/n/'result.json').read_text())['first_home_seen_seconds'] for n in ['base1','cand1','cand2','base2']}
+          x.update(baseline_mean_seconds=statistics.mean([x['base1'],x['base2']]),candidate_mean_seconds=statistics.mean([x['cand1'],x['cand2']]),physical_acer_tested=False)
+          Path('evidence/reports/comparison.json').write_text(json.dumps(x,indent=2)+'\n')
+          print(json.dumps(x,indent=2))
+          PY
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Preserve screenshots, serial logs and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-boot-${{ matrix.trial }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
