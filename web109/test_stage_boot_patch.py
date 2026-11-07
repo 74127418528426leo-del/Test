@@ -33,6 +33,11 @@ class BootPatchTests(unittest.TestCase):
         self.assertIn('size=32M,mode=0755,nosuid,nodev,exec',result)
         self.assertIn('remount,ro,nosuid,nodev,exec',result)
         self.assertIn('mount -t tmpfs',result)
+    def test_exposes_usb_warning_for_each_new_desktop_session(self):
+        result=patch_main('abc\n\tFstab\n\tNetbase\n')
+        self.assertIn('/etc/skel/.config/openbox/autostart',result)
+        self.assertIn('/run/p50-stage/tools/p50-status',result)
+        self.assertIn('p50-stage-failure.service',result)
     def test_rejects_missing_or_duplicate_service_location(self):
         with self.assertRaises(ValueError): patch_main('Fstab\n')
         with self.assertRaises(ValueError): patch_main('\n\tFstab\n\tNetbase\n\tFstab\n\tNetbase\n')
