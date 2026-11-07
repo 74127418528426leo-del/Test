@@ -24,7 +24,9 @@ jobs:
           sudo grep -R -nE 'puppy50-network-probe|network-online.target|NetworkManager-wait-online' out/root/etc/systemd/system out/root/usr/lib/systemd/system/lightdm.service out/root/usr/lib/systemd/system/NetworkManager-wait-online.service >out/reports/startup-references.txt || true
           sudo find out/root/etc/systemd/system -path '*lightdm*' -o -path '*display-manager*' >out/reports/display-paths.txt
           sudo bash -c 'for f in out/root/etc/systemd/system/puppy50-network-probe.service out/root/usr/lib/systemd/system/puppy50-network-probe.service out/root/usr/lib/systemd/system/lightdm.service out/root/etc/systemd/system/lightdm.service.d/*.conf out/root/etc/systemd/system/display-manager.service.d/*.conf; do if [ -f "$f" ]; then printf "\nFILE %s\n" "$f"; cat "$f"; fi; done' >out/reports/unit-content.txt
-          cat out/reports/systemd-paths.txt out/reports/display-paths.txt out/reports/unit-content.txt out/reports/startup-references.txt
+          sudo grep -R -n --binary-files=without-match -E 'network-mode|puppy50-network-probe|puppy50web/network' out/root/usr/local out/root/usr/share/puppy50web out/root/etc 2>/dev/null >out/reports/app-references.txt || true
+          if [ -e out/root/usr/lib/firefox-esr/distribution/policies.json ]; then echo 'present' >out/reports/firefox-policy-state.txt; else echo 'absent' >out/reports/firefox-policy-state.txt; fi
+          cat out/reports/systemd-paths.txt out/reports/display-paths.txt out/reports/unit-content.txt out/reports/startup-references.txt out/reports/app-references.txt out/reports/firefox-policy-state.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
