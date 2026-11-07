@@ -65,9 +65,13 @@ def main():
                    help='For baseline only: press Enter at this elapsed time')
     p.add_argument('--firmware', choices=['bios', 'uefi'], default='bios')
     p.add_argument('--media', choices=['optical', 'usb'], default='optical')
+    p.add_argument('--expect-no-https', action='store_true',
+                   help='Only for controlled tests where outbound HTTPS is intentionally blocked')
     p.add_argument('--emulate-acer-id', action='store_true',
                    help='Use Acer as virtual SMBIOS vendor to exercise the physical startup path')
     args = p.parse_args()
+    if args.expect_no_https and args.mode != 'online':
+        raise ValueError('This controlled condition requires a virtual NIC')
     iso = args.iso.resolve(strict=True)
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -101,6 +105,7 @@ def main():
     result = {'guest_ram_mib': args.ram, 'network_mode': args.mode,
               'virtual_read_cap_bytes_per_second': args.bandwidth or None,
               'virtual_firmware': args.firmware, 'virtual_media': args.media,
+              'outbound_https_intentionally_blocked': args.expect_no_https,
               'acer_vendor_id_only_emulated': args.emulate_acer_id,
               'measurement': 'host monotonic clock from immediately before QEMU process launch',
               'boot_menu_key_sent': False, 'first_home_seen_seconds': None,
@@ -166,7 +171,7 @@ def main():
                 time.sleep(18)
                 capture(monitor, out, 'after_input.png')
                 result['screenshots'].append('after_input.png')
-                if args.mode == 'online':
+                if args.mode == 'online' and not args.expect_no_https:
                     navigate(monitor, 'https://example.com/')
                     time.sleep(25)
                     capture(monitor, out, 'external_https.png')
@@ -191,9 +196,10 @@ def main():
     if not (result['first_home_seen_seconds'] is not None and result['media_ejected']
             and result['input_sent_after_eject'] and result['qemu_running_at_end']):
         raise SystemExit('Benchmark did not reach and interact with browser after media ejection')
-    if args.mode == 'online' and not result['guest_ca_https_probe']:
+    if args.mode == 'online' and not args.expect_no_https and not result['guest_ca_https_probe']:
         raise SystemExit('Guest CA-verified HTTPS probe was not observed')
 
 
 if __name__ == '__main__':
     main()
+
