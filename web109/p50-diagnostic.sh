@@ -6,6 +6,7 @@ sleep 30
  echo P50_DIAG_STAGE_DIR; ls -la /run/p50-stage /run/p50-stage/tools 2>&1 || true
  echo P50_DIAG_MAPPER_NODE; ls -l /dev/mapper /sys/block/dm-*/dm/name 2>&1 || true
  echo P50_DIAG_SERVICE_FILES; ls -l /etc/systemd/system/p50-staged-migration.service /etc/systemd/system/graphical.target.wants/ 2>&1 || true
+ echo P50_DIAG_MIGRATION_LOG; cat /run/p50-stage/migration.log 2>&1 || true
  echo P50_DIAG_SERVICE_STATUS; systemctl status p50-staged-migration.service --no-pager -l 2>&1 || true
  echo P50_DIAG_SERVICE_ENABLED; systemctl is-enabled p50-staged-migration.service 2>&1 || true
  echo P50_DIAG_SERVICE_JOURNAL; journalctl -b --no-pager -u p50-staged-migration.service -n 100 2>&1 || true
