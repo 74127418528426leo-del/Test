@@ -1,0 +1,91 @@
+name: Puppy50 v107 initramfs segment investigation
+on:
+  push:
+    branches: [puppy50-v107-startup-research]
+    paths: [.github/workflows/puppy50-v107-initrd-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso initramfs-tools-core cpio zstd xz-utils
+          mkdir -p input out/{live,initrd,reports}
+      - name: Fetch exact image and extract initramfs
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o input/v106.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v106-autoboot-guarded/Puppy50_v106_AutoBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' 'input/v106.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/v106.iso -extract /live/initrd.img-6.12.115+deb13.1-amd64 out/live/initrd.img >out/reports/extract.log 2>&1
+          sudo unmkinitramfs out/live/initrd.img out/initrd >out/reports/unpack.log 2>&1
+          sudo du -xb --max-depth=8 out/initrd >out/reports/initrd-du.txt
+          for d in out/initrd/early out/initrd/early2 out/initrd/early3 out/initrd/main; do
+            [ -d "$d" ] || continue
+            echo "DIRECTORY $d"
+            sudo find "$d" -type f -printf '%s %p\n' | sort -nr | head -40 || true
+            sudo find "$d" -type f | wc -l
+          done >out/reports/largest-files.txt
+      - name: Inspect uncompressed cpio boundaries and duplicates
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >out/reports/segments.json
+          import hashlib,json,mmap
+          from pathlib import Path
+          p=Path('out/live/initrd.img')
+          with p.open('rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as data:
+              pos=0; segments=[]
+              while pos<len(data):
+                  while pos<len(data) and data[pos]==0: pos+=1
+                  if data[pos:pos+6] not in (b'070701',b'070702'):
+                      tail={'offset':pos,'remaining_bytes':len(data)-pos,'magic_hex':data[pos:pos+16].hex()}
+                      break
+                  start=pos; names=[]; total=0
+                  while True:
+                      header=data[pos:pos+110]
+                      assert header[:6] in (b'070701',b'070702'),('bad cpio entry',pos,header[:6])
+                      fields=[int(header[6+i*8:14+i*8],16) for i in range(13)]
+                      size,namesize=fields[6],fields[11]
+                      name=bytes(data[pos+110:pos+110+namesize-1]).decode('utf-8','replace')
+                      body=(pos+110+namesize+3)&~3
+                      pos=(body+size+3)&~3
+                      if name=='TRAILER!!!': break
+                      names.append(name);total+=size
+                  segments.append({'start':start,'end':pos,'archive_bytes':pos-start,'entry_count':len(names),'payload_bytes':total,'examples':names[:20],'sha256':hashlib.sha256(data[start:pos]).hexdigest()})
+              else: tail=None
+          print(json.dumps({'segments':segments,'compressed_tail':tail,'total_bytes':p.stat().st_size},indent=2))
+          PY
+          python3 - <<'PY' >out/reports/early3-duplicates.json
+          import hashlib,json,os
+          from pathlib import Path
+          early=Path('out/initrd/early3');main=Path('out/initrd/main')
+          results={'same':{'count':0,'bytes':0},'different':{'count':0,'bytes':0},'absent':{'count':0,'bytes':0}}
+          examples={k:[] for k in results}
+          if early.is_dir():
+              for path in early.rglob('*'):
+                  if not path.is_file() or path.is_symlink():continue
+                  other=main/path.relative_to(early);kind='absent'
+                  if other.is_file() and not other.is_symlink():
+                      def h(p):
+                          x=hashlib.sha256()
+                          with p.open('rb') as f:
+                              for block in iter(lambda:f.read(1024*1024),b''):x.update(block)
+                          return x.digest()
+                      kind='same' if path.stat().st_size==other.stat().st_size and h(path)==h(other) else 'different'
+                  results[kind]['count']+=1;results[kind]['bytes']+=path.stat().st_size
+                  if len(examples[kind])<15:examples[kind].append(str(path.relative_to(early)))
+          print(json.dumps({'summary':results,'examples':examples},indent=2))
+          PY
+          cat out/reports/segments.json out/reports/early3-duplicates.json out/reports/largest-files.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Puppy50-v107-initrd-segment-audit
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
