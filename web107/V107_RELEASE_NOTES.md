@@ -15,7 +15,7 @@ This is a bootable, browser-focused Debian Live experiment derived from the prev
 
 An exact-image comparison used an AMD EPYC 7763 KVM host with a Westmere virtual CPU model, two virtual CPUs, 3,072 MiB of guest memory, and a virtual USB storage read cap of 30 MiB/s. It booted v106 and the final v107 ISO twice each, in baseline–candidate–candidate–baseline order. Time from just before virtual-machine launch to the local Firefox home page averaged **60.15 seconds** for v106 and **49.335 seconds** for v107, about **18% faster** in that comparison. Each result came from only two boots; screenshots were sampled approximately every 0.8 seconds. This virtual CPU model restricts exposed features but does not reproduce the real Acer's speed or devices, and includes some instructions absent on an i3-540.
 
-A separate exact-image test requested a virtual CPU with AES, PCLMULQDQ, x2APIC and 3DNow prefetch disabled, used 2,048 MiB of RAM, and reached the browser and example.com after virtual USB removal. A diagnostic derivative confirmed the first three features absent, but the guest still reported `3dnowprefetch` despite the requested mask. This is a more conservative feature test, not an exact i3-540 or a test of the physical Acer.
+A separate exact-image test requested a virtual CPU with AES, PCLMULQDQ, x2APIC and 3DNow prefetch disabled, used 2,048 MiB of RAM, and reached the browser and example.com after virtual USB removal. A diagnostic derivative confirmed the first three features absent; in one diagnostic run, the guest still reported `3dnowprefetch` despite the requested mask. This is a more conservative feature test, not an exact i3-540 or a test of the physical Acer.
 
 The exact final ISO was then tested in QEMU/KVM under these separate configurations:
 
@@ -27,6 +27,8 @@ The exact final ISO was then tested in QEMU/KVM under these separate configurati
 | UEFI, optical | 2,560 MiB | Offline | Firefox home and `about:about` after optical eject |
 
 Screenshots and guest logs are included in the test evidence. The 2,048 MiB result is a limited VM test, not a universal minimum for modern websites. The UEFI tests did not use Secure Boot. A separate diagnostic-only derivative recorded a tmpfs-backed live medium, a SquashFS loop file under it, and a tmpfs overlay; the diagnostics were not added to the shipped image. The ordinary failsafe boot entries do not request `toram` and were not demonstrated to be RAM-only.
+
+The inherited local homepage still contains an older notice saying no public site had yet been verified. That notice predates these tests; example.com was reached in the virtual tests listed above. Actual network and website compatibility remains hardware- and site-dependent.
 
 The read-only compressed root grew from 623,726,592 to 701,440,000 bytes, about 74.1 MiB more in RAM when copied. Comparing the extracted roots in both directions and checking hard-link groups found no differences in the compared content and metadata; the default boot configuration was unchanged. This is not a claim that every filesystem metadata class is identical.
 
