@@ -1,0 +1,62 @@
+name: Puppy50 v105 boot baseline
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-baseline.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-vm-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [online, offline]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools and enable KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 xorriso python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/qemu evidence/reports fixture
+      - name: Download the exact published image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output input/v104.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v104-intel-firefox-media/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'input/v104.iso' | sha256sum -c -
+      - name: Inspect published boot menus and optical boot records
+        if: matrix.mode == 'online'
+        run: |
+          xorriso -indev input/v104.iso -report_el_torito plain >evidence/reports/el-torito.txt 2>&1 || true
+          xorriso -indev input/v104.iso -report_system_area plain >evidence/reports/system-area.txt 2>&1 || true
+          xorriso -osirrox on -indev input/v104.iso -extract /isolinux evidence/isolinux -extract /boot/grub evidence/grub >evidence/reports/boot-menus.txt 2>&1 || true
+          du -b input/v104.iso >evidence/reports/iso-size.txt
+      - name: Start optional QEMU HTTPS bridge and marker fixture
+        if: matrix.mode == 'online'
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Measure complete VM startup and test input after eject
+        env:
+          MODE: ${{ matrix.mode }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -o pipefail
+          python3 -u web105/boot_bench.py --iso input/v104.iso --out evidence/qemu --mode "$MODE" --ram 2560 --seconds 210 | tee evidence/reports/benchmark.txt
+      - name: Keep time-stamped screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-v104-baseline-${{ matrix.mode }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
