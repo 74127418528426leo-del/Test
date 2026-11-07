@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
-          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close(); s=socket.socket(); assert s.connect_ex(("127.0.0.1",3128)) != 0, "unexpected HTTPS bridge"; s.close()'
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close(); s=socket.socket(); s.settimeout(2); assert s.connect_ex(("127.0.0.1",3128)) != 0, "unexpected HTTPS bridge"; s.close()'
       - name: Compare while external HTTPS is intentionally unreachable
         env:
           P50_NONCE: P50-${{ github.run_id }}
