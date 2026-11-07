@@ -1,0 +1,97 @@
+name: Puppy50 v107 RAM and guest CPU diagnostic derivative
+on:
+  push:
+    branches: [puppy50-v107-startup-research]
+    paths: [.github/workflows/puppy50-v107-ram-diagnostics.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and guest tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{root,reports,qemu} fixture
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v107-checked-media-test-only-iso
+          run-id: 42372921677
+          github-token: ${{ github.token }}
+          path: input
+      - name: Add a temporary guest mount and CPU reporter
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'cbdf605f87d345ca60d1a0a3cebb20312864c81c2a286c8eacb5acb85769c0c2' input/fixed.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/fixed.iso -extract /live/filesystem.squashfs input/root.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/root input/root.squashfs >out/reports/unsquash.log
+          cat >out/p50-ram-audit <<'EOF'
+          #!/bin/sh
+          sleep 30
+          {
+            echo P50_V107_RAM_DIAGNOSTICS_BEGIN
+            echo P50_CMDLINE
+            cat /proc/cmdline
+            echo P50_CPU_FLAGS
+            grep -m 1 '^flags' /proc/cpuinfo
+            echo P50_LIVE_MOUNTS
+            findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS | grep -E '(^/ |/run/live|/lib/live)' || true
+            echo P50_LOOP_BACKING_FILES
+            for f in /sys/block/loop*/loop/backing_file; do test -f "$f" && cat "$f" || true; done
+            echo P50_V107_RAM_DIAGNOSTICS_END
+          } >/dev/ttyS0 2>&1
+          EOF
+          cat >out/p50-ram-audit.service <<'EOF'
+          [Unit]
+          Description=Temporary nonblocking RAM and CPU diagnosis
+          After=systemd-journald.service
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/sbin/p50-ram-audit
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sudo install -m 0755 out/p50-ram-audit out/root/usr/local/sbin/p50-ram-audit
+          sudo install -m 0644 out/p50-ram-audit.service out/root/etc/systemd/system/p50-ram-audit.service
+          sudo ln -s ../p50-ram-audit.service out/root/etc/systemd/system/multi-user.target.wants/p50-ram-audit.service
+      - name: Construct separately identified diagnostic image
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/root out/diagnostic.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          xorriso -indev input/fixed.iso -outdev out/diagnostic.iso -map out/diagnostic.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          sha256sum out/diagnostic.iso >out/reports/diagnostic-sha256.txt
+      - name: Start a local marker for after media removal
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Inspect RAM mounts and effective CPU flags in the derivative
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web107/boot_bench.py --iso out/diagnostic.iso --out out/qemu --mode online --ram 3072 --seconds 210 --emulate-acer-id --cpu-model Westmere --media usb --bandwidth 31457280 | tee out/reports/benchmark.txt
+          grep -F 'P50_V107_RAM_DIAGNOSTICS_BEGIN' out/qemu/serial.log
+          grep -F 'P50_V107_RAM_DIAGNOSTICS_END' out/qemu/serial.log
+          sed -n '/P50_V107_RAM_DIAGNOSTICS_BEGIN/,/P50_V107_RAM_DIAGNOSTICS_END/p' out/qemu/serial.log >out/reports/guest-diagnostics.txt
+          cat out/reports/guest-diagnostics.txt
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-ram-guest-diagnostics
+          path: |
+            out/reports/
+            out/qemu/
+          if-no-files-found: warn
+          retention-days: 30
