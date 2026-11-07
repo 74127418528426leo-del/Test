@@ -13,7 +13,9 @@ This is a bootable, browser-focused Debian Live experiment derived from the prev
 
 ## What was tested
 
-The original compression experiment used a Xeon Platinum 8573C KVM host, two virtual CPUs, 3,072 MiB of guest memory, and a virtual USB storage read cap of 30 MiB/s. It booted v106 and the new-compression prototype twice each, in baseline–candidate–candidate–baseline order. Time from just before virtual-machine launch to the local Firefox home page averaged **60.585 seconds** for v106 and **48.44 seconds** for the prototype. Each result came from only two boots; screenshot checks were sampled approximately every 0.8 seconds. The prototype was subsequently rebuilt to repair its media-checksum file. These results cannot predict real Acer boot time.
+An exact-image comparison used an AMD EPYC 7763 KVM host with a Westmere virtual CPU model, two virtual CPUs, 3,072 MiB of guest memory, and a virtual USB storage read cap of 30 MiB/s. It booted v106 and the final v107 ISO twice each, in baseline–candidate–candidate–baseline order. Time from just before virtual-machine launch to the local Firefox home page averaged **60.15 seconds** for v106 and **49.335 seconds** for v107, about **18% faster** in that comparison. Each result came from only two boots; screenshots were sampled approximately every 0.8 seconds. This virtual CPU model restricts exposed features but does not reproduce the real Acer's speed or devices, and includes some instructions absent on an i3-540.
+
+A separate exact-image test requested a virtual CPU with AES, PCLMULQDQ, x2APIC and 3DNow prefetch disabled, used 2,048 MiB of RAM, and reached the browser and example.com after virtual USB removal. A diagnostic derivative confirmed the first three features absent, but the guest still reported `3dnowprefetch` despite the requested mask. This is a more conservative feature test, not an exact i3-540 or a test of the physical Acer.
 
 The exact final ISO was then tested in QEMU/KVM under these separate configurations:
 
@@ -42,4 +44,5 @@ On the Aspire X3950's built-in USB 2.0 ports, the 701,440,000-byte compressed ro
 * [Compression experiment](https://github.com/74127418528426leo-del/Test/actions/runs/42371438964)
 * [Checked media-image build](https://github.com/74127418528426leo-del/Test/actions/runs/42372921677)
 * [Exact-image tests](https://github.com/74127418528426leo-del/Test/actions/runs/42372995731)
-* [Diagnostic derivative](https://github.com/74127418528426leo-del/Test/actions/runs/42373073284)
+* [Conservative i3 feature test](https://github.com/74127418528426leo-del/Test/actions/runs/42373454185)
+* [Diagnostic derivative with guest CPU and RAM checks](https://github.com/74127418528426leo-del/Test/actions/runs/42373845601)
