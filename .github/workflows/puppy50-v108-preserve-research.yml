@@ -1,0 +1,89 @@
+name: Preserve Puppy50 v108 fast-boot research evidence
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-preserve-research.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-demand-boot-study
+          run-id: 42398459428
+          github-token: ${{ github.token }}
+          path: evidence/demand
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-disposable-dm-migration-proof
+          run-id: 42398618123
+          github-token: ${{ github.token }}
+          path: evidence/dm-proof
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-migration-hook-inspection
+          run-id: 42398927528
+          github-token: ${{ github.token }}
+          path: evidence/hooks
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-layered-experiment-evidence
+          run-id: 42397422574
+          github-token: ${{ github.token }}
+          path: evidence/layered
+      - name: Verify the saved measurements and reviewed screenshots
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          root=Path('evidence/demand')
+          review=json.loads(Path('web108/V108_DEMAND_REVIEW.json').read_text())
+          assert review['run_id']==42398459428 and not review['physical_acer_tested']
+          c=json.loads((root/'reports/comparison.json').read_text())
+          assert abs(c['baseline_mean_seconds']-45.31)<1e-6 and abs(c['candidate_mean_seconds']-19.46)<1e-6
+          assert c['experimental_candidate_requires_media_attached'] and not c['physical_acer_tested']
+          for n in ('base1','base2','cand1','cand2'):
+              r=json.loads((root/n/'result.json').read_text())
+              assert r['keep_media_experiment'] and not r['media_ejected'] and r['input_sent'] and not r['errors']
+          assert (root/'reports/fixture.log').read_text().count('GET /after.html?nonce=P50-42398459428 HTTP/1.1" 200')==4
+          for name,digest in review['screenshots_sha256'].items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest,name
+          proof=Path('evidence/dm-proof/result.txt').read_text()
+          assert 'reads=269' in proof and 'this is not an OS boot test' in proof
+          assert 'Unequal content was rejected' in Path('evidence/dm-proof/refusal-check.txt').read_text()
+          helpers=Path('evidence/hooks/live-helpers.sh').read_text()
+          assert 'get_backing_device ()' in helpers and 'setup_loop ()' in helpers
+          lay=json.loads(Path('evidence/layered/reports/comparison.json').read_text())
+          assert abs(lay['baseline_mean_seconds']-44.505)<1e-6 and abs(lay['candidate_mean_seconds']-43.97)<1e-6
+          print('Research data and reviewed frames match; removable-media behavior is not claimed for the demand image.')
+          PY
+      - name: Make durable research archive
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp web108/V108_ARCHITECTURE_RESEARCH.md web108/V108_DEMAND_REVIEW.json dist/
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v108_FastBoot_Research_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(Path('evidence').rglob('*')):
+                  if p.is_file() and not p.is_socket(): z.write(p,p.as_posix())
+              for p in (Path('web108/V108_ARCHITECTURE_RESEARCH.md'),Path('web108/V108_DEMAND_REVIEW.json')):z.write(p,p.as_posix())
+          PY
+          (cd dist && sha256sum Puppy50_v108_FastBoot_Research_Evidence.zip >RESEARCH_SHA256SUMS)
+      - name: Attach research without modifying the published ISO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v108-fastboot-experimental'
+          test "$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)" = true
+          gh release upload "$tag" dist/Puppy50_v108_FastBoot_Research_Evidence.zip dist/V108_ARCHITECTURE_RESEARCH.md dist/V108_DEMAND_REVIEW.json dist/RESEARCH_SHA256SUMS
+          gh release view "$tag" --json assets --jq '.assets[].name'
