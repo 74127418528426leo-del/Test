@@ -1,0 +1,174 @@
+name: Publish Puppy50 v108 checked fast boot prerelease
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-publish.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the pinned build and individual test outcomes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42396414328 42396686655 42396689160 42396089428 42397089110; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/128432059965" --jq .conclusion)" = success
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42396686655/jobs?per_page=100" --jq '.jobs[] | [.name,.conclusion] | @tsv' >jobs.txt
+          for trial in bios-usb-2048 uefi-usb-offline-2048 uefi-optical-online-2560 connectivity-restored; do
+            grep -Fx "$(printf 'test (%s)\tsuccess' "$trial")" jobs.txt
+          done
+          for trial in bios-usb-1024 bios-usb-1536; do
+            grep -Fx "$(printf 'test (%s)\tfailure' "$trial")" jobs.txt
+          done
+          test "$(wc -l <jobs.txt)" -eq 6
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-build-evidence
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: evidence/build
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-build-audit
+          run-id: 42382223948
+          github-token: ${{ github.token }}
+          path: evidence/no-probe-build
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v108-combined-validation-*
+          run-id: 42396686655
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v108-combined-*-evidence
+          run-id: 42396689160
+          github-token: ${{ github.token }}
+          path: evidence/benchmark
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-initramfs-tool-compatibility
+          run-id: 42397089110
+          github-token: ${{ github.token }}
+          path: evidence/initrd-check
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-diagnostics
+          run-id: 42396089428
+          github-token: ${{ github.token }}
+          path: evidence/diagnostic-derivative
+      - name: Verify image, reviewed screenshots, test data and RAM diagnostics
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' iso/combined.iso | sha256sum -c -
+          test "$(stat -c %s iso/combined.iso)" = '841285632'
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('evidence/validation')
+          review=json.loads(Path('web108/V108_MANUAL_REVIEW.json').read_text())
+          assert review['iso_sha256']=='6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad'
+          assert review['validation_run_id']==42396686655 and len(review['cases'])==4
+          for name,case in review['cases'].items():
+              folder=root/('Puppy50-v108-combined-validation-'+name)
+              result=json.loads((folder/'qemu/result.json').read_text())
+              assert result['first_home_seen_seconds']==case['first_home_seconds']
+              assert result['startup_probe_optional_for_test'] and not result['boot_menu_key_sent']
+              assert result['media_ejected'] and result['input_sent_after_eject'] and result['qemu_running_at_end']
+              assert not result['errors']
+              for rel,expected in case['screenshots_sha256'].items():
+                  assert hashlib.sha256((folder/rel).read_bytes()).hexdigest()==expected,(name,rel)
+              if case['network_mode']=='online':
+                  log=(folder/'reports/fixture.log').read_text()
+                  assert 'GET /after.html?nonce=P50-42396686655' in log and ' 200 ' in log
+              if name=='connectivity-restored':
+                  assert result['outbound_https_intentionally_blocked'] and result['network_restored_signal_observed']
+              assert 'PUPPY50_V85_NETWORK_PROBE_START' not in (folder/'qemu/serial.log').read_text(errors='replace')
+          menu=json.loads((root/'Puppy50-v108-combined-validation-bios-usb-2048/menu/menu-result.json').read_text())
+          assert menu['default_seen'] and menu['recovery_highlight_seen']
+          assert not menu['automatic_recovery_boot_tested'] and not menu['physical_keyboard_tested']
+          for name,expected in [('normal',(48.0,45.165)),('blocked-https',(55.255,46.93))]:
+              folder=Path('evidence/benchmark')/('Puppy50-v108-combined-'+name+'-evidence')
+              comparison=json.loads((folder/'reports/comparison.json').read_text())
+              assert abs(comparison['baseline_mean_seconds']-expected[0])<0.00001
+              assert abs(comparison['candidate_mean_seconds']-expected[1])<0.00001
+              assert not comparison['physical_acer_tested']
+              assert (folder/'reports/fixture.log').read_text().count('GET /after.html?nonce=P50-42396689160 HTTP/1.1" 200')==4
+              for rel,digest in review['benchmark'][name]['screenshots_sha256'].items():
+                  assert hashlib.sha256((folder/rel).read_bytes()).hexdigest()==digest,(name,rel)
+              for trial in ('base1','cand1','cand2','base2'):
+                  result=json.loads((folder/trial/'result.json').read_text())
+                  assert result['media_ejected'] and result['input_sent_after_eject'] and not result['errors']
+          checks=Path('evidence/build/media-checksums.txt').read_text().splitlines()
+          assert len(checks)==292 and all(line.endswith(': OK') for line in checks)
+          for p in ('rsync-forward.txt','rsync-reverse.txt','other-differences.txt'):
+              assert not (Path('evidence/no-probe-build')/p).read_bytes(),p
+          for p in ('differences-forward.txt','differences-reverse.txt'):
+              assert not (Path('evidence/initrd-check')/p).read_bytes(),p
+          guest=Path('evidence/diagnostic-derivative/reports/guest-diagnostics.txt').read_text()
+          assert '/run/live/medium tmpfs tmpfs' in guest and '/run/live/overlay tmpfs tmpfs' in guest
+          assert '/run/live/medium/live/filesystem.squashfs' in guest and ' components toram ' in guest
+          assert 'P50_NETWORK_UNIT_STATES\nenabled\nactive\nmasked\ninactive' in guest
+          assert 'P50_FIREFOX_POLICY_ABSENT' in guest and 'user     firefox-esr' in guest
+          flags=re.search(r'^flags\s*:\s*(.*)$',guest,re.MULTILINE)
+          assert flags and not {'aes','pclmulqdq','x2apic'} & set(flags.group(1).split())
+          notes=Path('web108/V108_RELEASE_NOTES.md').read_text()
+          assert 'eight-second goal has not been achieved' in notes and 'physical Wi-Fi have not been tested' in notes
+          print('Exact ISO, checksums, reviewed frames and diagnostic evidence verified.')
+          PY
+      - name: Prepare the ISO and evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/combined.iso dist/Puppy50_v108_FastBoot_EXPERIMENTAL.iso
+          cp web108/V108_RELEASE_NOTES.md dist/README_V108_EXPERIMENTAL.md
+          cp web108/V108_MANUAL_REVIEW.json dist/
+          (cd dist && sha256sum Puppy50_v108_FastBoot_EXPERIMENTAL.iso >SHA256SUMS)
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v108_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(Path('evidence').rglob('*')):
+                  if p.is_file() and not p.is_socket(): z.write(p,p.as_posix())
+          PY
+      - name: Publish a separate prerelease at the image-build commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v108-fastboot-experimental'
+          build_sha='dcb56f3e373f3be3accf725c48a68351914dee61'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v108_FastBoot_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V108_EXPERIMENTAL.md dist/V108_MANUAL_REVIEW.json dist/Puppy50_v108_Test_Evidence.zip --verify-tag --title 'Puppy50 v108 - Faster RAM Boot (EXPERIMENTAL)' --notes-file web108/V108_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          url='https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v108-fastboot-experimental/Puppy50_v108_FastBoot_EXPERIMENTAL.iso'
+          curl --fail --location --retry 3 -o /tmp/puppy50-v108-release-verification.iso "$url"
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' '/tmp/puppy50-v108-release-verification.iso' | sha256sum -c -
