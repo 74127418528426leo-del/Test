@@ -27,6 +27,8 @@ class ProxyGuardTests(unittest.TestCase):
         detector = self.bin / 'systemd-detect-virt'
         detector.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_KIND"\nexit "${TEST_EXIT:-0}"\n')
         detector.chmod(0o755)
+        self.cmdline = self.root / 'cmdline'
+        self.cmdline.write_text('boot=live toram puppy50.test_bridge=1 quiet')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -45,15 +47,25 @@ class ProxyGuardTests(unittest.TestCase):
                               ('vmware', False), ('', False)]:
             with self.subTest(kind=kind):
                 env = dict(os.environ, PATH=str(self.bin), TEST_KIND=kind)
-                self.assertEqual(subprocess.run([helper], env=env).returncode == 0, allowed)
+                self.assertEqual(subprocess.run([helper, self.cmdline], env=env).returncode == 0, allowed)
+
+    def test_vm_alone_never_enables_bridge_without_explicit_boot_opt_in(self):
+        patch(self.root)
+        helper = self.root / 'usr/local/sbin/puppy50-qemu-bridge-allowed'
+        env = dict(os.environ, PATH=str(self.bin), TEST_KIND='kvm')
+        for cmdline in ['boot=live toram', 'badpuppy50.test_bridge=1',
+                        'puppy50.test_bridge=10', 'puppy50Xtest_bridge=1']:
+            with self.subTest(cmdline=cmdline):
+                self.cmdline.write_text(cmdline)
+                self.assertNotEqual(subprocess.run([helper, self.cmdline], env=env).returncode, 0)
 
     def test_detector_failure_or_missing_detector_denies_bridge(self):
         patch(self.root)
         helper = self.root / 'usr/local/sbin/puppy50-qemu-bridge-allowed'
         env = dict(os.environ, PATH=str(self.bin), TEST_KIND='kvm', TEST_EXIT='1')
-        self.assertNotEqual(subprocess.run([helper], env=env).returncode, 0)
+        self.assertNotEqual(subprocess.run([helper, self.cmdline], env=env).returncode, 0)
         env = dict(os.environ, PATH=str(self.root / 'missing'), TEST_KIND='')
-        self.assertNotEqual(subprocess.run([helper], env=env).returncode, 0)
+        self.assertNotEqual(subprocess.run([helper, self.cmdline], env=env).returncode, 0)
 
     def test_unrecognized_script_is_rejected_without_creating_helper(self):
         self.probe.write_text('unknown script')
