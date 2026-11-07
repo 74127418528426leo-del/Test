@@ -1,0 +1,85 @@
+name: Puppy50 v107 checked media image build
+on:
+  push:
+    branches: [puppy50-v107-startup-research]
+    paths: [.github/workflows/puppy50-v107-fix-manifest.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+          mkdir -p input out/{tree,recheck,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v107-compression-zstd15-test-only-iso
+          run-id: 42371438964
+          github-token: ${{ github.token }}
+          path: input
+      - name: Recalculate every entry in the existing media manifest
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '7251adb5f673c3964cae4e8518a4fd9fdfc363e9535b9f0fd498bbc554557595' input/candidate.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/candidate.iso -extract / out/tree >out/reports/extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve()
+          old=(root/'sha256sum.txt').read_text(encoding='utf-8')
+          lines=[];seen=set()
+          for line in old.splitlines():
+              match=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line)
+              assert match,repr(line)
+              filename=match.group(3)
+              assert filename.startswith('./') and filename not in seen,repr(filename)
+              seen.add(filename)
+              target=(root/filename).resolve(strict=True)
+              target.relative_to(root)
+              assert target.is_file() and filename!='./sha256sum.txt'
+              digest=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024),b''): digest.update(chunk)
+              lines.append(digest.hexdigest()+match.group(2)+filename)
+          assert len(lines)>100
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          Path('out/reports/checksum-entry-count.txt').write_text(str(len(lines))+'\n')
+          print('Regenerated',len(lines),'existing media checksum entries.')
+          PY
+      - name: Rebuild bootable image and verify each listed file
+        run: |
+          set -euo pipefail
+          xorriso -indev input/candidate.iso -outdev out/fixed.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/fixed.iso -extract / out/recheck >out/reports/reextract.log 2>&1
+          cmp out/sha256sum.txt out/recheck/sha256sum.txt
+          (cd out/recheck && sha256sum --check sha256sum.txt) >out/reports/media-checksums.txt
+          grep -F './live/filesystem.squashfs: OK' out/reports/media-checksums.txt
+          grep -F './boot/grub/config.cfg: OK' out/reports/media-checksums.txt
+          grep -F './isolinux/isolinux.cfg: OK' out/reports/media-checksums.txt
+          (cd out && sha256sum fixed.iso >SHA256SUMS)
+          stat -c '%n %s' out/fixed.iso >out/reports/iso-size.txt
+          cat out/SHA256SUMS out/reports/iso-size.txt out/reports/checksum-entry-count.txt
+      - name: Retain build audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-checked-media-build-audit
+          path: out/reports/
+          retention-days: 30
+      - name: Retain checked candidate for independent tests
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v107-checked-media-test-only-iso
+          path: |
+            out/fixed.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 3
