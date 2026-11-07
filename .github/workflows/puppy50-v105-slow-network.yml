@@ -1,0 +1,76 @@
+name: Puppy50 v105 unreachable HTTPS startup comparison
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-slow-network.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and test utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil iptables
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p base fast fixture evidence/{base,fast,reports}
+      - name: Retrieve automatic-boot baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-test-only
+          run-id: 42330235182
+          github-token: ${{ github.token }}
+          path: base
+      - name: Retrieve nonblocking network candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-combined-test-only
+          run-id: 42330320993
+          github-token: ${{ github.token }}
+          path: fast
+      - name: Pin both images
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'b209d42bef6f69317b440d46608f4b3c88508c9e6cd6577d9cfd14e0dddea5c9' 'base/Puppy50_v105_Autoboot_TEST_ONLY.iso' | sha256sum -c -
+          printf '%s  %s\n' '01a861bd064408ce1814bb79d8c43274e54061435423cc009ca4924815f3d355' 'fast/Puppy50_v105_Fast_TEST_ONLY.iso' | sha256sum -c -
+      - name: Start a host-only marker for testing responsive browsing
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close(); s=socket.socket(); assert s.connect_ex(("127.0.0.1",3128)) != 0, "unexpected HTTPS bridge"; s.close()'
+      - name: Compare while external HTTPS is intentionally unreachable
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          runner_uid=$(id -u)
+          sudo iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP
+          cleanup() { sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP; }
+          trap cleanup EXIT
+          if curl --noproxy '*' --silent --connect-timeout 3 --max-time 4 https://example.com/ >/dev/null; then
+            echo 'Direct runner HTTPS was not blocked; test invalid.' >&2
+            exit 1
+          fi
+          python3 -u web105/boot_bench.py --iso base/Puppy50_v105_Autoboot_TEST_ONLY.iso --out evidence/base --mode online --ram 2560 --seconds 210 --emulate-acer-id --expect-no-https
+          python3 -u web105/boot_bench.py --iso fast/Puppy50_v105_Fast_TEST_ONLY.iso --out evidence/fast --mode online --ram 2560 --seconds 210 --emulate-acer-id --expect-no-https
+          if grep -F 'GUEST_CA_VERIFIED_PUBLIC_HTTPS_DIRECT=PASS' evidence/{base,fast}/serial.log; then
+            echo 'Unexpected direct HTTPS during controlled block' >&2
+            exit 1
+          fi
+      - name: Preserve measured frames and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-unreachable-https-comparison
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
