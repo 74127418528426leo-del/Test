@@ -13,6 +13,7 @@ int main(void) {
     assert(p50_status(dir,getuid())==P50_WAIT);
     int fd=open(ready,O_CREAT|O_WRONLY,0600);assert(fd>=0);close(fd);
     assert(p50_status(dir,getuid())==P50_READY);
+    assert(p50_status(dir,getuid()+1)==P50_WAIT);
     assert(chmod(ready,0666)==0);assert(p50_status(dir,getuid())==P50_WAIT);
     assert(chmod(ready,0600)==0);assert(p50_status(dir,getuid())==P50_READY);
     fd=open(failed,O_CREAT|O_WRONLY,0600);assert(fd>=0);close(fd);
