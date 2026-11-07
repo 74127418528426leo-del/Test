@@ -42,8 +42,8 @@ jobs:
           sudo bash -c 'cd out/rootfs && sha256sum usr/lib/firefox-esr/firefox-esr usr/lib/firefox-esr/libxul.so usr/bin/nmcli usr/sbin/NetworkManager usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt' >out/reports/protected-before.sha256
           sudo bash -c 'cd out/rootfs && find usr/lib/firmware -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum' >out/reports/firmware-before.sha256
           sudo chroot out/rootfs dpkg-query -W >out/reports/packages-before.txt
-          if sudo chroot out/rootfs dpkg-query -W libavcodec61 >/dev/null 2>&1; then
-            printf '%s\n' 'Baseline unexpectedly contains libavcodec61; refusing non-isolated experiment.'
+          if sudo find out/rootfs/usr/lib -name 'libavcodec.so*' -print -quit | grep -q .; then
+            printf '%s\n' 'Baseline unexpectedly contains a system libavcodec library; refusing non-isolated experiment.'
             exit 1
           fi
       - name: Install official Debian codec and its dependencies in isolated image root
