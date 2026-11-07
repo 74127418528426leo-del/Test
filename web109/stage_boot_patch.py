@@ -17,7 +17,16 @@ HOOK='''p50_backing_device ()
             p50_sectors="$(blockdev --getsz "${p50_loop}")" || panic "p50: cannot size root image"
             /usr/lib/p50-stage/dm-init create p50-staged-root --readonly --table "0 ${p50_sectors} linear ${p50_loop} 0" >/dev/null 2>/dev/console || panic "p50: cannot create root mapping"
             udevadm settle
-            [ -b /dev/mapper/p50-staged-root ] || panic "p50: root mapping node missing"
+            p50_mm="$(/usr/lib/p50-stage/dm-init info -c --noheadings --separator : -o major,minor p50-staged-root | tr -d '[:space:]')" || panic "p50: cannot inspect root mapping"
+            case "${p50_mm}" in *:*) ;; *) panic "p50: invalid mapping device number" ;; esac
+            p50_major="${p50_mm%:*}"; p50_minor="${p50_mm#*:}"
+            case "${p50_major}${p50_minor}" in ''|*[!0-9]*) panic "p50: invalid mapping device number" ;; esac
+            if [ ! -b /dev/mapper/p50-staged-root ]; then
+                mknod /dev/mapper/p50-staged-root b "${p50_major}" "${p50_minor}" || panic "p50: cannot create mapping node"
+            fi
+            p50_actual="$(stat -c '%t:%T' /dev/mapper/p50-staged-root)"
+            p50_expected="$(printf '%x:%x' "${p50_major}" "${p50_minor}")"
+            [ "${p50_actual}" = "${p50_expected}" ] || panic "p50: root mapping device number mismatch"
             echo /dev/mapper/p50-staged-root
             ;;
         *) setup_loop "${1}" '0' "${2}" ;;
