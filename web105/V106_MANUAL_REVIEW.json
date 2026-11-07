@@ -72,5 +72,18 @@
       },
       "unique_post_ejection_marker_seen_in_fixture_log": true
     }
+  },
+  "traced_proxy_run_id": 42351348686,
+  "traced_proxy": {
+    "default-no-proxy": {
+      "external_page_sha256": "9ba2d7e029c214e0ddd1b184e76414c7a3709d3e35b82af8e49c8a027bf193b5",
+      "proxy_connect_count": 0,
+      "route_test": "default image after host network restoration"
+    },
+    "explicit-test-proxy": {
+      "external_page_sha256": "0fad609290ec30b735e04d898c04fb55063a7bedd800c0d38974676ba5e98c55",
+      "proxy_connect_count": 32,
+      "route_test": "explicit opt-in test image"
+    }
   }
 }
