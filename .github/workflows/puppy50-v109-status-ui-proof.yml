@@ -1,0 +1,63 @@
+name: Verify staged RAM USB status indicator
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-status-ui-proof.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test readiness logic and visual states
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc libx11-dev xvfb x11-utils xfonts-base scrot python3-pil
+          gcc -D_GNU_SOURCE -DP50_STATUS_STATE_ONLY -Wall -Wextra -Werror -o status-test web109/test_p50_status.c
+          ./status-test
+          gcc -D_GNU_SOURCE -Wall -Wextra -Werror -O2 -o p50-status web109/p50-status.c -lX11
+          mkdir evidence
+          test ! -e /run/p50-stage
+          sudo mkdir -m 0755 /run/p50-stage
+          Xvfb :91 -screen 0 1280x800x24 -ac >evidence/xvfb.log 2>&1 & xvfb_pid=$!
+          ui_pid=''
+          cleanup() {
+            if [ -n "$ui_pid" ]; then kill "$ui_pid" 2>/dev/null || true; wait "$ui_pid" 2>/dev/null || true; fi
+            kill "$xvfb_pid" 2>/dev/null || true; wait "$xvfb_pid" 2>/dev/null || true
+            sudo rm -rf /run/p50-stage
+          }
+          trap cleanup EXIT
+          export DISPLAY=:91
+          for n in $(seq 1 50); do if xdpyinfo >/dev/null 2>&1; then break; fi; sleep .1; done
+          xdpyinfo >/dev/null
+          ./p50-status >evidence/status.log 2>&1 & ui_pid=$!
+          sleep 2
+          scrot evidence/wait.png
+          sudo touch /run/p50-stage/READY
+          sleep 2
+          scrot evidence/ready.png
+          sudo touch /run/p50-stage/FAILED
+          sleep 2
+          scrot evidence/failed.png
+          kill -0 "$ui_pid"
+          python3 - <<'PY'
+          from PIL import Image
+          colors={'wait':(232,184,74),'ready':(102,220,160),'failed':(255,138,128)}
+          for name,rgb in colors.items():
+              im=Image.open('evidence/'+name+'.png').convert('RGB')
+              assert im.size==(1280,800)
+              assert im.getpixel((830,740))==rgb,(name,im.getpixel((830,740)))
+          print('Waiting, ready and failure screenshots show the expected indicator colors.')
+          PY
+      - name: Keep UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-status-ui-proof
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
