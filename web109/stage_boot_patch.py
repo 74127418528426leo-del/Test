@@ -34,7 +34,7 @@ HOOK='''p50_backing_device ()
 }
 
 '''
-INSTALL='''
+INSTALL=r'''
 	# Experimental staged boot: these tools and the service live in RAM.
 	if [ -z "${TORAM:-}" ] && [ -b /dev/mapper/p50-staged-root ]; then
 		mkdir -p /run/p50-stage/tools "${rootmnt}/etc/systemd/system/graphical.target.wants" || panic "p50: cannot prepare migration tools"
@@ -43,8 +43,17 @@ INSTALL='''
 		chown -R 0:0 /run/p50-stage/tools || panic "p50: cannot secure migration tools"
 		chmod -R go-w /run/p50-stage/tools || panic "p50: cannot secure migration permissions"
 		mount -o remount,ro,nosuid,nodev,exec /run/p50-stage/tools || panic "p50: cannot protect migration tools"
-		cp /usr/lib/p50-stage/p50-staged-migration.service "${rootmnt}/etc/systemd/system/" || panic "p50: cannot install migration service"
+		cp /usr/lib/p50-stage/p50-staged-migration.service /usr/lib/p50-stage/p50-stage-failure.service "${rootmnt}/etc/systemd/system/" || panic "p50: cannot install migration services"
 		ln -s ../p50-staged-migration.service "${rootmnt}/etc/systemd/system/graphical.target.wants/p50-staged-migration.service" || panic "p50: cannot enable migration service"
+		p50_autostart="${rootmnt}/etc/skel/.config/openbox/autostart"
+		[ -f "${p50_autostart}" ] || panic "p50: desktop autostart missing"
+		printf '\n/run/p50-stage/tools/p50-status >/tmp/p50-status.log 2>&1 &\n' >> "${p50_autostart}" || panic "p50: cannot enable USB status indicator"
+		p50_home="${rootmnt}/usr/share/puppy50web/index.html"
+		[ -f "${p50_home}" ] || panic "p50: browser home missing"
+		grep -Fq 'No public website has yet been verified in this NEW Debian build until the independent QEMU tests pass.' "${p50_home}" || panic "p50: unexpected browser home"
+		sed -i 's|No public website has yet been verified in this NEW Debian build until the independent QEMU tests pass\.|Example.com was checked in a virtual machine; other sites and hardware remain untested.|' "${p50_home}" || panic "p50: cannot update browser home"
+		sed -i 's|Boot option <code>toram</code> requests a copy of the live filesystem into memory\. It requires additional RAM and is not guaranteed on 2 GiB systems\. This live pilot does not overwrite your existing OS\.|Firefox starts while the system is prepared in memory. Keep the USB connected until the green RAM READY notice appears. This live pilot does not overwrite your existing OS.|' "${p50_home}" || panic "p50: cannot add USB instructions"
+		grep -Fq 'Keep the USB connected until the green RAM READY notice appears.' "${p50_home}" || panic "p50: USB instructions missing"
 	fi
 '''
 
