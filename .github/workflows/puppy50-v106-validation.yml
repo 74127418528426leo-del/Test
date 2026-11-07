@@ -1,0 +1,135 @@
+name: Puppy50 v106 exact image boot and network verification
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v106-validation.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  virtual-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-optical-online, bios-usb-online, uefi-usb-offline, uefi-optical-offline, proxy-disabled-recovery, proxy-explicit-optin]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and test utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil ovmf xorriso iptables
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports,menu} fixture
+          python3 -m unittest discover -s web105 -p test_proxy_guard.py -v
+          python3 -m unittest discover -s web105 -p test_network_restore.py -v
+          python3 -m unittest discover -s web105 -p test_menu_selection.py -v
+      - name: Retrieve exact test candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v106-guarded-test-only
+          run-id: 42350606105
+          github-token: ${{ github.token }}
+          path: input
+      - name: Pin exact candidate and inspect the default boot entry
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          printf '%s  %s\n' '537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e' 'input/Puppy50_v106_AutoBoot_TEST_ONLY.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/Puppy50_v106_AutoBoot_TEST_ONLY.iso -extract /isolinux/live.cfg evidence/reports/live.cfg -extract /boot/grub/grub.cfg evidence/reports/grub.cfg >evidence/reports/extract.log 2>&1
+          grep -F 'boot=live components toram ' evidence/reports/live.cfg
+          grep -F 'boot=live components toram ' evidence/reports/grub.cfg
+          if grep -F 'puppy50.test_bridge=1' evidence/reports/live.cfg evidence/reports/grub.cfg; then exit 1; fi
+      - name: Check actual BIOS recovery menu selection
+        if: matrix.trial == 'bios-optical-online'
+        run: python3 -u web105/menu_selection.py --iso input/Puppy50_v106_AutoBoot_TEST_ONLY.iso --out evidence/menu
+      - name: Create explicit-opt-in test image with identical root
+        if: matrix.trial == 'proxy-explicit-optin'
+        run: |
+          set -euo pipefail
+          xorriso -osirrox on -indev input/Puppy50_v106_AutoBoot_TEST_ONLY.iso -extract /isolinux/live.cfg input/live-test.cfg -extract /live/filesystem.squashfs input/root-before.squashfs >evidence/reports/optin-extract.log 2>&1
+          chmod u+w input/live-test.cfg
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('input/live-test.cfg')
+          text = path.read_text()
+          before = 'append boot=live components toram quiet locales=en_US.UTF-8'
+          after = 'append boot=live components toram puppy50.test_bridge=1 quiet locales=en_US.UTF-8'
+          assert text.count(before) == 1
+          path.write_text(text.replace(before, after, 1))
+          PY
+          xorriso -indev input/Puppy50_v106_AutoBoot_TEST_ONLY.iso -outdev input/optin-test-only.iso -map input/live-test.cfg /isolinux/live.cfg -boot_image any replay -commit -end >evidence/reports/optin-repack.log 2>&1
+          xorriso -osirrox on -indev input/optin-test-only.iso -extract /live/filesystem.squashfs input/root-after.squashfs -extract /isolinux/live.cfg input/live-recheck.cfg >evidence/reports/optin-reextract.log 2>&1
+          cmp input/root-before.squashfs input/root-after.squashfs
+          cmp input/live-test.cfg input/live-recheck.cfg
+          sha256sum input/optin-test-only.iso >evidence/reports/optin-image-sha256.txt
+      - name: Start local fixture and host-only optional bridge
+        if: matrix.trial == 'bios-optical-online' || matrix.trial == 'bios-usb-online' || matrix.trial == 'proxy-disabled-recovery' || matrix.trial == 'proxy-explicit-optin'
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sudo nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot and exercise the guest
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          iso=input/Puppy50_v106_AutoBoot_TEST_ONLY.iso
+          if [ "$TRIAL" = bios-optical-online ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode online --ram 2560 --seconds 210 --emulate-acer-id
+          elif [ "$TRIAL" = bios-usb-online ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode online --ram 3072 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280
+          elif [ "$TRIAL" = uefi-usb-offline ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi --media usb
+          elif [ "$TRIAL" = uefi-optical-offline ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi --media optical
+          else
+            runner_uid=$(id -u)
+            sudo iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT
+            cleanup() { if sudo iptables -C OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT 2>/dev/null; then sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT; fi; }
+            trap cleanup EXIT
+            if curl --noproxy '*' --silent --connect-timeout 3 --max-time 5 https://example.com/ >/dev/null; then
+              echo 'Direct runner HTTPS was not blocked; test invalid.' >&2
+              exit 1
+            fi
+            if [ "$TRIAL" = proxy-explicit-optin ]; then
+              python3 -u web105/boot_bench.py --iso input/optin-test-only.iso --out evidence/qemu --mode online --ram 2560 --seconds 210
+              grep -F 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' evidence/qemu/serial.log
+            else
+              (
+                for n in $(seq 1 180); do
+                  if [ -f evidence/qemu/network_restore_requested ]; then
+                    sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT
+                    touch evidence/qemu/network_restored
+                    exit 0
+                  fi
+                  sleep 1
+                done
+                exit 1
+              ) &
+              watcher=$!
+              python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode online --ram 2560 --seconds 210 --expect-no-https --test-network-restore
+              wait "$watcher"
+              grep -F 'PUPPY50_V85_NETWORK_MODE=offline' evidence/qemu/serial.log
+              if grep -F 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' evidence/qemu/serial.log; then
+                echo 'Test-only bridge was unexpectedly selected without opt-in.' >&2
+                exit 1
+              fi
+            fi
+          fi
+      - name: Preserve framebuffer, serial and test data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v106-verified-${{ matrix.trial }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
