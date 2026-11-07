@@ -1,0 +1,108 @@
+name: Puppy50 v104 - Debian Firefox media codec experiment
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v104-build.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p input out/{rootfs,reports,extracted,verify}
+      - name: Download exact v103 image from reviewed build
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          run-id: 42321979218
+          github-token: ${{ github.token }}
+          path: input
+      - name: Pin and unpack v103 baseline
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '723ef1e2b913241f1b30add3988134cc2b0679ccecfd08959bd4f7bc90fadd27' 'input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso' | sha256sum -c -
+          (cd input && sha256sum -c SHA256SUMS)
+          xorriso -osirrox on -indev input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso -extract /live/filesystem.squashfs out/extracted/base.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/rootfs out/extracted/base.squashfs >out/reports/unsquashfs.log
+      - name: Record existing Firefox, network and firmware files
+        run: |
+          set -euo pipefail
+          sudo bash -c 'cd out/rootfs && sha256sum usr/lib/firefox-esr/firefox-esr usr/lib/firefox-esr/libxul.so usr/bin/nmcli usr/sbin/NetworkManager usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt' >out/reports/protected-before.sha256
+          sudo bash -c 'cd out/rootfs && find usr/lib/firmware -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum' >out/reports/firmware-before.sha256
+          sudo chroot out/rootfs dpkg-query -W >out/reports/packages-before.txt
+          if sudo chroot out/rootfs dpkg-query -W libavcodec61 >/dev/null 2>&1; then
+            printf '%s\n' 'Baseline unexpectedly contains libavcodec61; refusing non-isolated experiment.'
+            exit 1
+          fi
+      - name: Install official Debian codec and its dependencies in isolated image root
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          root="$PWD/out/rootfs"
+          sudo mkdir -p "$root/dev" "$root/proc"
+          sudo mount --bind /dev "$root/dev"
+          cleanup() {
+            sudo umount "$root/etc/resolv.conf" 2>/dev/null || true
+            sudo umount "$root/proc" 2>/dev/null || true
+            sudo umount "$root/dev" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sudo mount -t proc proc "$root/proc"
+          sudo mount --bind /etc/resolv.conf "$root/etc/resolv.conf"
+          sudo chroot "$root" env DEBIAN_FRONTEND=noninteractive apt-get update >out/reports/apt-update.log 2>&1
+          sudo chroot "$root" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libavcodec61 >out/reports/apt-install.log 2>&1
+          sudo chroot "$root" dpkg-query -W libavcodec61 >out/reports/libavcodec-package.txt
+          sudo chroot "$root" dpkg-query -W >out/reports/packages-after.txt
+          sudo chroot "$root" ldconfig -p | grep -F 'libavcodec.so.61' >out/reports/libavcodec-ldconfig.txt
+          sudo chroot "$root" /usr/bin/ldd /usr/lib/x86_64-linux-gnu/libavcodec.so.61 >out/reports/libavcodec-ldd.txt
+          if grep -q 'not found' out/reports/libavcodec-ldd.txt; then exit 1; fi
+          sudo chroot "$root" apt-get clean
+          sudo find "$root/var/lib/apt/lists" -type f ! -name lock -delete
+      - name: Verify retained Firefox, certificates, network tools, and firmware
+        run: |
+          set -euo pipefail
+          sudo bash -c 'cd out/rootfs && sha256sum usr/lib/firefox-esr/firefox-esr usr/lib/firefox-esr/libxul.so usr/bin/nmcli usr/sbin/NetworkManager usr/local/sbin/puppy50-network-probe etc/ssl/certs/ca-certificates.crt' >out/reports/protected-after.sha256
+          sudo bash -c 'cd out/rootfs && find usr/lib/firmware -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum' >out/reports/firmware-after.sha256
+          cmp out/reports/protected-before.sha256 out/reports/protected-after.sha256
+          cmp out/reports/firmware-before.sha256 out/reports/firmware-after.sha256
+      - name: Rebuild bootable image and verify its exact filesystem
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/rootfs out/new.squashfs -comp xz -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          xorriso -indev input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso -outdev out/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso -map out/new.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso -extract /live/filesystem.squashfs out/verify/filesystem.squashfs >out/reports/reextract.log 2>&1
+          cmp out/new.squashfs out/verify/filesystem.squashfs
+          stat -c '%s' out/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso >out/reports/v104-iso-bytes.txt
+          stat -c '%s' out/new.squashfs >out/reports/v104-root-bytes.txt
+          (cd out && sha256sum Puppy50_v104_Intel_Media_EXPERIMENTAL.iso >SHA256SUMS)
+          cat out/SHA256SUMS
+      - name: Preserve package, security-file and build audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_Media_Build_Audit
+          path: out/reports/
+          retention-days: 20
+          if-no-files-found: warn
+      - name: Upload test-only image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_Intel_Media_TEST_ONLY_ISO
+          path: |
+            out/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 7
