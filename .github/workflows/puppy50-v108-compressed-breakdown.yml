@@ -1,0 +1,40 @@
+name: Puppy50 v108 compressed payload attribution
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-compressed-breakdown.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - name: Install tools and extract exact baseline
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p input out/{root,parts,reports}
+          curl --fail --location --retry 3 -o input/v107.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v107-zstd-fastboot-experimental/Puppy50_v107_FastBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'cbdf605f87d345ca60d1a0a3cebb20312864c81c2a286c8eacb5acb85769c0c2' input/v107.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v107.iso -extract /live/filesystem.squashfs input/root.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/root input/root.squashfs >out/reports/unsquash.log
+      - name: Estimate compressed footprint of major components separately
+        run: |
+          set -euo pipefail
+          for pair in 'firmware:usr/lib/firmware' 'firefox:usr/lib/firefox-esr' 'libraries:usr/lib/x86_64-linux-gnu' 'modules:usr/lib/modules' 'shared:usr/share'; do
+            name="${pair%%:*}"
+            path="${pair#*:}"
+            sudo du -sb "out/root/$path" >>out/reports/uncompressed-components.txt
+            sudo mksquashfs "out/root/$path" "out/parts/$name.squashfs" -comp zstd -Xcompression-level 15 -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >"out/reports/$name.log" 2>&1
+            stat -c '%n %s' "out/parts/$name.squashfs" >>out/reports/compressed-components.txt
+          done
+          cat out/reports/uncompressed-components.txt out/reports/compressed-components.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Puppy50-v108-compressed-payload-breakdown
+          path: out/reports/
+          retention-days: 30
