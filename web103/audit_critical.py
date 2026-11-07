@@ -10,9 +10,12 @@ from pathlib import Path
 
 PROTECTED = (
     'proc', 'dev', 'sys', 'etc/resolv.conf', 'usr/lib/firmware',
-    'usr/lib/firefox-esr', 'etc/firefox-esr', 'etc/NetworkManager',
+    'usr/lib/firefox-esr', 'usr/share/firefox-esr', 'etc/firefox-esr', 'etc/NetworkManager',
     'usr/lib/NetworkManager', 'etc/ssl', 'usr/share/ca-certificates',
     'usr/bin/nmcli', 'usr/sbin/NetworkManager', 'usr/local/sbin/puppy50-network-probe',
+    'usr/lib/x86_64-linux-gnu/libnss3.so', 'usr/lib/x86_64-linux-gnu/libnssutil3.so',
+    'usr/lib/x86_64-linux-gnu/libssl3.so', 'usr/lib/x86_64-linux-gnu/libnspr4.so',
+    'usr/lib/x86_64-linux-gnu/libsoftokn3.so', 'usr/lib/x86_64-linux-gnu/libsmime3.so',
 )
 
 
