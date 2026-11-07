@@ -1,0 +1,74 @@
+name: Puppy50 v104 - Preserve reviewed website test evidence
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v104-site-evidence.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  preserve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download CNN evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_cnn_3072MiB_site_proof
+          run-id: 42326668886
+          github-token: ${{ github.token }}
+          path: evidence/cnn
+      - name: Download John evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_john_3072MiB_site_proof
+          run-id: 42326668886
+          github-token: ${{ github.token }}
+          path: evidence/john
+      - name: Download 3D Bible evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_bible3d_4096MiB_site_proof
+          run-id: 42326668886
+          github-token: ${{ github.token }}
+          path: evidence/bible3d
+      - name: Download YouTube evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_youtube4k_4096MiB_site_proof
+          run-id: 42326668886
+          github-token: ${{ github.token }}
+          path: evidence/youtube4k
+      - name: Verify reviewed frames and create evidence archive
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          review=json.loads(Path('reports/V104_SITE_MANUAL_REVIEW.json').read_text())
+          assert review['run_id']==42326668886
+          assert review['iso_sha256']=='f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5'
+          for frame in review['frames']:
+              path=Path('evidence')/frame['evidence_path']
+              assert hashlib.sha256(path.read_bytes()).hexdigest()==frame['sha256'],str(path)
+          with ZipFile('Puppy50_v104_Site_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(Path('evidence').rglob('*')):
+                  if p.is_file():z.write(p,p.as_posix())
+              z.write('reports/V104_SITE_MANUAL_REVIEW.json','V104_SITE_MANUAL_REVIEW.json')
+          PY
+      - name: Add reviewed site evidence and update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v104-intel-firefox-media'
+          digest="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | select(.name=="Puppy50_v104_Intel_Media_EXPERIMENTAL.iso") | .digest')"
+          test "$digest" = 'sha256:f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5'
+          gh release upload "$tag" Puppy50_v104_Site_Test_Evidence.zip reports/V104_SITE_TEST_RESULTS.md
+          gh release edit "$tag" --notes-file reports/V104_RELEASE_NOTES.md
