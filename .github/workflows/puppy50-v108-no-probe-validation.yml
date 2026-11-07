@@ -35,7 +35,7 @@ jobs:
           path: input
       - name: Verify candidate and start local marker
         env:
-          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
           printf '%s  %s\n' '2f823061cd58db89a183716972b22bb1f8ab1d8ca65637fcb5ad246a72fa1904' input/candidate.iso | sha256sum -c -
@@ -44,7 +44,7 @@ jobs:
       - name: Boot and test browser after unplugging virtual media
         env:
           TRIAL: ${{ matrix.trial }}
-          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
           bench() { python3 -u web108/boot_bench_fast.py --iso input/candidate.iso --out evidence/qemu --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --allow-no-startup-probe "$@"; }
