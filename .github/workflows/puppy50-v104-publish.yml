@@ -137,14 +137,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          printf 'Publishing repository: %s\n' "$GITHUB_REPOSITORY"
           test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
           tag='puppy50-v104-intel-firefox-media'
           build_sha='677d944de32048c8c9d81bc2f7d5c6170e114022'
           if gh release view "$tag" >/dev/null 2>&1; then printf '%s\n' 'Release exists; refusing overwrite.'; exit 19; fi
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha // empty' 2>/dev/null || true)"
-          if [ -z "$existing" ]; then
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
           else
+            existing="${tag_ref%%$'\t'*}"
             test "$existing" = "$build_sha"
           fi
           gh release create "$tag" dist/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso \
