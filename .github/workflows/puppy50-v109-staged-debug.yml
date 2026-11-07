@@ -54,6 +54,8 @@ jobs:
           sudo mkdir -p out/main/usr/lib/p50-stage
           sudo cp -a out/tools/. out/main/usr/lib/p50-stage/
           sudo python3 web109/stage_boot_patch.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-misc-helpers.sh
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
           sha256sum out/original.initrd out/early-prefix out/original.squashfs >out/reports/input-sha256.txt
       - name: Repack initramfs and derive a test-only media-boot image
         run: |
