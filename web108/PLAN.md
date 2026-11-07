@@ -6,6 +6,8 @@ Baseline: published v107 ISO SHA-256 cbdf605f87d345ca60d1a0a3cebb20312864c81c2a2
 
 Experiment: derive an explicitly Acer/Intel graphics oriented image. Remove only the amdgpu, radeon and nvidia firmware directories from the post-boot root, keeping Intel graphics, all other firmware, microcode, browser, network packages, security policies and default toram behavior. Explore a second candidate that additionally removes the same graphics-firmware directories from the early initramfs; compare its early-boot and GPU compatibility risk separately. The general-purpose v107 ISO remains available unchanged.
 
+Run an independent lossless experiment on the initramfs: preserve the first three cpio segments byte-for-byte, including AMD and Intel early microcode and early kernel modules, and recompress the final gzip-compressed cpio stream with Zstandard. Verify the uncompressed bytes match exactly and test the real boot path; retain all firmware in this comparison. This is separate from the graphics-profile experiment so performance and compatibility can be attributed correctly.
+
 Verification gates:
 1. Pin the v107 image hash; prove targeted paths and ensure all other firmware entries, browser and other root content are preserved, including comparisons after repacking. Do not delete outside the extracted scratch tree or follow symlinks out of it.
 2. Preserve boot mode, browser sandbox, certificates, network manager and optional proxy safeguards; do not weaken TLS or bypass network authorization. Check the internal media checksum manifest for every listed file.
