@@ -1,6 +1,7 @@
 [Unit]
 Description=Experimental Puppy50 move live system to RAM after launch
 After=display-manager.service
+OnFailure=p50-stage-failure.service
 
 [Service]
 Type=simple
