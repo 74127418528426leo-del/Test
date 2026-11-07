@@ -1,0 +1,87 @@
+name: Compare v108 and staged v109 on one virtual host
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-benchmark.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install guest tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input/v108 input/v109 out/reports fixture
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input/v108
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-release-candidate-test-only-iso
+          run-id: 42422358970
+          github-token: ${{ github.token }}
+          path: input/v109
+      - name: Pin both images and start local page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/v108/combined.iso | sha256sum -c -
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/v109/staged.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare in alternating order and exercise after unplug
+        timeout-minutes: 16
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web108/boot_bench_fast.py --iso input/v108/combined.iso --out "out/$1" --mode online --allow-no-startup-probe --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          candidate() { python3 -u web109/boot_bench_staged.py --iso input/v109/staged.iso --out "out/$1" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          baseline base1
+          candidate cand1
+          candidate cand2
+          baseline base2
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          names=('base1','cand1','cand2','base2')
+          results={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          assert all(r['media_ejected'] and r['input_sent_after_eject'] and not r['errors'] for r in results.values())
+          assert all(results[n]['staged_ram_ready_seconds'] for n in ('cand1','cand2'))
+          t={n:results[n]['first_home_seen_seconds'] for n in names}
+          t['baseline_mean_seconds']=statistics.mean((t['base1'],t['base2']))
+          t['candidate_mean_seconds']=statistics.mean((t['cand1'],t['cand2']))
+          t['difference_seconds']=t['baseline_mean_seconds']-t['candidate_mean_seconds']
+          t['candidate_ready_seconds']=[results[n]['staged_ram_ready_seconds'] for n in ('cand1','cand2')]
+          t['physical_acer_tested']=False
+          Path('out/reports/comparison.json').write_text(json.dumps(t,indent=2)+'\n');print(json.dumps(t,indent=2))
+          PY
+      - name: Preserve timings and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-vs-v108-comparison
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
