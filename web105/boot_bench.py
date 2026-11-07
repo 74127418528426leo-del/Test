@@ -62,6 +62,8 @@ def main():
     p.add_argument('--bandwidth', type=int, default=0)
     p.add_argument('--boot-enter-at', type=float, default=None,
                    help='For baseline only: press Enter at this elapsed time')
+    p.add_argument('--firmware', choices=['bios', 'uefi'], default='bios')
+    p.add_argument('--media', choices=['optical', 'usb'], default='optical')
     p.add_argument('--emulate-acer-id', action='store_true',
                    help='Use Acer as virtual SMBIOS vendor to exercise the physical startup path')
     args = p.parse_args()
@@ -69,18 +71,29 @@ def main():
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     monitor, serial = out / 'qmp.sock', out / 'serial.log'
-    cd = f'file={iso},if=ide,media=cdrom,id=livecd,readonly=on'
+    cd = (f'file={iso},if=ide,media=cdrom,id=livecd,readonly=on' if args.media == 'optical'
+          else f'file={iso},if=none,id=livecd,format=raw,readonly=on')
     if args.bandwidth:
         cd += f',bps_rd={args.bandwidth}'
     cmd = ['qemu-system-x86_64', '-machine', 'pc,accel=kvm', '-cpu', 'host',
-           '-m', str(args.ram), '-smp', '2', '-drive', cd, '-boot', 'order=d',
+           '-m', str(args.ram), '-smp', '2', '-drive', cd,
+           '-boot', 'order=d' if args.media == 'optical' else 'order=c',
            '-display', 'none', '-vga', 'std', '-qmp', f'unix:{monitor},server=on,wait=off',
            '-serial', f'file:{serial}', '-no-reboot',
            '-nic', 'user,model=e1000,ipv6=off' if args.mode == 'online' else 'none']
     if args.emulate_acer_id:
         cmd += ['-smbios', 'type=1,manufacturer=Acer,product=Aspire-X3950-EMULATED']
+    if args.media == 'usb':
+        cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']
+    if args.firmware == 'uefi':
+        firmware = next((p for p in ['/usr/share/OVMF/OVMF_CODE_4M.fd',
+                                     '/usr/share/OVMF/OVMF_CODE.fd'] if Path(p).exists()), None)
+        if not firmware:
+            raise FileNotFoundError('Install OVMF firmware for the UEFI trial')
+        cmd += ['-bios', firmware]
     result = {'guest_ram_mib': args.ram, 'network_mode': args.mode,
               'virtual_read_cap_bytes_per_second': args.bandwidth or None,
+              'virtual_firmware': args.firmware, 'virtual_media': args.media,
               'acer_vendor_id_only_emulated': args.emulate_acer_id,
               'measurement': 'host monotonic clock from immediately before QEMU process launch',
               'boot_menu_key_sent': False, 'first_home_seen_seconds': None,
@@ -124,11 +137,20 @@ def main():
                         result['errors'].append(f'frame at {elapsed:.1f}: {exc!r}')
                 time.sleep(.8)
             if result['first_home_seen_seconds'] is not None:
-                qmp(monitor, 'human-monitor-command', {'command-line': 'eject -f livecd'})
-                info = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info block livecd'})).lower()
-                result['media_ejected'] = 'not inserted' in info or 'no media' in info
+                if args.media == 'optical':
+                    qmp(monitor, 'human-monitor-command', {'command-line': 'eject -f livecd'})
+                    info = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info block livecd'})).lower()
+                    result['media_ejected'] = 'not inserted' in info or 'no media' in info
+                else:
+                    before = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info qtree'}))
+                    if 'id "bootusb"' not in before:
+                        raise RuntimeError('Cannot find the virtual USB device before unplugging')
+                    qmp(monitor, 'device_del', {'id': 'bootusb'})
+                    time.sleep(2)
+                    info = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info qtree'}))
+                    result['media_ejected'] = 'id "bootusb"' not in info
                 if not result['media_ejected']:
-                    result['errors'].append('CD did not report ejected')
+                    result['errors'].append('Boot media did not report removed')
                 time.sleep(2)
                 nonce = os.environ.get('P50_NONCE', 'P50-TEST')
                 local = 'http://10.0.2.2:8765/after.html?nonce=' + nonce
