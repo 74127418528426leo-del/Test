@@ -49,23 +49,8 @@ jobs:
           ldd "$dm_path" | tee out/reports/dmsetup-ldd.txt
           file out/tools/busybox | tee out/reports/busybox-type.txt
           grep -F 'statically linked' out/reports/busybox-type.txt
-          python3 - "$dm_path" <<'PY'
-          import re,shutil,subprocess,sys
-          from pathlib import Path
-          text=subprocess.check_output(['ldd',sys.argv[1]],text=True)
-          assert 'not found' not in text
-          seen=[]
-          for line in text.splitlines():
-              m=re.search(r'^\s*(\S+)\s+=>\s+(/\S+)',line)
-              if m: name,path=m.group(1),m.group(2)
-              else:
-                  m=re.search(r'^\s*(/\S*ld-linux\S+)',line)
-                  if not m: continue
-                  path=m.group(1); name=Path(path).name
-              shutil.copyfile(path,Path('out/tools/lib')/name,follow_symlinks=True);seen.append(name)
-          assert 'ld-linux-x86-64.so.2' in seen and any(n.startswith('libdevmapper') for n in seen)
-          print('Bundled isolated runtime libraries:',', '.join(seen))
-          PY
+          python3 web109/bundle_runtime.py "$dm_path" out/tools/lib
+          test -x out/tools/lib/ld-linux-x86-64.so.2
           sudo mkdir -p out/main/usr/lib/p50-stage
           sudo cp -a out/tools/. out/main/usr/lib/p50-stage/
           sudo python3 web109/stage_boot_patch.py out/main
