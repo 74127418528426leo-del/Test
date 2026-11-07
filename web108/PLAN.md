@@ -12,6 +12,8 @@ The graphics study found only about 1.2 MB saved from the root by removing Radeo
 
 If candidate checks succeed, combine the no-probe root with the byte-for-byte verified initramfs recompression and reduce the boot menu timeout from two seconds to one. Keep the boot menu usable, regenerate and verify every ISO checksum, compare the exact combined image to v107, and repeat RAM, boot-mode, website and network-restoration tests on the combined image before any release.
 
+Investigate a native two-layer alternative: place the entire unmodified firmware tree in an XZ-compressed SquashFS layer and the remaining full system in a Zstandard-compressed layer. Debian live-boot must merge and copy both into RAM before startup. Compare reconstructed content and metadata to the source root, verify both loop backings in RAM, test actual firmware visibility and browsing after media removal, and measure against the combined image. Do not ship this layer if startup, network, RAM use or hardware compatibility evidence regresses. No network or graphics firmware may be removed for this version.
+
 Verification gates:
 1. Pin the v107 image hash; prove targeted paths and ensure all other firmware entries, browser and other root content are preserved, including comparisons after repacking. Do not delete outside the extracted scratch tree or follow symlinks out of it.
 2. Preserve boot mode, browser sandbox, certificates, network manager and optional proxy safeguards; do not weaken TLS or bypass network authorization. Check the internal media checksum manifest for every listed file.
