@@ -49,6 +49,8 @@ jobs:
           gcc -D_GNU_SOURCE -Wall -Wextra -Werror -O2 -o out/tools/p50-status web109/p50-status.c -lX11
           out/tools/busybox --list | grep -Fx timeout
           out/tools/busybox --list | grep -Fx setsid
+          out/tools/busybox --list | grep -Fx mount
+          out/tools/busybox --list | grep -Fx umount
           cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service,p50-stage-failure.service,p50-diagnostic.sh,p50-diagnostic.service} out/tools/
           chmod 755 out/tools/{dm-init,dm-run,p50-migrate.sh,busybox,dmsetup}
           ldd "$dm_path" | tee out/reports/dmsetup-ldd.txt
@@ -138,7 +140,7 @@ jobs:
           tr -d '\r' <out/qemu/serial.log >out/reports/serial-clean.log
           grep -Fx 'P50_STAGE_COPY_VERIFIED' out/reports/serial-clean.log
           grep -Fx 'P50_STAGE_READY' out/reports/serial-clean.log
-          grep -F 'P50_STAGE_RAM_BACKING=/run/p50-stage/root.squashfs' out/qemu/serial.log
+          grep -F 'P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs' out/qemu/serial.log
           grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
           python3 - <<'PY'
           import json
