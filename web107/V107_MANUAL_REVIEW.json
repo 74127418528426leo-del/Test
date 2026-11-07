@@ -1,0 +1,45 @@
+{
+  "iso_sha256": "cbdf605f87d345ca60d1a0a3cebb20312864c81c2a286c8eacb5acb85769c0c2",
+  "validation_run_id": 42372995731,
+  "explanation": "Home and post-ejection frames visually checked; online cases also show example.com. Hashes bind observations to original evidence.",
+  "cases": {
+    "bios-usb-2048": {
+      "first_home_seconds": 48.48,
+      "network_mode": "online",
+      "artifact_id": 13574084128,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "0c4a4f299a14e2f239bb8daee57b287c0416407a80bcbe3cc7fd972443043e61",
+        "qemu/after_input.png": "7bbbe348445ab4d76f8010ee903a27f65698a85a513d41bbc8e6d819c6d57691",
+        "qemu/external_https.png": "e0e06328db1c71d7bdd4c423339eb7896fa7810940e35ea34ff9729269e05853"
+      }
+    },
+    "bios-usb-2560": {
+      "first_home_seconds": 48.46,
+      "network_mode": "online",
+      "artifact_id": 13574895408,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "50df09b29711d5e7f69046a1adce12b4e71ba64453c7237155af9c38b36cea16",
+        "qemu/after_input.png": "7bbbe348445ab4d76f8010ee903a27f65698a85a513d41bbc8e6d819c6d57691",
+        "qemu/external_https.png": "e0e06328db1c71d7bdd4c423339eb7896fa7810940e35ea34ff9729269e05853"
+      }
+    },
+    "uefi-usb-2560": {
+      "first_home_seconds": 18.02,
+      "network_mode": "offline",
+      "artifact_id": 13574388475,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "67d19af17d96e7602bd62b48c20a2b8603a7bf055cd78292a405b5cc22565405",
+        "qemu/after_input.png": "ef21ae6142e1e90af550752c31d761b46e585b5f6377022c4e116fd63080acf7"
+      }
+    },
+    "uefi-optical-2560": {
+      "first_home_seconds": 28.38,
+      "network_mode": "offline",
+      "artifact_id": 13574019220,
+      "screenshots_sha256": {
+        "qemu/first_home.png": "483e2de962df1e89c061cd2bdef9bf53233814b30853846162bb2ebd3480e646",
+        "qemu/after_input.png": "43a33356887250ac9a53a4792ad8f2533ac0ebd2f49e252255db4f6db8c16faf"
+      }
+    }
+  }
+}
