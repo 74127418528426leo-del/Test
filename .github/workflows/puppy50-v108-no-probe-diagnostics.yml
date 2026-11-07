@@ -1,0 +1,121 @@
+name: Puppy50 v108 startup and RAM diagnostic derivative
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-no-probe-diagnostics.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and guest tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{root,reports,qemu} fixture
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-test-only-iso
+          run-id: 42382223948
+          github-token: ${{ github.token }}
+          path: input
+      - name: Add a temporary guest mount and CPU reporter
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '2f823061cd58db89a183716972b22bb1f8ab1d8ca65637fcb5ad246a72fa1904' input/candidate.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/candidate.iso -extract /live/filesystem.squashfs input/root.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/root input/root.squashfs >out/reports/unsquash.log
+          cat >out/p50-ram-audit <<'EOF'
+          #!/bin/sh
+          sleep 30
+          {
+            echo P50_V108_RAM_DIAGNOSTICS_BEGIN
+            echo P50_CMDLINE
+            cat /proc/cmdline
+            echo P50_CPU_FLAGS
+            grep -m 1 '^flags' /proc/cpuinfo
+            echo P50_LIVE_MOUNTS
+            findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS | grep -E '(^/ |/run/live|/lib/live)' || true
+            echo P50_LOOP_BACKING_FILES
+            for f in /sys/block/loop*/loop/backing_file; do test -f "$f" && cat "$f" || true; done
+            echo P50_NETWORK_UNIT_STATES
+            systemctl is-enabled NetworkManager.service || true
+            systemctl is-active NetworkManager.service || true
+            systemctl is-enabled puppy50-network-probe.service || true
+            systemctl is-active puppy50-network-probe.service || true
+            if [ -e /usr/lib/firefox-esr/distribution/policies.json ]; then echo P50_FIREFOX_POLICY_PRESENT; else echo P50_FIREFOX_POLICY_ABSENT; fi
+            echo P50_GRAPHICAL_CRITICAL_CHAIN
+            systemd-analyze time --no-pager || true
+            systemd-analyze critical-chain display-manager.service --no-pager || true
+            echo P50_FIREFOX_PROCESS_OWNER
+            ps -eo user,comm | grep -i firefox || true
+            echo P50_V108_RAM_DIAGNOSTICS_END
+          } >/dev/ttyS0 2>&1
+          EOF
+          cat >out/p50-ram-audit.service <<'EOF'
+          [Unit]
+          Description=Temporary nonblocking RAM and CPU diagnosis
+          After=systemd-journald.service
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/sbin/p50-ram-audit
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sudo install -m 0755 out/p50-ram-audit out/root/usr/local/sbin/p50-ram-audit
+          sudo install -m 0644 out/p50-ram-audit.service out/root/etc/systemd/system/p50-ram-audit.service
+          sudo ln -s ../p50-ram-audit.service out/root/etc/systemd/system/multi-user.target.wants/p50-ram-audit.service
+      - name: Construct separately identified diagnostic image
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/root out/diagnostic.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          xorriso -indev input/candidate.iso -outdev out/diagnostic.iso -map out/diagnostic.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          sha256sum out/diagnostic.iso >out/reports/diagnostic-sha256.txt
+      - name: Start a local marker for after media removal
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Inspect RAM mounts and effective CPU flags in the derivative
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web108/boot_bench_fast.py --iso out/diagnostic.iso --out out/qemu --mode online --allow-no-startup-probe --ram 3072 --seconds 210 --emulate-acer-id --cpu-model i3-540-conservative --media usb --bandwidth 31457280 | tee out/reports/benchmark.txt
+          grep -F 'P50_V108_RAM_DIAGNOSTICS_BEGIN' out/qemu/serial.log
+          grep -F 'P50_V108_RAM_DIAGNOSTICS_END' out/qemu/serial.log
+          sed -n '/P50_V108_RAM_DIAGNOSTICS_BEGIN/,/P50_V108_RAM_DIAGNOSTICS_END/p' out/qemu/serial.log >out/reports/guest-diagnostics.txt
+          cat out/reports/guest-diagnostics.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path('out/reports/guest-diagnostics.txt').read_text()
+          m=re.search(r'^flags\s*:\s*(.*)$',text,re.MULTILINE)
+          assert m, 'Guest CPU flags not recorded'
+          flags=set(m.group(1).split())
+          assert not {'aes','pclmulqdq','x2apic'} & flags, flags
+          # The guest still reports 3dnowprefetch despite QEMU's requested mask.
+          # Record that limitation rather than treating this as an exact i3 replica.
+          assert {'sse2','ssse3','sse4_1','sse4_2'} <= flags, flags
+          print('Guest lacks AES/PCLMULQDQ/x2APIC; 3dnowprefetch reported:', '3dnowprefetch' in flags)
+          PY
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-diagnostics
+          path: |
+            out/reports/
+            out/qemu/
+          if-no-files-found: warn
+          retention-days: 30
