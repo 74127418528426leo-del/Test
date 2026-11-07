@@ -8,6 +8,8 @@ Experiment: derive an explicitly Acer/Intel graphics oriented image. Remove only
 
 Run an independent lossless experiment on the initramfs: preserve the first three cpio segments byte-for-byte, including AMD and Intel early microcode and early kernel modules, and recompress the final gzip-compressed cpio stream with Zstandard. Verify the uncompressed bytes match exactly and test the real boot path; retain all firmware in this comparison. This is separate from the graphics-profile experiment so performance and compatibility can be attributed correctly.
 
+The graphics study found only about 1.2 MB saved from the root by removing Radeon/Nvidia/AMD graphics files; do not ship that tradeoff without a reproducible meaningful gain. An independent architecture candidate masks the automatic developer-only network probe, which otherwise orders startup after NetworkManager's online wait and a public HTTPS probe. Preserve Firefox TLS, all firmware, NetworkManager and its user-facing controls. The developer-only QEMU proxy opt-in will no longer be active in this candidate. Measure ordinary boot and an intentionally unavailable HTTPS connection separately, and test that browsing works after connectivity returns within the same session.
+
 Verification gates:
 1. Pin the v107 image hash; prove targeted paths and ensure all other firmware entries, browser and other root content are preserved, including comparisons after repacking. Do not delete outside the extracted scratch tree or follow symlinks out of it.
 2. Preserve boot mode, browser sandbox, certificates, network manager and optional proxy safeguards; do not weaken TLS or bypass network authorization. Check the internal media checksum manifest for every listed file.
