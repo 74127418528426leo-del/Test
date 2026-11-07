@@ -1,0 +1,184 @@
+name: Puppy50 v104 - Codec A-B and post-ejection guest proof
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v104-tests.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install read-only image inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p base new roots reports
+      - name: Download pinned baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          run-id: 42321979218
+          github-token: ${{ github.token }}
+          path: base
+      - name: Download exact codec candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Intel_Media_TEST_ONLY_ISO
+          run-id: 42325281517
+          github-token: ${{ github.token }}
+          path: new
+      - name: Compare extracted protected trees and exclude host mount leakage
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '723ef1e2b913241f1b30add3988134cc2b0679ccecfd08959bd4f7bc90fadd27' 'base/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso' | sha256sum -c -
+          (cd new && sha256sum -c SHA256SUMS)
+          printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'new/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso' | sha256sum -c -
+          xorriso -osirrox on -indev base/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso -extract /live/filesystem.squashfs base/root.squashfs >reports/base-extract.log 2>&1
+          xorriso -osirrox on -indev new/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso -extract /live/filesystem.squashfs new/root.squashfs >reports/new-extract.log 2>&1
+          sudo unsquashfs -d roots/base base/root.squashfs >reports/base-unsquash.log 2>&1
+          sudo unsquashfs -d roots/new new/root.squashfs >reports/new-unsquash.log 2>&1
+          sudo python3 web103/audit_critical.py roots/base roots/new | tee reports/protected-tree-comparison.json
+          sudo test -e roots/new/usr/lib/x86_64-linux-gnu/libavcodec.so.61
+          if sudo find roots/base/usr/lib -name 'libavcodec.so*' -print -quit | grep -q .; then exit 1; fi
+      - name: Preserve protected-tree audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_Post_Repack_Protected_Tree_Audit
+          path: reports/
+          retention-days: 20
+          if-no-files-found: warn
+
+  fixture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Generate one shared H.264 fixture
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          mkdir fixture
+          ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=640x360:rate=24' -t 180 -c:v libx264 -preset ultrafast -crf 30 -pix_fmt yuv420p -movflags +faststart -an -y fixture/fixture.mp4
+          (cd fixture && sha256sum fixture.mp4 >SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_Shared_H264_Fixture
+          path: fixture/
+          retention-days: 20
+
+  guest:
+    needs: [fixture, audit]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: v103, kind: media, ram: 4096, label: media_baseline }
+          - { image: v104, kind: media, ram: 4096, label: media_codecs }
+          - { image: v103, kind: fixture, ram: 4096, label: fixture_baseline }
+          - { image: v104, kind: fixture, ram: 4096, label: fixture_codecs }
+          - { image: v104, kind: eject, ram: 2048, label: eject_2048 }
+          - { image: v104, kind: eject, ram: 2560, label: eject_2560 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate local test harnesses
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s web103 -p 'test_*.py' -v
+          python3 -m py_compile web103/media_test.py web103/post_eject.py
+          mkdir -p input evidence/{qemu,reports}
+      - name: Install QEMU and enable KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Download v103 baseline
+        if: matrix.image == 'v103'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          run-id: 42321979218
+          github-token: ${{ github.token }}
+          path: input
+      - name: Download codec candidate
+        if: matrix.image == 'v104'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Intel_Media_TEST_ONLY_ISO
+          run-id: 42325281517
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact input ISO
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          if [ "$IMAGE" = v103 ]; then
+            printf '%s  %s\n' '723ef1e2b913241f1b30add3988134cc2b0679ccecfd08959bd4f7bc90fadd27' 'input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso' | sha256sum -c -
+          else
+            printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'input/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso' | sha256sum -c -
+          fi
+      - name: Start optional host HTTPS fallback
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close()'
+      - name: Download the same H.264 fixture for both variants
+        if: matrix.kind == 'fixture'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Shared_H264_Fixture
+          path: fixture
+      - name: Start a host-only fixture or fresh post-ejection marker
+        if: matrix.kind == 'fixture' || matrix.kind == 'eject'
+        env:
+          KIND: ${{ matrix.kind }}
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.ram }}
+        run: |
+          set -euo pipefail
+          mkdir -p fixture
+          if [ "$KIND" = fixture ]; then (cd fixture && sha256sum -c SHA256SUMS && cp SHA256SUMS ../evidence/reports/fixture-sha256.txt); fi
+          nohup python3 -u web103/fixture_server.py --fixture fixture/fixture.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture-server.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Run actual guest trial
+        timeout-minutes: 11
+        env:
+          IMAGE: ${{ matrix.image }}
+          KIND: ${{ matrix.kind }}
+          RAM: ${{ matrix.ram }}
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.ram }}
+        run: |
+          set +e
+          if [ "$IMAGE" = v103 ]; then iso=input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso; else iso=input/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso; fi
+          if [ "$KIND" = fixture ]; then
+            python3 -u web103/media_test.py --target fixture --iso "$iso" --out evidence/qemu --ram "$RAM" >evidence/reports/guest-test.log 2>&1
+          elif [ "$KIND" = media ]; then
+            python3 -u web103/media_test.py --target pexels --iso "$iso" --out evidence/qemu --ram "$RAM" >evidence/reports/guest-test.log 2>&1
+          else
+            python3 -u web103/post_eject.py --iso "$iso" --out evidence/qemu --ram "$RAM" >evidence/reports/guest-test.log 2>&1
+          fi
+          result=$?
+          printf 'qemu_test_exit=%s\n' "$result" >evidence/reports/exit-code.txt
+          exit "$result"
+      - name: Preserve actual screenshots, telemetry, and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v104_${{ matrix.label }}_proof
+          path: evidence/
+          retention-days: 20
+          if-no-files-found: warn
