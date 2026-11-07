@@ -80,11 +80,22 @@ jobs:
           P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 -u web107/boot_bench.py --iso out/diagnostic.iso --out out/qemu --mode online --ram 3072 --seconds 210 --emulate-acer-id --cpu-model Westmere --media usb --bandwidth 31457280 | tee out/reports/benchmark.txt
+          python3 -u web107/boot_bench.py --iso out/diagnostic.iso --out out/qemu --mode online --ram 3072 --seconds 210 --emulate-acer-id --cpu-model i3-540-conservative --media usb --bandwidth 31457280 | tee out/reports/benchmark.txt
           grep -F 'P50_V107_RAM_DIAGNOSTICS_BEGIN' out/qemu/serial.log
           grep -F 'P50_V107_RAM_DIAGNOSTICS_END' out/qemu/serial.log
           sed -n '/P50_V107_RAM_DIAGNOSTICS_BEGIN/,/P50_V107_RAM_DIAGNOSTICS_END/p' out/qemu/serial.log >out/reports/guest-diagnostics.txt
           cat out/reports/guest-diagnostics.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path('out/reports/guest-diagnostics.txt').read_text()
+          m=re.search(r'^flags\s*:\s*(.*)$',text,re.MULTILINE)
+          assert m, 'Guest CPU flags not recorded'
+          flags=set(m.group(1).split())
+          assert not {'aes','pclmulqdq','x2apic','3dnowprefetch'} & flags, flags
+          assert {'sse2','ssse3','sse4_1','sse4_2'} <= flags, flags
+          print('Guest reported conservative CPU feature mask.')
+          PY
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
