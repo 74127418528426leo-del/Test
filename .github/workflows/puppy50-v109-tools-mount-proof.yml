@@ -1,0 +1,49 @@
+name: Verify protected executable RAM tools mount
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-tools-mount-proof.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Test a noexec parent and read-only executable submount
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends busybox-static
+          mkdir -p evidence parent
+          outer=0; inner=0
+          cleanup() {
+            if [ "$inner" = 1 ]; then sudo umount "$PWD/parent/tools" || true; fi
+            if [ "$outer" = 1 ]; then sudo umount "$PWD/parent" || true; fi
+          }
+          trap cleanup EXIT
+          sudo mount -t tmpfs -o size=64M,mode=0755,nosuid,nodev,noexec tmpfs "$PWD/parent"
+          outer=1
+          sudo cp /bin/busybox parent/noexec-busybox
+          if sudo "$PWD/parent/noexec-busybox" true 2>evidence/parent-error.txt; then echo 'Noexec parent unexpectedly allowed execution' >&2; exit 1; fi
+          sudo mkdir parent/tools
+          sudo mount -t tmpfs -o size=32M,mode=0755,nosuid,nodev,exec tmpfs "$PWD/parent/tools"
+          inner=1
+          sudo cp /bin/busybox parent/tools/busybox
+          sudo chown -R 0:0 parent/tools
+          sudo chmod -R go-w parent/tools
+          sudo mount -o remount,ro,nosuid,nodev,exec "$PWD/parent/tools"
+          sudo "$PWD/parent/tools/busybox" true
+          if sudo touch parent/tools/should-not-write 2>evidence/readonly-error.txt; then echo 'Read-only tools mount allowed writes' >&2; exit 1; fi
+          findmnt -T "$PWD/parent/tools" -o TARGET,SOURCE,FSTYPE,OPTIONS >evidence/mount.txt
+          grep -F 'ro,' evidence/mount.txt
+          echo 'Execution succeeds in read-only nested tmpfs; parent remains noexec.' | tee evidence/result.txt
+      - name: Keep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-tools-mount-proof
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
