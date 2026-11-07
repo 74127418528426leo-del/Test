@@ -126,9 +126,11 @@ jobs:
           from pathlib import Path
           from zipfile import ZipFile,ZIP_DEFLATED
           root=Path('evidence')
+          audit_allow={'protected-tree-comparison.json','base-extract.log','new-extract.log','base-unsquash.log','new-unsquash.log'}
           with ZipFile('dist/Puppy50_v104_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
               for p in sorted(root.rglob('*')):
-                  if p.is_file():z.write(p,p.as_posix())
+                  if p.is_file() and (not p.is_relative_to(root/'audit') or p.name in audit_allow):
+                      z.write(p,p.as_posix())
           PY
       - name: Create the exact build tag and experimental release
         env:
@@ -139,7 +141,7 @@ jobs:
           tag='puppy50-v104-intel-firefox-media'
           build_sha='677d944de32048c8c9d81bc2f7d5c6170e114022'
           if gh release view "$tag" >/dev/null 2>&1; then printf '%s\n' 'Release exists; refusing overwrite.'; exit 19; fi
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null || true)"
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha // empty' 2>/dev/null || true)"
           if [ -z "$existing" ]; then
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
           else
