@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/lib/p50-stage/lib/ld-linux-x86-64.so.2 --library-path /usr/lib/p50-stage/lib /usr/lib/p50-stage/dmsetup --noudevsync "$@"
