@@ -12,7 +12,7 @@ TABLE_LOADED=0
 SWITCH_ATTEMPTED=0
 SWITCHED=0
 READY=0
-exec >/dev/ttyS0 2>&1
+if [ -c /dev/ttyS0 ]; then exec >/dev/ttyS0 2>&1; fi
 fail() { echo "P50_STAGE_FAILED: $*"; exit 1; }
 cleanup() {
     if [ "$READY" = 1 ]; then return; fi
@@ -25,6 +25,7 @@ cleanup() {
         # Keep both devices and the RAM copy until reboot; never claim ready.
         echo P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH
     fi
+    printf 'not ready\n' > /run/p50-stage/FAILED || true
     echo P50_STAGE_NOT_READY
 }
 trap cleanup EXIT
