@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -86,11 +87,17 @@ def main():
     if args.media == 'usb':
         cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']
     if args.firmware == 'uefi':
-        firmware = next((p for p in ['/usr/share/OVMF/OVMF_CODE_4M.fd',
-                                     '/usr/share/OVMF/OVMF_CODE.fd'] if Path(p).exists()), None)
+        pairs = [('/usr/share/OVMF/OVMF_CODE_4M.fd', '/usr/share/OVMF/OVMF_VARS_4M.fd'),
+                 ('/usr/share/OVMF/OVMF_CODE.fd', '/usr/share/OVMF/OVMF_VARS.fd')]
+        firmware = next(((code, var) for code, var in pairs
+                         if Path(code).is_file() and Path(var).is_file()), None)
         if not firmware:
-            raise FileNotFoundError('Install OVMF firmware for the UEFI trial')
-        cmd += ['-bios', firmware]
+            raise FileNotFoundError('Install OVMF code and variables for the UEFI trial')
+        code, variables = firmware
+        vars_copy = out / 'OVMF_VARS.fd'
+        shutil.copyfile(variables, vars_copy)
+        cmd += ['-drive', f'if=pflash,format=raw,unit=0,readonly=on,file={code}',
+                '-drive', f'if=pflash,format=raw,unit=1,file={vars_copy}']
     result = {'guest_ram_mib': args.ram, 'network_mode': args.mode,
               'virtual_read_cap_bytes_per_second': args.bandwidth or None,
               'virtual_firmware': args.firmware, 'virtual_media': args.media,
