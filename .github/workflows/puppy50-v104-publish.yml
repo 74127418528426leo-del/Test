@@ -1,0 +1,153 @@
+name: Puppy50 v104 - Publish reviewed experimental image
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v104-publish.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact reviewed candidate ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Intel_Media_TEST_ONLY_ISO
+          run-id: 42325281517
+          github-token: ${{ github.token }}
+          path: iso
+      - name: Download post-repack protected-tree audit
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Post_Repack_Protected_Tree_Audit
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/audit
+      - name: Download package and build audit
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Media_Build_Audit
+          run-id: 42325281517
+          github-token: ${{ github.token }}
+          path: evidence/build-audit
+      - name: Download 2.5 GiB post-ejection guest proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_eject_2560_proof
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/eject2560
+      - name: Download 2 GiB post-ejection guest proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_eject_2048_proof
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/eject2048
+      - name: Download codec candidate video proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_fixture_codecs_proof
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/fixture-codecs
+      - name: Download baseline video proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_fixture_baseline_proof
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/fixture-baseline
+      - name: Download Pexels candidate proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_media_codecs_proof
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/pexels
+      - name: Download earlier Pexels failure proof
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_pexels4k_4096MiB_site_proof
+          run-id: 42322593275
+          github-token: ${{ github.token }}
+          path: evidence/pexels-v103
+      - name: Download reproducible shared video fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v104_Shared_H264_Fixture
+          run-id: 42325761511
+          github-token: ${{ github.token }}
+          path: evidence/fixture
+      - name: Verify pinned ISO and reviewed guest evidence
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'iso/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso' | sha256sum -c -
+          (cd iso && sha256sum -c SHA256SUMS)
+          (cd evidence/fixture && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          review=json.loads(Path('reports/V104_MANUAL_REVIEW.json').read_text())
+          assert review['candidate_sha256']=='f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5'
+          assert review['build_commit']=='677d944de32048c8c9d81bc2f7d5c6170e114022'
+          assert review['build_run_id']==42325281517 and review['test_run_id']==42325761511
+          assert Path('iso/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso').stat().st_size==768933888
+          assert not review['physical_wifi_tested'] and not review['384mib_goal_met']
+          audit=json.loads(Path('evidence/audit/protected-tree-comparison.json').read_text())
+          assert audit['difference_count']==0 and audit['protected_entries_baseline']>4000
+          result=json.loads(Path('evidence/eject2560/qemu/result.json').read_text())
+          assert result['guest_progress_evidence'] and result['guest_ca_verified_https_probe']
+          assert result['guest_nonroot_firefox_started'] and result['guest_ram_mib']==2560
+          assert result['heartbeat_at_end']>result['heartbeat_at_eject']>0
+          for entry in review['reviewed_frames']:
+              path=Path('evidence')/entry['evidence_path']
+              assert hashlib.sha256(path.read_bytes()).hexdigest()==entry['sha256'],str(path)
+          assert review['post_eject_external_page_visually_verified']
+          assert 'TEST_RESULTS_PLACEHOLDER' not in Path('reports/V104_RELEASE_NOTES.md').read_text()
+          print('Exact ISO, protected-tree audit, live guest heartbeat and reviewed frame hashes match.')
+          PY
+      - name: Create durable evidence archive and exact checksum
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso dist/
+          cp reports/V104_MANUAL_REVIEW.json dist/
+          cp reports/V104_RELEASE_NOTES.md dist/README_V104_EXPERIMENTAL.md
+          (cd dist && sha256sum Puppy50_v104_Intel_Media_EXPERIMENTAL.iso >SHA256SUMS)
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          root=Path('evidence')
+          with ZipFile('dist/Puppy50_v104_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file():z.write(p,p.as_posix())
+          PY
+      - name: Create the exact build tag and experimental release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          tag='puppy50-v104-intel-firefox-media'
+          build_sha='677d944de32048c8c9d81bc2f7d5c6170e114022'
+          if gh release view "$tag" >/dev/null 2>&1; then printf '%s\n' 'Release exists; refusing overwrite.'; exit 19; fi
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "$existing" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso \
+            dist/SHA256SUMS dist/README_V104_EXPERIMENTAL.md \
+            dist/V104_MANUAL_REVIEW.json dist/Puppy50_v104_Test_Evidence.zip \
+            --verify-tag --title 'Puppy50 v104 - Intel Firefox Media Live ISO (EXPERIMENTAL)' \
+            --notes-file reports/V104_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,assets
