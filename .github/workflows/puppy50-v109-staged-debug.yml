@@ -44,7 +44,7 @@ jobs:
           cp "$dm_path" out/tools/dmsetup
           cp /bin/busybox out/tools/busybox
           gcc -Wall -Wextra -Werror -static -O2 -s -o out/tools/p50-switch web109/p50-switch.c
-          cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service} out/tools/
+          cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service,p50-diagnostic.sh,p50-diagnostic.service} out/tools/
           chmod 755 out/tools/{dm-init,dm-run,p50-migrate.sh,busybox,dmsetup}
           ldd "$dm_path" | tee out/reports/dmsetup-ldd.txt
           file out/tools/busybox | tee out/reports/busybox-type.txt
@@ -54,6 +54,19 @@ jobs:
           sudo mkdir -p out/main/usr/lib/p50-stage
           sudo cp -a out/tools/. out/main/usr/lib/p50-stage/
           sudo python3 web109/stage_boot_patch.py out/main
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/main/usr/lib/live/boot/9990-main.sh');s=p.read_text()
+          marker='\n\tFstab\n\tNetbase\n';assert s.count(marker)==1
+          inject="""
+          \tmkdir -p "${rootmnt}/usr/local/sbin" "${rootmnt}/etc/systemd/system/multi-user.target.wants"
+          \tcp /usr/lib/p50-stage/p50-diagnostic.sh "${rootmnt}/usr/local/sbin/p50-diagnostic.sh"
+          \tchmod 755 "${rootmnt}/usr/local/sbin/p50-diagnostic.sh"
+          \tcp /usr/lib/p50-stage/p50-diagnostic.service "${rootmnt}/etc/systemd/system/"
+          \tln -s ../p50-diagnostic.service "${rootmnt}/etc/systemd/system/multi-user.target.wants/p50-diagnostic.service"
+          """
+          p.write_text(s.replace(marker,inject+marker,1))
+          PY
           sudo sh -n out/main/usr/lib/live/boot/9990-misc-helpers.sh
           sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
           sha256sum out/original.initrd out/early-prefix out/original.squashfs >out/reports/input-sha256.txt
@@ -112,7 +125,9 @@ jobs:
           P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 -u web109/boot_bench_staged.py --iso out/staged.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 95 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          cp web109/boot_bench_staged.py out/debug_bench.py
+          sed -i 's/deadline = time.monotonic() + 240/deadline = time.monotonic() + 90/' out/debug_bench.py
+          python3 -u out/debug_bench.py --iso out/staged.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 95 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
           tr -d '\r' <out/qemu/serial.log >out/reports/serial-clean.log
           grep -Fx 'P50_STAGE_COPY_VERIFIED' out/reports/serial-clean.log
           grep -Fx 'P50_STAGE_READY' out/reports/serial-clean.log
