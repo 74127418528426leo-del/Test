@@ -30,6 +30,10 @@ def migration_status(serial_text):
     return 'ready' if 'P50_STAGE_READY' in lines else 'pending'
 
 
+def should_select_fallback(requested, menu_state, already_sent):
+    return requested and menu_state == 'default' and not already_sent
+
+
 def home_visible(image):
     image = image.convert('RGB')
     if image.size != (1280, 800):
@@ -95,11 +99,15 @@ def main():
                    help='For images that intentionally do not perform automatic startup probes; inspect browser HTTPS screenshots')
     p.add_argument('--test-network-restore', action='store_true',
                    help='Request host to restore HTTPS, then try browsing in the same session')
+    p.add_argument('--select-fullram-fallback', action='store_true',
+                   help='Select the second BIOS entry before its one-second timeout')
     p.add_argument('--wait-ram-ready', action='store_true',
                    help='Wait for the staged RAM migration marker before unplugging media')
     p.add_argument('--emulate-acer-id', action='store_true',
                    help='Use Acer as virtual SMBIOS vendor to exercise the physical startup path')
     args = p.parse_args()
+    if args.select_fullram_fallback and (args.firmware != 'bios' or args.wait_ram_ready):
+        raise ValueError('The full-RAM fallback selection requires BIOS and no staged wait')
     if args.expect_no_https and args.mode != 'online':
         raise ValueError('This controlled condition requires a virtual NIC')
     if args.test_network_restore and not args.expect_no_https:
@@ -144,7 +152,7 @@ def main():
               'startup_probe_optional_for_test': args.allow_no_startup_probe,
               'acer_vendor_id_only_emulated': args.emulate_acer_id,
               'measurement': 'host monotonic clock from immediately before QEMU process launch',
-              'boot_menu_key_sent': False, 'first_home_seen_seconds': None,
+              'boot_menu_key_sent': False, 'fullram_fallback_selected': False, 'first_home_seen_seconds': None,
               'timestamps_are_qemu_not_physical_acer': True,
               'media_ejected': False, 'input_sent_after_eject': False,
               'staged_ram_ready_seconds': None,
@@ -171,6 +179,33 @@ def main():
                         if marker in serial_text and marker not in result['serial_marker_first_seen_seconds']:
                             result['serial_marker_first_seen_seconds'][marker] = round(elapsed, 2)
                 if monitor.exists():
+                    if args.select_fullram_fallback and not result['fullram_fallback_selected']:
+                        from web105.menu_selection import highlighted
+                        from web103.site_test import send_key
+                        ppm=out/'menu-current.ppm'
+                        state=None
+                        try:
+                            qmp(monitor, 'screendump', {'filename': str(ppm)})
+                            with Image.open(ppm) as img:
+                                img.load()
+                                state=highlighted(img)
+                                if state == 'default': img.save(out/'fallback-menu-default.png')
+                        except (OSError, ValueError):
+                            pass
+                        if should_select_fallback(True, state, False):
+                            result['boot_menu_key_sent']=True
+                            send_key(monitor, ['down'], 100)
+                            time.sleep(.1)
+                            qmp(monitor, 'screendump', {'filename': str(ppm)})
+                            with Image.open(ppm) as img:
+                                img.load()
+                                if highlighted(img) != 'recovery':
+                                    img.save(out/'fallback-menu-unexpected.png')
+                                    raise RuntimeError('Second BIOS menu entry was not highlighted')
+                                img.save(out/'fallback-menu-selected.png')
+                            send_key(monitor, ['ret'], 100)
+                            result['fullram_fallback_selected']=True
+                            result['fallback_selected_seconds']=round(time.monotonic()-started,2)
                     try:
                         checkpoint = int(elapsed // 10) * 10
                         name = f'checkpoint_{checkpoint:03d}.png' if checkpoint > last_checkpoint else None
@@ -185,7 +220,7 @@ def main():
                             break
                     except Exception as exc:
                         result['errors'].append(f'frame at {elapsed:.1f}: {exc!r}')
-                time.sleep(.8)
+                time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)
             if result['first_home_seen_seconds'] is not None:
                 if args.wait_ram_ready:
                     deadline = time.monotonic() + 240
@@ -253,6 +288,8 @@ def main():
     if missing_required_probe(args.mode, args.expect_no_https, args.allow_no_startup_probe,
                               result['guest_ca_https_probe']):
         raise SystemExit('Guest CA-verified HTTPS probe was not observed')
+    if args.select_fullram_fallback and not result['fullram_fallback_selected']:
+        raise SystemExit('The full-RAM fallback menu entry was not selected')
     if args.wait_ram_ready and result['staged_ram_ready_seconds'] is None:
         raise SystemExit('Guest did not prove staged RAM migration ready')
     if args.test_network_restore and not result['network_restored_signal_observed']:
