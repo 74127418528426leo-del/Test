@@ -1,0 +1,122 @@
+name: Puppy50 v105 combined fast startup trial
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-fast.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  make-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+          mkdir -p input out/{cfg,reports,verify}
+          python3 -m unittest discover -s web105 -p test_boot_menu.py -v
+      - name: Retrieve pinned nonblocking startup build
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-test-only-iso
+          run-id: 42329846178
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify and add automatic boot menu
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          printf '%s  %s\n' 'b08366c8a7d95c988b6707268956b022c9556457684d31c5f0592e6c25014a92' 'input/Puppy50_v105_Fastboot_TEST_ONLY.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/Puppy50_v105_Fastboot_TEST_ONLY.iso -extract /isolinux/isolinux.cfg out/cfg/isolinux.cfg -extract /boot/grub/config.cfg out/cfg/grub.cfg -extract /live/filesystem.squashfs out/verify/root-before.squashfs >out/reports/extract.log 2>&1
+          chmod u+w out/cfg/isolinux.cfg out/cfg/grub.cfg
+          python3 web105/boot_menu.py out/cfg/isolinux.cfg out/cfg/grub.cfg
+          xorriso -indev input/Puppy50_v105_Fastboot_TEST_ONLY.iso -outdev out/Puppy50_v105_Fast_TEST_ONLY.iso -map out/cfg/isolinux.cfg /isolinux/isolinux.cfg -map out/cfg/grub.cfg /boot/grub/config.cfg -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/Puppy50_v105_Fast_TEST_ONLY.iso -extract /live/filesystem.squashfs out/verify/root-after.squashfs -extract /isolinux/isolinux.cfg out/verify/isolinux.cfg -extract /boot/grub/config.cfg out/verify/grub.cfg >out/reports/reextract.log 2>&1
+          cmp out/verify/root-before.squashfs out/verify/root-after.squashfs
+          cmp out/cfg/isolinux.cfg out/verify/isolinux.cfg
+          cmp out/cfg/grub.cfg out/verify/grub.cfg
+          xorriso -indev out/Puppy50_v105_Fast_TEST_ONLY.iso -report_el_torito plain >out/reports/el-torito.txt 2>&1
+          sha256sum out/verify/root-before.squashfs >out/reports/root-sha256.txt
+          (cd out && sha256sum Puppy50_v105_Fast_TEST_ONLY.iso >SHA256SUMS)
+          cat out/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Puppy50-v105-combined-audit
+          path: |
+            out/reports/
+            out/cfg/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-combined-test-only
+          path: |
+            out/Puppy50_v105_Fast_TEST_ONLY.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 7
+  compare:
+    needs: make-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [online, offline]
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p base fast evidence/{base,fast,reports} fixture
+      - name: Retrieve menu-only baseline from verified experiment
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-test-only
+          run-id: 42330235182
+          github-token: ${{ github.token }}
+          path: base
+      - name: Retrieve combined candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-combined-test-only
+          path: fast
+      - name: Verify both exact ISOs
+        run: |
+          set -euo pipefail
+          (cd base && sha256sum -c SHA256SUMS)
+          (cd fast && sha256sum -c SHA256SUMS)
+          cp base/SHA256SUMS evidence/reports/base-sha256.txt
+          cp fast/SHA256SUMS evidence/reports/fast-sha256.txt
+      - name: Start bridge and fresh marker fixture
+        if: matrix.mode == 'online'
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Measure both on this same virtual-machine host
+        env:
+          MODE: ${{ matrix.mode }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web105/boot_bench.py --iso base/Puppy50_v105_Autoboot_TEST_ONLY.iso --out evidence/base --mode "$MODE" --ram 2560 --seconds 210 --emulate-acer-id; }
+          optimized() { python3 -u web105/boot_bench.py --iso fast/Puppy50_v105_Fast_TEST_ONLY.iso --out evidence/fast --mode "$MODE" --ram 2560 --seconds 210 --emulate-acer-id; }
+          if [ "$MODE" = online ]; then baseline; optimized; else optimized; baseline; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Puppy50-v105-combined-comparison-${{ matrix.mode }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
