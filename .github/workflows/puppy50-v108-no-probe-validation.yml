@@ -1,0 +1,92 @@
+name: Puppy50 v108 no-probe exact image validation
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-no-probe-validation.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    continue-on-error: ${{ matrix.trial == 'bios-usb-1024' || matrix.trial == 'bios-usb-1536' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-usb-1024, bios-usb-1536, bios-usb-2048, uefi-usb-offline-2048, uefi-optical-online-2560, connectivity-restored]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install guest tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil iptables
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/reports fixture
+          lscpu >evidence/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-test-only-iso
+          run-id: 42382223948
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify candidate and start local marker
+        env:
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.trial }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '2f823061cd58db89a183716972b22bb1f8ab1d8ca65637fcb5ad246a72fa1904' input/candidate.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot and test browser after unplugging virtual media
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.trial }}
+        run: |
+          set -euo pipefail
+          bench() { python3 -u web108/boot_bench_fast.py --iso input/candidate.iso --out evidence/qemu --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --allow-no-startup-probe "$@"; }
+          case "$TRIAL" in
+            bios-usb-1024) bench --mode online --ram 1024 --media usb --bandwidth 31457280 ;;
+            bios-usb-1536) bench --mode online --ram 1536 --media usb --bandwidth 31457280 ;;
+            bios-usb-2048) bench --mode online --ram 2048 --media usb --bandwidth 31457280 ;;
+            uefi-usb-offline-2048) bench --mode offline --ram 2048 --firmware uefi --media usb ;;
+            uefi-optical-online-2560) bench --mode online --ram 2560 --firmware uefi --media optical ;;
+            connectivity-restored)
+              runner_uid=$(id -u)
+              sudo iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP
+              cleanup() { if sudo iptables -C OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP 2>/dev/null; then sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP; fi; }
+              trap cleanup EXIT
+              if curl --noproxy '*' --silent --connect-timeout 3 --max-time 5 https://example.com/ >/dev/null; then echo 'Direct HTTPS was not blocked' >&2; exit 1; fi
+              (
+                for n in $(seq 1 240); do
+                  if [ -f evidence/qemu/network_restore_requested ]; then
+                    sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP
+                    touch evidence/qemu/network_restored
+                    exit 0
+                  fi
+                  sleep 1
+                done
+                exit 1
+              ) &
+              watcher=$!
+              bench --mode online --ram 3072 --media usb --bandwidth 31457280 --expect-no-https --test-network-restore
+              wait "$watcher"
+              ;;
+            *) exit 1 ;;
+          esac
+          if grep -F 'PUPPY50_V85_NETWORK_PROBE_START' evidence/qemu/serial.log; then echo 'Masked probe unexpectedly ran' >&2; exit 1; fi
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' evidence/qemu/qemu.log; then exit 1; fi
+          if [ "$TRIAL" != uefi-usb-offline-2048 ]; then
+            grep -F "GET /after.html?nonce=$P50_NONCE" evidence/reports/fixture.log | grep -F ' 200 '
+          fi
+      - name: Preserve screenshots, results and logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-no-probe-validation-${{ matrix.trial }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
