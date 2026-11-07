@@ -12,8 +12,16 @@ TABLE_LOADED=0
 SWITCH_ATTEMPTED=0
 SWITCHED=0
 READY=0
-if [ -c /dev/ttyS0 ]; then exec >/dev/ttyS0 2>&1; fi
-fail() { echo "P50_STAGE_FAILED: $*"; exit 1; }
+# Keep the service detached from any controlling serial terminal. A short,
+# best-effort child reporter supplies VM diagnostics without affecting boot.
+exec >>/run/p50-stage/migration.log 2>&1
+emit() {
+    printf '%s\n' "$*"
+    if [ -c /dev/ttyS0 ]; then
+        "$B" timeout 1 "$B" setsid "$B" sh -c 'printf "%s\n" "$1" > /dev/ttyS0' p50-serial "$*" </dev/null >/dev/null 2>&1 || true
+    fi
+}
+fail() { emit "P50_STAGE_FAILED: $*"; exit 1; }
 cleanup() {
     if [ "$READY" = 1 ]; then return; fi
     if [ "$SWITCH_ATTEMPTED" = 0 ]; then
@@ -23,15 +31,15 @@ cleanup() {
     else
         # A failed or interrupted switch has uncertain active backing.
         # Keep both devices and the RAM copy until reboot; never claim ready.
-        echo P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH
+        emit P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH
     fi
     printf 'not ready\n' > /run/p50-stage/FAILED || true
-    echo P50_STAGE_NOT_READY
+    emit P50_STAGE_NOT_READY
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 "$B" sleep 8
-echo P50_STAGE_START
+emit P50_STAGE_START
 [ -f "$SRC" ] && [ ! -L "$SRC" ] || fail 'source image absent or symlink'
 [ -r "$MANIFEST" ] || fail 'media checksum manifest absent'
 [ ! -e "$COPY" ] || fail 'RAM destination already exists'
@@ -60,13 +68,13 @@ case "$old_name" in loop[0-9]*) ;; *) fail 'original target is not a loop device
 old_backing=$("$B" cat "/sys/block/$old_name/loop/backing_file") || fail 'cannot inspect original loop backing'
 case "$old_backing" in "$SRC"|"${SRC#/}") ;; *) fail 'original loop does not point to boot image';; esac
 OLD_LOOP="/dev/$old_name"
-echo P50_STAGE_COPYING
+emit P50_STAGE_COPYING
 "$B" cp "$SRC" "$COPY" || fail 'copy failed'
 [ "$("$B" stat -c %s "$COPY")" = "$size" ] || fail 'copied size differs'
 actual=$("$B" sha256sum "$COPY") || fail 'copy hash failed'
 actual=${actual%% *}
 [ "$actual" = "$expected" ] || fail 'copied hash differs from ISO manifest'
-echo P50_STAGE_COPY_VERIFIED
+emit P50_STAGE_COPY_VERIFIED
 NEW_LOOP=$("$B" losetup -f) || fail 'no free loop device'
 "$B" losetup -r "$NEW_LOOP" "$COPY" || fail 'cannot attach RAM copy'
 new_name=${NEW_LOOP##*/}
@@ -89,7 +97,7 @@ new_backing=$("$B" cat "/sys/block/$new_name/loop/backing_file") || fail 'cannot
 case "$new_backing" in "$COPY"|"${COPY#/}") ;; *) fail 'new loop backing is not the RAM copy';; esac
 "$B" losetup -d "$OLD_LOOP" || fail 'old loop is still in use'
 printf '%s\n' "$new_table" > /run/p50-stage/READY
-echo "P50_STAGE_RAM_BACKING=$new_backing"
-echo "P50_STAGE_RAM_TABLE=$new_table"
+emit "P50_STAGE_RAM_BACKING=$new_backing"
+emit "P50_STAGE_RAM_TABLE=$new_table"
 READY=1
-echo P50_STAGE_READY
+emit P50_STAGE_READY
