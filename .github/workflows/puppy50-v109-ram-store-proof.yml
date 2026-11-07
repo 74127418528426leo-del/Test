@@ -1,0 +1,45 @@
+name: Verify sized RAM store under small run mount
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-ram-store-proof.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Verify separately sized noexec RAM storage
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends busybox-static
+          mkdir -p evidence parent
+          outer=0;inner=0
+          cleanup() {
+            if [ "$inner" = 1 ]; then sudo umount "$PWD/parent/store" || true; fi
+            if [ "$outer" = 1 ]; then sudo umount "$PWD/parent" || true; fi
+          }
+          trap cleanup EXIT
+          sudo mount -t tmpfs -o size=8M,mode=0755,nosuid,nodev,noexec tmpfs "$PWD/parent"
+          outer=1
+          sudo mkdir parent/store
+          sudo /bin/busybox mount -t tmpfs -o size=24M,mode=0700,nosuid,nodev,noexec tmpfs "$PWD/parent/store"
+          inner=1
+          sudo dd if=/dev/zero of=parent/store/test-data bs=1M count=16 status=none
+          test "$(sudo stat -c %s parent/store/test-data)" = 16777216
+          findmnt -T "$PWD/parent/store" -o TARGET,SOURCE,FSTYPE,OPTIONS >evidence/store-mount.txt
+          grep -F 'noexec' evidence/store-mount.txt
+          sudo cp /bin/busybox parent/store/noexec-test
+          if sudo "$PWD/parent/store/noexec-test" true 2>evidence/noexec-error.txt; then echo 'RAM store unexpectedly allowed execution' >&2; exit 1; fi
+          echo 'A 16 MiB copy succeeded in the independent 24 MiB RAM store under an 8 MiB parent.' | tee evidence/result.txt
+      - name: Keep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-ram-store-proof
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
