@@ -60,6 +60,8 @@ def main():
     p.add_argument('--ram', type=int, default=2560)
     p.add_argument('--seconds', type=int, default=210)
     p.add_argument('--bandwidth', type=int, default=0)
+    p.add_argument('--boot-enter-at', type=float, default=None,
+                   help='For baseline only: press Enter at this elapsed time')
     p.add_argument('--emulate-acer-id', action='store_true',
                    help='Use Acer as virtual SMBIOS vendor to exercise the physical startup path')
     args = p.parse_args()
@@ -94,6 +96,12 @@ def main():
             last_checkpoint = -10
             while time.monotonic() - started < args.seconds and vm.poll() is None:
                 elapsed = time.monotonic() - started
+                if (args.boot_enter_at is not None and not result['boot_menu_key_sent']
+                        and elapsed >= args.boot_enter_at and monitor.exists()):
+                    from web103.site_test import send_key
+                    send_key(monitor, ['ret'], 110)
+                    result['boot_menu_key_sent'] = True
+                    result['boot_enter_seconds'] = round(time.monotonic() - started, 2)
                 if serial.exists():
                     serial_text = serial.read_text(errors='replace')
                     for marker in markers:
