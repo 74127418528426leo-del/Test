@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Measure a real QEMU/KVM boot to the Puppy50 Firefox home page.
+
+The reported time starts immediately before QEMU is spawned and includes its
+virtual firmware and boot menu. It is not the timing of a physical computer.
+The home-page image is an objective coarse detector; retain frames for review.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+def home_visible(image):
+    image = image.convert('RGB')
+    if image.size != (1280, 800):
+        return False
+    # Independent page regions plus a browser toolbar, not a single pixel.
+    header = [(50, 110), (300, 120), (30, 155), (500, 160)]
+    body = [(120, 180), (900, 180), (1000, 250), (20, 400), (1000, 400), (100, 700)]
+    return (sum(image.getpixel(p) == (18, 54, 88) for p in header) >= 3
+            and sum(image.getpixel(p) == (7, 19, 34) for p in body) >= 5
+            and image.getpixel((900, 600)) == (20, 41, 65)
+            and image.getpixel((350, 500)) == (23, 52, 80))
+
+
+def capture(monitor, out, name):
+    from web85.qemu_debian_live_smoke import qmp
+    ppm = out / 'current.ppm'
+    qmp(monitor, 'screendump', {'filename': str(ppm)})
+    with Image.open(ppm) as img:
+        img.load()
+        visible = home_visible(img)
+        if name:
+            img.save(out / name, 'PNG', optimize=True)
+    return visible
+
+
+def navigate(monitor, address):
+    from web103.site_test import send_key, type_text
+    send_key(monitor, ['ctrl', 'l'], 145)
+    time.sleep(1.4)
+    type_text(monitor, address, .15)
+    send_key(monitor, ['ret'], 110)
+
+
+def main():
+    from web85.qemu_debian_live_smoke import qmp
+    p = argparse.ArgumentParser()
+    p.add_argument('--iso', type=Path, required=True)
+    p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--mode', choices=['online', 'offline'], required=True)
+    p.add_argument('--ram', type=int, default=2560)
+    p.add_argument('--seconds', type=int, default=210)
+    p.add_argument('--bandwidth', type=int, default=0)
+    args = p.parse_args()
+    iso = args.iso.resolve(strict=True)
+    out = args.out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    monitor, serial = out / 'qmp.sock', out / 'serial.log'
+    cd = f'file={iso},if=ide,media=cdrom,id=livecd,readonly=on'
+    if args.bandwidth:
+        cd += f',bps_rd={args.bandwidth}'
+    cmd = ['qemu-system-x86_64', '-machine', 'pc,accel=kvm', '-cpu', 'host',
+           '-m', str(args.ram), '-smp', '2', '-drive', cd, '-boot', 'order=d',
+           '-display', 'none', '-vga', 'std', '-qmp', f'unix:{monitor},server=on,wait=off',
+           '-serial', f'file:{serial}', '-no-reboot',
+           '-nic', 'user,model=e1000,ipv6=off' if args.mode == 'online' else 'none']
+    result = {'guest_ram_mib': args.ram, 'network_mode': args.mode,
+              'virtual_read_cap_bytes_per_second': args.bandwidth or None,
+              'measurement': 'host monotonic clock from immediately before QEMU process launch',
+              'boot_menu_key_sent': False, 'first_home_seen_seconds': None,
+              'timestamps_are_qemu_not_physical_acer': True,
+              'media_ejected': False, 'input_sent_after_eject': False,
+              'errors': [], 'screenshots': [], 'serial_marker_first_seen_seconds': {}}
+    markers = ['PUPPY50_V85_NETWORK_PROBE_START', 'PUPPY50_V85_NETWORK_MODE=',
+               'P50_V91_LIGHTDM_AUTOLOGIN_PREPARED', 'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN']
+    with (out / 'qemu.log').open('wb') as log:
+        started = time.monotonic()
+        vm = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            last_checkpoint = -10
+            while time.monotonic() - started < args.seconds and vm.poll() is None:
+                elapsed = time.monotonic() - started
+                if serial.exists():
+                    serial_text = serial.read_text(errors='replace')
+                    for marker in markers:
+                        if marker in serial_text and marker not in result['serial_marker_first_seen_seconds']:
+                            result['serial_marker_first_seen_seconds'][marker] = round(elapsed, 2)
+                if monitor.exists():
+                    try:
+                        checkpoint = int(elapsed // 10) * 10
+                        name = f'checkpoint_{checkpoint:03d}.png' if checkpoint > last_checkpoint else None
+                        visible = capture(monitor, out, name)
+                        if name:
+                            last_checkpoint = checkpoint
+                            result['screenshots'].append(name)
+                        if visible:
+                            result['first_home_seen_seconds'] = round(time.monotonic() - started, 2)
+                            capture(monitor, out, 'first_home.png')
+                            result['screenshots'].append('first_home.png')
+                            break
+                    except Exception as exc:
+                        result['errors'].append(f'frame at {elapsed:.1f}: {exc!r}')
+                time.sleep(.8)
+            if result['first_home_seen_seconds'] is not None:
+                qmp(monitor, 'human-monitor-command', {'command-line': 'eject -f livecd'})
+                info = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info block livecd'})).lower()
+                result['media_ejected'] = 'not inserted' in info or 'no media' in info
+                if not result['media_ejected']:
+                    result['errors'].append('CD did not report ejected')
+                time.sleep(2)
+                nonce = os.environ.get('P50_NONCE', 'P50-TEST')
+                local = 'http://10.0.2.2:8765/after.html?nonce=' + nonce
+                navigate(monitor, local if args.mode == 'online' else 'about:about')
+                result['input_sent_after_eject'] = True
+                time.sleep(18)
+                capture(monitor, out, 'after_input.png')
+                result['screenshots'].append('after_input.png')
+                if args.mode == 'online':
+                    navigate(monitor, 'https://example.com/')
+                    time.sleep(25)
+                    capture(monitor, out, 'external_https.png')
+                    result['screenshots'].append('external_https.png')
+            result['qemu_running_at_end'] = vm.poll() is None
+        except Exception as exc:
+            result['errors'].append(repr(exc))
+        finally:
+            if vm.poll() is None:
+                vm.terminate()
+                try:
+                    vm.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    vm.kill()
+                    vm.wait(timeout=5)
+    serial_text = serial.read_text(errors='replace') if serial.exists() else ''
+    result['guest_ca_https_probe'] = ('PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_DIRECT=PASS' in serial_text
+                                     or 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' in serial_text)
+    result['screenshots_need_visual_review'] = True
+    (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+    print(json.dumps(result, indent=2), flush=True)
+    if not (result['first_home_seen_seconds'] is not None and result['media_ejected']
+            and result['input_sent_after_eject'] and result['qemu_running_at_end']):
+        raise SystemExit('Benchmark did not reach and interact with browser after media ejection')
+    if args.mode == 'online' and not result['guest_ca_https_probe']:
+        raise SystemExit('Guest CA-verified HTTPS probe was not observed')
+
+
+if __name__ == '__main__':
+    main()
