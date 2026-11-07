@@ -17,6 +17,8 @@ At 4,096 MiB, a controlled 640×360 H.264 test clip without audio failed to deco
 
 The requested Pexels page presented a human-verification challenge during the v104 automated test, so its video and 4K playback were not tested. In an earlier v103 trial the page loaded but reported an unsupported media source. The challenge was not bypassed.
 
+Additional v104 website trials used 3,072 MiB for CNN and the Gospel of John, and 4,096 MiB for the 3D Bible and YouTube. CNN's homepage appeared behind a privacy prompt, with a DRM warning for some video. The John homepage loaded, and the 3D Bible displayed a Genesis scene; navigation and walking controls were not exercised. YouTube displayed a sign-in bot challenge, and its video did not play during the test. None of these trials established 4K playback or performance on the Acer.
+
 The post-repack audit compared 4,628 protected entries between v103 and v104, including firmware files and symlink targets; selected Firefox, NetworkManager and certificate paths; selected NSS/TLS libraries; and `/dev`, `/proc`, `/sys` and the resolver file. It compared content, ownership, mode, symlink target and extended attributes for those paths. This is not a full operating-system security audit.
 
 Tests used QEMU/KVM with an emulated wired adapter and no physical disk swap. This does not establish compatibility with physical Wi-Fi devices, UEFI firmware, USB boot, the Acer computer, every website, or every network. The built-in local homepage includes historical wording written before external-site testing; this document and the linked evidence contain the current results.
