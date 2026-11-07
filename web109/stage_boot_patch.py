@@ -15,7 +15,7 @@ HOOK='''p50_backing_device ()
             p50_loop="$(setup_loop "${1}" '0' '1')" || panic "p50: cannot attach original root"
             modprobe -q -b dm_mod >/dev/null 2>&1 || panic "p50: device mapper unavailable"
             p50_sectors="$(blockdev --getsz "${p50_loop}")" || panic "p50: cannot size root image"
-            /usr/lib/p50-stage/dm-init create p50-staged-root --readonly --table "0 ${p50_sectors} linear ${p50_loop} 0" >/dev/null || panic "p50: cannot create root mapping"
+            /usr/lib/p50-stage/dm-init create p50-staged-root --readonly --table "0 ${p50_sectors} linear ${p50_loop} 0" >/dev/null 2>/dev/console || panic "p50: cannot create root mapping"
             udevadm settle
             [ -b /dev/mapper/p50-staged-root ] || panic "p50: root mapping node missing"
             echo /dev/mapper/p50-staged-root
