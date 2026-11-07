@@ -60,6 +60,14 @@ jobs:
           test "$old_size" = "$new_size"
           sudo dmsetup create "$map_name" --readonly --table "0 $old_size linear $old_loop 0"
           map_created=1
+          sudo rm -f "/dev/mapper/$map_name"
+          numbers=$(sudo dmsetup --noudevsync info -c --noheadings --separator : -o major,minor "$map_name" | tr -d '[:space:]')
+          major=${numbers%:*}; minor=${numbers#*:}
+          case "$major$minor" in ''|*[!0-9]*) exit 1;; esac
+          if [ ! -b "/dev/mapper/$map_name" ]; then sudo mknod "/dev/mapper/$map_name" b "$major" "$minor"; fi
+          actual=$(stat -c '%t:%T' "/dev/mapper/$map_name"); expected_node=$(printf '%x:%x' "$major" "$minor")
+          test "$actual" = "$expected_node"
+          echo "Recreated and verified mapper node: $major:$minor" | tee evidence/node-proof.txt
           sudo mount -t squashfs -o ro "/dev/mapper/$map_name" "$PWD/mountpoint"
           mounted=1
           expected=$(sha256sum fixture-root/data.bin | cut -d' ' -f1)
