@@ -17,11 +17,29 @@ TARGETS = {'pexels': 'https://www.pexels.com/video/riverside-27251986/',
            'fixture': 'http://10.0.2.2:8765/fixture.mp4'}
 MEDIA_EXPRESSIONS = [
     ('h264_capability', "document.createElement('video').canPlayType('video/mp4;codecs=avc1.42E01E')"),
+    ('reset', "document.querySelector('video').currentTime=0"),
     ('play', "document.querySelector('video').play()"),
+    ('paused', "document.querySelector('video').paused"),
+    ('ready_state', "document.querySelector('video').readyState"),
+    ('error', "document.querySelector('video').error"),
     ('height', "document.querySelector('video').videoHeight"),
     ('time_first', "document.querySelector('video').currentTime"),
     ('time_second', "document.querySelector('video').currentTime"),
 ]
+
+
+def capture_complete(result):
+    names = {item.get('name') for item in result.get('console_queries', [])}
+    frames = {item.get('filename') for item in result.get('screenshots', [])}
+    needed = {name for name, _ in MEDIA_EXPRESSIONS}
+    return bool(result.get('guest_nonroot_firefox_started')
+                and result.get('guest_ca_verified_https_probe')
+                and result.get('boot_cd_ejected')
+                and result.get('guest_heartbeat_continued_after_eject')
+                and result.get('qemu_running_at_end') and not result.get('errors')
+                and needed.issubset(names)
+                and {'probe_' + name + '.ppm' for name in needed}.issubset(frames)
+                and 'frame_470.ppm' in frames)
 
 
 def run():
@@ -63,7 +81,7 @@ def run():
                                           'elapsed_seconds': round(time.monotonic() - start, 1)})
 
         try:
-            for mark in (18, 110, 150, 225, 290, 310, 330, 470):
+            for mark in (18, 110, 150, 225, 235, 290, 330, 470):
                 while time.monotonic() - start < mark and vm.poll() is None:
                     time.sleep(.5)
                 if vm.poll() is not None:
@@ -76,7 +94,7 @@ def run():
                     time.sleep(1.4)
                     type_text(monitor, target, .12)
                     send_key(monitor, ['ret'], 110)
-                elif mark == 310:
+                elif mark == 235:
                     qmp(monitor, 'human-monitor-command', {'command-line': 'eject -f livecd'})
                     state = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info block livecd'})).lower()
                     result['boot_cd_ejected'] = 'not inserted' in state or 'no media' in state
@@ -115,9 +133,8 @@ def run():
         result['heartbeat_at_eject'] > 0 and result['heartbeat_at_end'] > result['heartbeat_at_eject'])
     (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2), flush=True)
-    if not (result['guest_nonroot_firefox_started'] and result['guest_ca_verified_https_probe']
-            and result['boot_cd_ejected'] and result['guest_heartbeat_continued_after_eject']):
-        raise SystemExit('Guest boot, TLS, ejection, or post-ejection heartbeat not established')
+    if not capture_complete(result):
+        raise SystemExit('Guest or media evidence capture did not complete')
     print('Guest evidence collected; inspect the actual Pexels and console screenshots.')
 
 
