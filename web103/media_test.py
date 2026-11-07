@@ -13,9 +13,11 @@ from web85.qemu_debian_live_smoke import qmp, ppm_valid
 from site_test import send_key, type_text, char_keys
 from post_eject import heartbeat_count
 
-TARGET = 'https://www.pexels.com/video/riverside-27251986/'
+TARGETS = {'pexels': 'https://www.pexels.com/video/riverside-27251986/',
+           'fixture': 'http://10.0.2.2:8765/fixture.mp4'}
 MEDIA_EXPRESSIONS = [
     ('h264_capability', "document.createElement('video').canPlayType('video/mp4;codecs=avc1.42E01E')"),
+    ('play', "document.querySelector('video').play()"),
     ('height', "document.querySelector('video').videoHeight"),
     ('time_first', "document.querySelector('video').currentTime"),
     ('time_second', "document.querySelector('video').currentTime"),
@@ -27,7 +29,9 @@ def run():
     parser.add_argument('--iso', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--ram', type=int, default=4096)
+    parser.add_argument('--target', choices=TARGETS, default='pexels')
     args = parser.parse_args()
+    target = TARGETS[args.target]
     iso = args.iso.resolve(strict=True)
     if iso.stat().st_size < 700_000_000:
         raise ValueError('Incomplete Firefox Live ISO')
@@ -41,7 +45,7 @@ def run():
            '-qmp', f'unix:{monitor},server=on,wait=off',
            '-serial', f'file:{serial}', '-nic', 'user,model=e1000,ipv6=off',
            '-no-reboot']
-    result = {'target_url': TARGET, 'guest_ram_mib': args.ram,
+    result = {'target_url': target, 'guest_ram_mib': args.ram,
               'boot_cd_ejected': False, 'qemu_running_at_end': False,
               'heartbeat_at_eject': 0, 'heartbeat_at_end': 0,
               'video_playback_proven': False, 'video_2160p_proven': False,
@@ -70,7 +74,7 @@ def run():
                 elif mark == 150:
                     send_key(monitor, ['ctrl', 'l'], 145)
                     time.sleep(1.4)
-                    type_text(monitor, TARGET, .12)
+                    type_text(monitor, target, .12)
                     send_key(monitor, ['ret'], 110)
                 elif mark == 310:
                     qmp(monitor, 'human-monitor-command', {'command-line': 'eject -f livecd'})
