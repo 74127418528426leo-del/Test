@@ -1,0 +1,69 @@
+name: Puppy50 v105 simpler autoboot image compatibility
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-autoboot-compat.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  virtual-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-usb, uefi-usb, uefi-optical]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and UEFI
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil ovmf
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports} fixture
+      - name: Retrieve exact automatic-boot-only image
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-test-only
+          run-id: 42330235182
+          github-token: ${{ github.token }}
+          path: input
+      - name: Check exact image
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'b209d42bef6f69317b440d46608f4b3c88508c9e6cd6577d9cfd14e0dddea5c9' 'input/Puppy50_v105_Autoboot_TEST_ONLY.iso' | sha256sum -c -
+      - name: Start bridge and marker for online trial
+        if: matrix.trial == 'bios-usb'
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot without keypress and interact after media removal
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          iso=input/Puppy50_v105_Autoboot_TEST_ONLY.iso
+          if [ "$TRIAL" = bios-usb ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode online --ram 2560 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280
+          elif [ "$TRIAL" = uefi-usb ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi --media usb
+          else
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi --media optical
+          fi
+      - name: Preserve real framebuffer and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-compat-${{ matrix.trial }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
