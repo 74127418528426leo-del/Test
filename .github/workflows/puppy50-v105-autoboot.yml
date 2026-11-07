@@ -28,6 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           xorriso -osirrox on -indev input/v104.iso -extract /isolinux/isolinux.cfg out/cfg/isolinux.cfg -extract /boot/grub/config.cfg out/cfg/grub.cfg -extract /live/filesystem.squashfs out/verify/root-before.squashfs >out/reports/extract.log 2>&1
+          chmod u+w out/cfg/isolinux.cfg out/cfg/grub.cfg
           python3 web105/boot_menu.py out/cfg/isolinux.cfg out/cfg/grub.cfg
           xorriso -indev input/v104.iso -outdev out/Puppy50_v105_Autoboot_TEST_ONLY.iso -map out/cfg/isolinux.cfg /isolinux/isolinux.cfg -map out/cfg/grub.cfg /boot/grub/config.cfg -boot_image any replay -commit -end >out/reports/repack.log 2>&1
           xorriso -osirrox on -indev out/Puppy50_v105_Autoboot_TEST_ONLY.iso -extract /live/filesystem.squashfs out/verify/root-after.squashfs -extract /isolinux/isolinux.cfg out/verify/isolinux.cfg -extract /boot/grub/config.cfg out/verify/grub.cfg >out/reports/reextract.log 2>&1
