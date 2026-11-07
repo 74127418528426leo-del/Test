@@ -41,5 +41,27 @@
         "qemu/after_input.png": "43a33356887250ac9a53a4792ad8f2533ac0ebd2f49e252255db4f6db8c16faf"
       }
     }
+  },
+  "westmere_comparison": {
+    "artifact_id": 13574379292,
+    "screenshots_sha256": {
+      "base1/first_home.png": "7c2bebeed7c71ae51b4daa4c5f628b357b2928b603ef609cd973efe3eaba25b0",
+      "cand1/first_home.png": "08b45e6ec6b8cd1d5122c97a2a49adcf1952232b1c76fafff0a1223ff0f3a4c9",
+      "cand1/after_input.png": "dd6aee4d40835f354852bd355c1aeb995a00f250a5d0c82dafb04393b03b839a",
+      "cand1/external_https.png": "42ab41878365575a16eb29fe77f1d16f1dbf29ea04fdb017022e31787b40fd1a",
+      "cand2/first_home.png": "97e1dddbeb00156f4f6b3873e904263387fb49cb8bd6405dde103097ba8f90f2",
+      "cand2/after_input.png": "8f5eb0e48ac06e453aefe2708bf78b53ee84ad155d551c9b79cda0e99fe49bfc",
+      "cand2/external_https.png": "482604eac3a0adae4d2da73e8b1c5cbc7c58ef90fae926d635b8471bc3bb42e6",
+      "base2/first_home.png": "1b5289470491cffdb9ec3dbea2506613a0b31ff36ad538de0013ac45769d6196"
+    }
+  },
+  "conservative_i3": {
+    "run_id": 42373454185,
+    "artifact_id": 13573754897,
+    "screenshots_sha256": {
+      "qemu/first_home.png": "079c2fbc40fe96b84ef3668ac3f84ff39e3462cc88c64943a8d67c32e02f448d",
+      "qemu/after_input.png": "833509177c378ea2ed275927138c6c7823472b40529af597541f99562d78c84a",
+      "qemu/external_https.png": "cb8eb94e0785fd58a03ccc5876e8ff105d94deeef5973c7feeb02c9fb3a944d8"
+    }
   }
 }
