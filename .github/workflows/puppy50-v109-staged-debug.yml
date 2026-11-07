@@ -17,11 +17,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools dmsetup busybox-static qemu-system-x86 python3-pil
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools dmsetup busybox-static qemu-system-x86 python3-pil gcc libc6-dev
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           python3 -m unittest discover -s web109 -p 'test_*.py' -v
-          sh -n web109/p50-migrate.sh web109/dm-init web109/dm-run
+          for f in web109/p50-migrate.sh web109/dm-init web109/dm-run; do sh -n "$f"; done
+          gcc -Wall -Wextra -Werror -DP50_SWITCH_NO_MAIN -o switch-test web109/test_p50_switch.c
+          ./switch-test
           mkdir -p input out/{reports,main,stage-tree,rechecked,tools/lib,qemu} fixture
           lscpu >out/reports/host-cpu.txt
       - uses: actions/download-artifact@v4
@@ -41,6 +43,7 @@ jobs:
           dm_path=$(command -v dmsetup)
           cp "$dm_path" out/tools/dmsetup
           cp /bin/busybox out/tools/busybox
+          gcc -Wall -Wextra -Werror -static -O2 -s -o out/tools/p50-switch web109/p50-switch.c
           cp web109/{dm-init,dm-run,p50-migrate.sh,p50-staged-migration.service} out/tools/
           chmod 755 out/tools/{dm-init,dm-run,p50-migrate.sh,busybox,dmsetup}
           ldd "$dm_path" | tee out/reports/dmsetup-ldd.txt
@@ -123,8 +126,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -u web109/boot_bench_staged.py --iso out/staged.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 95 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
-          grep -Fx 'P50_STAGE_COPY_VERIFIED' out/qemu/serial.log
-          grep -Fx 'P50_STAGE_READY' out/qemu/serial.log
+          tr -d '\r' <out/qemu/serial.log >out/reports/serial-clean.log
+          grep -Fx 'P50_STAGE_COPY_VERIFIED' out/reports/serial-clean.log
+          grep -Fx 'P50_STAGE_READY' out/reports/serial-clean.log
           grep -F 'P50_STAGE_RAM_BACKING=/run/p50-stage/root.squashfs' out/qemu/serial.log
           grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
           python3 - <<'PY'
