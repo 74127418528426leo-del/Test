@@ -1,0 +1,47 @@
+name: Inspect browser desktop startup for status integration
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-desktop-inspect.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Install read-only image tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p input out
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input
+      - name: Read exact desktop startup and home page
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/combined.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/combined.iso -extract /live/filesystem.squashfs out/root.squashfs >out/extract.log 2>&1
+          unsquashfs -cat out/root.squashfs etc/skel/.config/openbox/autostart >out/openbox-autostart.txt
+          unsquashfs -cat out/root.squashfs usr/share/puppy50web/index.html >out/homepage.html
+          unsquashfs -cat out/root.squashfs etc/xdg/tint2/tint2rc >out/tint2rc.txt
+          cat out/openbox-autostart.txt
+      - name: Keep text evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-desktop-inspection
+          path: |
+            out/openbox-autostart.txt
+            out/homepage.html
+            out/tint2rc.txt
+            out/extract.log
+          if-no-files-found: warn
+          retention-days: 30
