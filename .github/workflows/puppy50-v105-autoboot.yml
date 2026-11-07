@@ -1,0 +1,121 @@
+name: Puppy50 v105 automatic boot experiment
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-autoboot.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  make-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+          mkdir -p input out/{cfg,reports,verify}
+          python3 -m unittest discover -s web105 -p test_boot_menu.py -v
+      - name: Download and pin published v104
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o input/v104.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v104-intel-firefox-media/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'input/v104.iso' | sha256sum -c -
+      - name: Change only boot-menu timeout files
+        run: |
+          set -euo pipefail
+          xorriso -osirrox on -indev input/v104.iso -extract /isolinux/isolinux.cfg out/cfg/isolinux.cfg -extract /boot/grub/config.cfg out/cfg/grub.cfg -extract /live/filesystem.squashfs out/verify/root-before.squashfs >out/reports/extract.log 2>&1
+          python3 web105/boot_menu.py out/cfg/isolinux.cfg out/cfg/grub.cfg
+          xorriso -indev input/v104.iso -outdev out/Puppy50_v105_Autoboot_TEST_ONLY.iso -map out/cfg/isolinux.cfg /isolinux/isolinux.cfg -map out/cfg/grub.cfg /boot/grub/config.cfg -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/Puppy50_v105_Autoboot_TEST_ONLY.iso -extract /live/filesystem.squashfs out/verify/root-after.squashfs -extract /isolinux/isolinux.cfg out/verify/isolinux.cfg -extract /boot/grub/config.cfg out/verify/grub.cfg >out/reports/reextract.log 2>&1
+          cmp out/verify/root-before.squashfs out/verify/root-after.squashfs
+          cmp out/cfg/isolinux.cfg out/verify/isolinux.cfg
+          cmp out/cfg/grub.cfg out/verify/grub.cfg
+          xorriso -indev out/Puppy50_v105_Autoboot_TEST_ONLY.iso -report_el_torito plain >out/reports/el-torito.txt 2>&1
+          sha256sum out/verify/root-before.squashfs >out/reports/root-sha256.txt
+          (cd out && sha256sum Puppy50_v105_Autoboot_TEST_ONLY.iso >SHA256SUMS)
+          cat out/SHA256SUMS
+      - name: Preserve build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-audit
+          path: |
+            out/reports/
+            out/cfg/
+          if-no-files-found: warn
+      - name: Upload test-only image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-test-only
+          path: |
+            out/Puppy50_v105_Autoboot_TEST_ONLY.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 7
+  compare:
+    needs: make-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [baseline-manual, autoboot]
+        mode: [online, offline]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and enable KVM
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports} fixture
+      - name: Download automatic image
+        if: matrix.image == 'autoboot'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-test-only
+          path: input
+      - name: Download manual baseline
+        if: matrix.image == 'baseline-manual'
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o input/baseline.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v104-intel-firefox-media/Puppy50_v104_Intel_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5' 'input/baseline.iso' | sha256sum -c -
+      - name: Verify automatic image
+        if: matrix.image == 'autoboot'
+        run: (cd input && sha256sum -c SHA256SUMS)
+      - name: Start restricted bridge and marker
+        if: matrix.mode == 'online'
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Measure startup, then exercise browser after eject
+        env:
+          MODE: ${{ matrix.mode }}
+          IMAGE: ${{ matrix.image }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -o pipefail
+          if [ "$IMAGE" = baseline-manual ]; then
+            python3 -u web105/boot_bench.py --iso input/baseline.iso --out evidence/qemu --mode "$MODE" --ram 2560 --seconds 210 --emulate-acer-id --boot-enter-at 3 | tee evidence/reports/benchmark.txt
+          else
+            python3 -u web105/boot_bench.py --iso input/Puppy50_v105_Autoboot_TEST_ONLY.iso --out evidence/qemu --mode "$MODE" --ram 2560 --seconds 210 --emulate-acer-id | tee evidence/reports/benchmark.txt
+          fi
+      - name: Preserve all screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-autoboot-${{ matrix.image }}-${{ matrix.mode }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
