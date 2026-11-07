@@ -1,0 +1,30 @@
+name: Puppy50 v103 - Independently record candidate ISO digest
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v103-digest.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download exact candidate from the original build run
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          run-id: 42321979218
+          github-token: ${{ github.token }}
+          path: iso
+      - name: Verify and independently display ISO digest and byte count
+        run: |
+          set -euo pipefail
+          (cd iso && sha256sum -c SHA256SUMS)
+          sha256sum iso/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso
+          stat -c 'ISO_BYTES=%s' iso/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso
