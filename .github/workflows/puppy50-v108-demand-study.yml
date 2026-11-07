@@ -74,7 +74,10 @@ jobs:
           P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
-          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          cp web103/fixture_server.py fixture/media-attached-server.py
+          sed -i "s/AFTER EJECT/MEDIA RETAINED/" fixture/media-attached-server.py
+          grep -F "MEDIA RETAINED" fixture/media-attached-server.py
+          nohup python3 -u fixture/media-attached-server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
           python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
       - name: Compare matched boots while keeping virtual media attached
         timeout-minutes: 18
