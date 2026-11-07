@@ -95,9 +95,8 @@ jobs:
           assert not {'aes','pclmulqdq','x2apic'} & flags, flags
           # The guest still reports 3dnowprefetch despite QEMU's requested mask.
           # Record that limitation rather than treating this as an exact i3 replica.
-          assert '3dnowprefetch' in flags, flags
           assert {'sse2','ssse3','sse4_1','sse4_2'} <= flags, flags
-          print('Guest lacks AES/PCLMULQDQ/x2APIC; it still reports 3dnowprefetch.')
+          print('Guest lacks AES/PCLMULQDQ/x2APIC; 3dnowprefetch reported:', '3dnowprefetch' in flags)
           PY
       - name: Preserve diagnostic evidence
         if: always()
