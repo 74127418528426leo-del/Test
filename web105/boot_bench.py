@@ -60,6 +60,8 @@ def main():
     p.add_argument('--ram', type=int, default=2560)
     p.add_argument('--seconds', type=int, default=210)
     p.add_argument('--bandwidth', type=int, default=0)
+    p.add_argument('--emulate-acer-id', action='store_true',
+                   help='Use Acer as virtual SMBIOS vendor to exercise the physical startup path')
     args = p.parse_args()
     iso = args.iso.resolve(strict=True)
     out = args.out.resolve()
@@ -73,8 +75,11 @@ def main():
            '-display', 'none', '-vga', 'std', '-qmp', f'unix:{monitor},server=on,wait=off',
            '-serial', f'file:{serial}', '-no-reboot',
            '-nic', 'user,model=e1000,ipv6=off' if args.mode == 'online' else 'none']
+    if args.emulate_acer_id:
+        cmd += ['-smbios', 'type=1,manufacturer=Acer,product=Aspire-X3950-EMULATED']
     result = {'guest_ram_mib': args.ram, 'network_mode': args.mode,
               'virtual_read_cap_bytes_per_second': args.bandwidth or None,
+              'acer_vendor_id_only_emulated': args.emulate_acer_id,
               'measurement': 'host monotonic clock from immediately before QEMU process launch',
               'boot_menu_key_sent': False, 'first_home_seen_seconds': None,
               'timestamps_are_qemu_not_physical_acer': True,
