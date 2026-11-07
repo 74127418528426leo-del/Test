@@ -1,0 +1,57 @@
+{
+  "schema": "PUPPY50_V104_MANUAL_REVIEW",
+  "candidate_sha256": "f692ed0755b691ea8acaed4a90f96016ce2c50e183782e8be2cd6adabd60dba5",
+  "build_commit": "677d944de32048c8c9d81bc2f7d5c6170e114022",
+  "build_run_id": 42325281517,
+  "test_run_id": 42325761511,
+  "physical_wifi_tested": false,
+  "384mib_goal_met": false,
+  "post_eject_external_page_visually_verified": true,
+  "reviewed_frames": [
+    {
+      "evidence_path": "eject2048/qemu/frame_300.ppm",
+      "sha256": "0b0bf94666ac2cfe3614859703352a846484bc6d0ceff514ba4937f704fb33e1",
+      "visual_outcome": "unique local nonce displayed after disc removal"
+    },
+    {
+      "evidence_path": "eject2048/qemu/frame_360.ppm",
+      "sha256": "4ec72be819c267366d6a78c3a309b525356473b433f009a77cee91420f7ac268",
+      "visual_outcome": "external example.com query displayed after disc removal"
+    },
+    {
+      "evidence_path": "eject2560/qemu/frame_300.ppm",
+      "sha256": "bde9858f5c04455613e5b33f93faa4fc3a2a060588ff17537af42b683a78fb38",
+      "visual_outcome": "unique local nonce displayed after disc removal"
+    },
+    {
+      "evidence_path": "eject2560/qemu/frame_360.ppm",
+      "sha256": "4ec72be819c267366d6a78c3a309b525356473b433f009a77cee91420f7ac268",
+      "visual_outcome": "external example.com query displayed after disc removal"
+    },
+    {
+      "evidence_path": "fixture-baseline/qemu/frame_290.ppm",
+      "sha256": "6d08a54e90681f5b0cf9d04ae880f1397acd0ccd10427b3bff21e354d880fd97",
+      "visual_outcome": "Baseline Firefox displayed unsupported video format."
+    },
+    {
+      "evidence_path": "fixture-codecs/qemu/probe_height.ppm",
+      "sha256": "66c6667e77048b783a28ec36dcffe3d887375505ae5f2ae6aa24e0186b90454e",
+      "visual_outcome": "Codec image displayed the 640x360 clip, with readyState 4 and paused false."
+    },
+    {
+      "evidence_path": "fixture-codecs/qemu/probe_time_second.ppm",
+      "sha256": "8080cd0f52841fddb900850560c4de74da339b58da6169131582a4cc532e2fd2",
+      "visual_outcome": "The displayed clip timestamp advanced from 00:31.542 to 00:53.750."
+    },
+    {
+      "evidence_path": "pexels/qemu/frame_290.ppm",
+      "sha256": "93c6144ab89e49e5148b0f956a58959c3c603f5731be247bd3f237b819a313ee",
+      "visual_outcome": "Pexels displayed a human-verification challenge; video was not tested."
+    }
+  ],
+  "controlled_h264_playback_visually_verified": true,
+  "controlled_video_dimensions": "640x360",
+  "controlled_video_has_audio": false,
+  "pexels_4k_playback_proven": false,
+  "pexels_observation": "Human verification challenge blocked automated video access."
+}
