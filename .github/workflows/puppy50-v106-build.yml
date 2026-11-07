@@ -38,6 +38,10 @@ jobs:
           grep -Fx 'set timeout=2' out/cfg/grub-config.cfg
           grep -F 'append boot=live components toram ' out/cfg/live.cfg
           grep -F 'boot=live components toram ' out/cfg/grub.cfg
+          if grep -F 'puppy50.test_bridge=1' out/cfg/live.cfg out/cfg/grub.cfg; then
+            echo 'Refusing to enable the test bridge in the public default.' >&2
+            exit 1
+          fi
           sudo unsquashfs -d out/root out/base.squashfs >out/reports/unsquashfs.log
           test -x out/root/usr/bin/systemd-detect-virt
       - name: Record protected application and firmware hashes
@@ -52,6 +56,14 @@ jobs:
           set -euo pipefail
           sudo python3 web105/proxy_guard.py out/root | tee out/reports/proxy-guard.json
           sudo cp out/root/usr/local/sbin/puppy50-network-probe out/reports/network-probe-after
+          python3 - <<'PY'
+          from pathlib import Path
+          before = Path('out/reports/network-probe-before').read_text()
+          after = Path('out/reports/network-probe-after').read_text()
+          guard = '/usr/local/sbin/puppy50-qemu-bridge-allowed && ' + chr(92) + '\n     '
+          assert after.count(guard) == 1
+          assert after.replace(guard, '', 1) == before, 'Unrelated network-probe content changed'
+          PY
           sh -n out/root/usr/local/sbin/puppy50-network-probe
           sh -n out/root/usr/local/sbin/puppy50-qemu-bridge-allowed
           sudo bash -c 'cd out/root && sha256sum usr/lib/firefox-esr/firefox-esr usr/lib/firefox-esr/libxul.so usr/bin/nmcli usr/sbin/NetworkManager etc/ssl/certs/ca-certificates.crt' >out/reports/protected-after.sha256
