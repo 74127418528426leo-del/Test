@@ -1,0 +1,78 @@
+name: Audit staged initramfs against the previous image
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v109-initrd-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b0ec8274f84b58a78209a92f81400b272583a193
+      - name: Install inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso initramfs-tools-core zstd rsync
+          mkdir -p input/v108 input/v109 out/{old,new,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input/v108
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v109-release-candidate-test-only-iso
+          run-id: 42422358970
+          github-token: ${{ github.token }}
+          path: input/v109
+      - name: Compare the exact images and extracted early boot contents
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/v108/combined.iso | sha256sum -c -
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/v109/staged.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v108/combined.iso -extract /live/initrd.img out/old.initrd -extract /live/filesystem.squashfs out/old.squashfs >out/reports/extract-old.log 2>&1
+          xorriso -osirrox on -indev input/v109/staged.iso -extract /live/initrd.img out/new.initrd -extract /live/filesystem.squashfs out/new.squashfs >out/reports/extract-new.log 2>&1
+          cmp out/old.squashfs out/new.squashfs
+          cmp -n 45312000 out/old.initrd out/new.initrd
+          sudo unmkinitramfs out/old.initrd out/old >out/reports/unpack-old.log 2>&1
+          sudo unmkinitramfs out/new.initrd out/new >out/reports/unpack-new.log 2>&1
+          sudo rsync -aHAXnciO --delete --numeric-ids --exclude='/main/usr/lib/p50-stage' --exclude='/main/usr/lib/live/boot/9990-main.sh' --exclude='/main/usr/lib/live/boot/9990-misc-helpers.sh' out/old/ out/new/ >out/reports/rsync-forward.txt
+          sudo rsync -aHAXnciO --delete --numeric-ids --exclude='/main/usr/lib/p50-stage' --exclude='/main/usr/lib/live/boot/9990-main.sh' --exclude='/main/usr/lib/live/boot/9990-misc-helpers.sh' out/new/ out/old/ >out/reports/rsync-reverse.txt
+          test ! -s out/reports/rsync-forward.txt
+          test ! -s out/reports/rsync-reverse.txt
+          sudo python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,'web109')
+          from stage_boot_patch import patch_helpers,patch_main
+          old=Path('out/old/main/usr/lib/live/boot');new=Path('out/new/main/usr/lib/live/boot')
+          assert patch_helpers((old/'9990-misc-helpers.sh').read_text())==(new/'9990-misc-helpers.sh').read_text()
+          assert patch_main((old/'9990-main.sh').read_text())==(new/'9990-main.sh').read_text()
+          tools=Path('out/new/main/usr/lib/p50-stage')
+          for p in [tools,*tools.rglob('*')]:
+              if p.is_symlink():continue
+              st=p.stat();assert st.st_uid==0 and st.st_gid==0,(p,st.st_uid,st.st_gid)
+              assert not (st.st_mode & 0o022),(p,oct(st.st_mode))
+          assert (tools/'busybox').stat().st_mode & 0o111
+          assert (tools/'lib/ld-linux-x86-64.so.2').stat().st_mode & 0o111
+          assert (tools/'p50-switch').stat().st_mode & 0o111
+          assert (tools/'p50-status').stat().st_mode & 0o111
+          print('Root filesystem and early prefix are byte-identical; remaining extracted initramfs matches except for the reviewed scripts and root-owned tools.')
+          Path('out/reports/audit-result.txt').write_text('Root SquashFS and early prefix byte-identical. Remaining initramfs matched selected metadata and content except for the reviewed scripts and root-owned staged tools; directory timestamps excluded.\n')
+          PY
+      - name: Preserve audit even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v109-initramfs-audit
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
