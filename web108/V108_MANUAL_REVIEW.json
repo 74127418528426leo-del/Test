@@ -1,0 +1,80 @@
+{
+  "iso_sha256": "6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad",
+  "validation_run_id": 42396686655,
+  "explanation": "Visually reviewed Firefox home, post-eject fresh local nonce or offline about:about, public HTTPS where applicable, and BIOS menu selection. Benchmark home frames, candidate post-eject pages and candidate public HTTPS frames were visually reviewed. Hashes bind these observations to the original screenshots.",
+  "cases": {
+    "bios-usb-2048": {
+      "artifact_id": 13583598836,
+      "first_home_seconds": 45.47,
+      "network_mode": "online",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "b969954c7e032ca9173135312b0ae2d02fd27deff5da43ddc7c61b600f36ec16",
+        "qemu/after_input.png": "c7319fa42c2560e51c688e6ffa9a5c3c4cc615652b13ede4ae0ebb9ba02907ae",
+        "qemu/external_https.png": "2ebed2b075fed8307c8c51fb0758865b96116078d7d86664063db1431d622a0f",
+        "menu/default.png": "d21724ae6b22d14d76f102695f728cdba0f200bf071667d53e386d762f4beb16",
+        "menu/recovery-selected.png": "7b9f60888e362f291b5ac642642da74a49bfab9c88ac3de918b6b507aca19746"
+      }
+    },
+    "connectivity-restored": {
+      "artifact_id": 13583746867,
+      "first_home_seconds": 45.55,
+      "network_mode": "online",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "3e8e75c5aa77060fb24452521709ad674e6ab7e041dd23e4a075b7b4d9a8a0c1",
+        "qemu/after_input.png": "34f4f9b4b843ce070ae9dcc30b8401235f8f0f8f6064c58fc50af3dbd27c0f0e",
+        "qemu/external_https.png": "2ebed2b075fed8307c8c51fb0758865b96116078d7d86664063db1431d622a0f"
+      }
+    },
+    "uefi-optical-online-2560": {
+      "artifact_id": 13583896210,
+      "first_home_seconds": 23.55,
+      "network_mode": "online",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "9b770ce0c0505309c506b25740f287e26cf05d347612fc93446708f4fa68d8b2",
+        "qemu/after_input.png": "c7319fa42c2560e51c688e6ffa9a5c3c4cc615652b13ede4ae0ebb9ba02907ae",
+        "qemu/external_https.png": "8711fcf3c7afec11b6c21138d5513985bc35dd80c76d403f4534067e80154cda"
+      }
+    },
+    "uefi-usb-offline-2048": {
+      "artifact_id": 13583577401,
+      "first_home_seconds": 15.94,
+      "network_mode": "offline",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "eb3be5426ae9c36387bc0d489aae9cbab919b37f996e5ff7b5bf2ac28a84c363",
+        "qemu/after_input.png": "53e3f8984e5122c161c149b0b7969fdd634252bbf51abf965846ec4c65d17de7"
+      }
+    }
+  },
+  "benchmark_run_id": 42396689160,
+  "benchmark": {
+    "normal": {
+      "artifact_id": 13584251349,
+      "screenshots_sha256": {
+        "base1/first_home.png": "de3cebd55cca433b87064838b1d44202659591a861606bf5ce97d9361eda580c",
+        "base2/first_home.png": "1ca9350af9ec5c7fc26e4d8427d3a595928230c6b525e6355ea986af326bdd7e",
+        "cand1/first_home.png": "d7e82206c22a6f75a7c2d145535f9ecf4a19d2dd2b15f80d10549964faf2725f",
+        "cand2/first_home.png": "d372bb1cfb3a47df610ebee995ec30e47f1681450d83fbc9fad88d45b5eb3428",
+        "cand1/after_input.png": "b20453ac7bb844ebc87a79384fd5de232df22afcede35ffe0e9fcc39459c7be9",
+        "cand2/after_input.png": "3a757715c7712f2b2394c8ec1c5bf2e1d5637543047078ee61e1745e42a9c454",
+        "cand1/external_https.png": "45d82f815ac12463bbe8d3ad521fc7c8a24c8b5aedd091bd50844e60d1f0f4fc",
+        "cand2/external_https.png": "00d9afa10916f0a763552010dc84fe9566c87b8e792526531d2946441190de4a"
+      }
+    },
+    "blocked-https": {
+      "artifact_id": 13583757405,
+      "screenshots_sha256": {
+        "base1/first_home.png": "fb380f5e3ae8764c1bcb73acc7a40eec0283e078098a2d4d409813c6509cf211",
+        "base2/first_home.png": "d5d7946a9a4a9f423a91985abb7ccb64de8054397fbbc80342ff900a35269090",
+        "cand1/first_home.png": "5f3afbac733d7f89e2144c1b29502c39ce4bbae9106e31521f1aa97f3e1a6b31",
+        "cand2/first_home.png": "2b15da4d0d52efcc893a0e39232a07d36a1e97a7ef69d7494e767e70d6c5bc76",
+        "cand1/after_input.png": "761841fcefda6ccf100205e5c8e77982d9c8506febb048ee658338e5dba0683e",
+        "cand2/after_input.png": "373677ccf0528b7cb85d019175f7a3665556d12dfaea0c372abab86518180da5"
+      }
+    }
+  },
+  "limitations": [
+    "Physical Acer, physical Wi-Fi and Secure Boot not tested.",
+    "The 1024 MiB and 1536 MiB browser navigation tests failed; their jobs were allowed to fail for diagnosis.",
+    "An independently modified diagnostic image was used for detailed RAM mount inspection."
+  ]
+}
