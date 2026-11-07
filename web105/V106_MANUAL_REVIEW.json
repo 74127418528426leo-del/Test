@@ -1,0 +1,76 @@
+{
+  "iso_sha256": "537e1129bcbe0373778e30fcf3e15815b184493a0c67d00b036c5e960c75935e",
+  "run_id": 42351031652,
+  "review": "Actual framebuffer images manually inspected; no physical machine was tested. Proxy opt-in image uses the same root filesystem but a different boot config and ISO hash.",
+  "cases": {
+    "bios-optical-online": {
+      "first_home_seconds": 33.4,
+      "ram_mib": 2560,
+      "virtual_media": "optical",
+      "virtual_firmware": "bios",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "b103edaf92a7e1d3b80fcfef80b7d5100ff81aab462d5918e7c18a15f2510c4f",
+        "qemu/after_input.png": "4c1ce012a824fd3dc3a42bb9429a1ed1c4b0754d7f3b5b48a7c3f19fb8b4e767",
+        "qemu/external_https.png": "32a3c37f1eab11a0f58e232976fd9f03b50291ca2c6ecd18b4b0d9de39e68754",
+        "menu/recovery-selected.png": "7b9f60888e362f291b5ac642642da74a49bfab9c88ac3de918b6b507aca19746"
+      },
+      "unique_post_ejection_marker_seen_in_fixture_log": true
+    },
+    "bios-usb-online": {
+      "first_home_seconds": 62.51,
+      "ram_mib": 3072,
+      "virtual_media": "usb",
+      "virtual_firmware": "bios",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "253afb82884accaf522cf748325449b7caea3c058e4bb3194fc00d4895ad9b70",
+        "qemu/after_input.png": "40829ec5c4914cc47d0a67af220e1c5807c66abe50297da583b6e0edda8874e3",
+        "qemu/external_https.png": "7759c7cc0653f284052210c2e599cffea112754758a74086ed4560c4f91bdc68"
+      },
+      "unique_post_ejection_marker_seen_in_fixture_log": true
+    },
+    "uefi-usb-offline": {
+      "first_home_seconds": 27.1,
+      "ram_mib": 2560,
+      "virtual_media": "usb",
+      "virtual_firmware": "uefi",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "88cfe8521be1e01b9f86c660fe4a1808f3c365b032a1d5139864b6e8832d8af4",
+        "qemu/after_input.png": "8d2fde0d8a5739268838789a073e2ec09de3676261a0f55796e7cdfd3612ed23"
+      }
+    },
+    "uefi-optical-offline": {
+      "first_home_seconds": 37.42,
+      "ram_mib": 2560,
+      "virtual_media": "optical",
+      "virtual_firmware": "uefi",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "a8332a13f02f4083746a8635e1fa871070013dea6a7a2ea9e531489425ec1cb2",
+        "qemu/after_input.png": "8d2fde0d8a5739268838789a073e2ec09de3676261a0f55796e7cdfd3612ed23"
+      }
+    },
+    "proxy-disabled-recovery": {
+      "first_home_seconds": 38.4,
+      "ram_mib": 2560,
+      "virtual_media": "optical",
+      "virtual_firmware": "bios",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "d26fedceda38badfd7e66ce81c985acff2b9a02fac9367ac6ddb55f623694284",
+        "qemu/after_input.png": "89168d84549ac32523160be0f3523a2500f060a8c0ddd89cd10c14743a72336e",
+        "qemu/external_https.png": "d03c8701d85fc03acaa5cd6f586f25e632d30b7060b5a2397808a27f0768e3e3"
+      },
+      "unique_post_ejection_marker_seen_in_fixture_log": true
+    },
+    "proxy-explicit-optin": {
+      "first_home_seconds": 36.84,
+      "ram_mib": 2560,
+      "virtual_media": "optical",
+      "virtual_firmware": "bios",
+      "screenshots_sha256": {
+        "qemu/first_home.png": "cc9e1210258d13475f1ffcd45058f283a25f835cb2cceb44a323837827560f9d",
+        "qemu/after_input.png": "4c1ce012a824fd3dc3a42bb9429a1ed1c4b0754d7f3b5b48a7c3f19fb8b4e767",
+        "qemu/external_https.png": "7759c7cc0653f284052210c2e599cffea112754758a74086ed4560c4f91bdc68"
+      },
+      "unique_post_ejection_marker_seen_in_fixture_log": true
+    }
+  }
+}
