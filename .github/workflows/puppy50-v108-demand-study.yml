@@ -1,0 +1,117 @@
+name: Puppy50 demand boot versus full RAM copy research
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-demand-study.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools and check media-accounting tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s web108 -p 'test_*.py' -v
+          mkdir -p input out/{reports,stage-tree,rechecked} fixture
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v108-combined-test-only-iso
+          run-id: 42396414328
+          github-token: ${{ github.token }}
+          path: input
+      - name: Derive test-only ISO without the initial RAM-copy option
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '6bc9393a62667305bcdee18d763fc0f26a67a8abaeea001633c0c5057b47bcad' input/combined.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/combined.iso -extract /isolinux/live.cfg out/bios.cfg -extract /boot/grub/grub.cfg out/grub.cfg -extract /live/filesystem.squashfs out/reference.squashfs >out/reports/extract.log 2>&1
+          chmod u+w out/bios.cfg out/grub.cfg
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in (Path('out/bios.cfg'),Path('out/grub.cfg')):
+              s=p.read_text(); n=s.count('boot=live components toram '); assert n>=1,(p,n)
+              p.write_text(s.replace('boot=live components toram ','boot=live components '))
+              print(p,'changed entries:',n)
+          PY
+          xorriso -indev input/combined.iso -outdev out/stage.iso -map out/bios.cfg /isolinux/live.cfg -map out/grub.cfg /boot/grub/grub.cfg -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/stage-tree >out/reports/stage-extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/stage-tree').resolve(); lines=[]; seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line); assert m,repr(line)
+              name=m.group(3); assert name.startswith('./') and name not in seen
+              seen.add(name); target=(root/name).resolve(strict=True); target.relative_to(root)
+              assert target.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024),b''): h.update(chunk)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==292
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/demand.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/demand.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/reference.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/bios.cfg out/rechecked/isolinux/live.cfg
+          cmp out/grub.cfg out/rechecked/boot/grub/grub.cfg
+          if grep -F 'boot=live components toram ' out/rechecked/isolinux/live.cfg out/rechecked/boot/grub/grub.cfg; then exit 1; fi
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          sha256sum input/combined.iso out/demand.iso >out/reports/iso-sha256.txt
+          echo 'EXPERIMENT ONLY: demand-boot image requires the boot media attached.'
+      - name: Start local website
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare matched boots while keeping virtual media attached
+        timeout-minutes: 18
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web108/boot_bench_demand.py --iso input/combined.iso --out "out/$1" --mode online --allow-no-startup-probe --keep-media --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          candidate() { python3 -u web108/boot_bench_demand.py --iso out/demand.iso --out "out/$1" --mode online --allow-no-startup-probe --keep-media --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          baseline base1
+          candidate cand1
+          candidate cand2
+          baseline base2
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          t={}
+          for n in ['base1','cand1','cand2','base2']:
+              result=json.loads((Path('out')/n/'result.json').read_text())
+              assert result['keep_media_experiment'] and not result['media_ejected'] and result['input_sent']
+              t[n]=result['first_home_seen_seconds']
+          t['baseline_mean_seconds']=statistics.mean([t['base1'],t['base2']]);t['candidate_mean_seconds']=statistics.mean([t['cand1'],t['cand2']]);t['difference_seconds']=t['baseline_mean_seconds']-t['candidate_mean_seconds']
+          t['experimental_candidate_requires_media_attached']=True;t['physical_acer_tested']=False
+          Path('out/reports/comparison.json').write_text(json.dumps(t,indent=2)+'\n');print(json.dumps(t,indent=2))
+          PY
+      - name: Preserve the comparison without offering the experimental ISO
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-demand-boot-study
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
