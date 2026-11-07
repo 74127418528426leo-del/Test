@@ -10,6 +10,7 @@ sleep 30
  echo P50_DIAG_SERVICE_ENABLED; systemctl is-enabled p50-staged-migration.service 2>&1 || true
  echo P50_DIAG_SERVICE_JOURNAL; journalctl -b --no-pager -u p50-staged-migration.service -n 100 2>&1 || true
  echo P50_DIAG_GRAPHICAL_TARGET; systemctl status graphical.target --no-pager -l 2>&1 || true
+ echo P50_DIAG_TOOLS_MOUNT; findmnt -T /run/p50-stage/tools -o TARGET,SOURCE,FSTYPE,OPTIONS 2>&1 || true
  echo P50_DIAG_MOUNTS; findmnt -rn -o TARGET,SOURCE,FSTYPE | grep -E '^/ |/run/live|/lib/live' || true
  echo P50_DIAG_END
 } >/dev/ttyS0 2>&1
