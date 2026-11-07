@@ -1,0 +1,149 @@
+name: Puppy50 v103 - English Spanish locale A-B guest experiment
+
+on:
+  push:
+    branches: [puppy50-v103-lean-firefox-network-preserved]
+    paths: ['.github/workflows/puppy50-v103-lean.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run locale-pruning safety tests
+        run: python3 -m unittest discover -s web103 -p 'test_*.py' -v
+      - name: Install image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+      - name: Download and verify published v102 baseline
+        run: |
+          set -euo pipefail
+          mkdir -p input out/{rootfs,reports,extracted,verify}
+          curl --fail --location --retry 3 --output input/v102.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-intel-firefox-v102-small-https/Puppy50_v102_Intel_Firefox_ESR_RAM_ONLY_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'dc25a6ad706c5709518a9f811e09df4bd77cf3c3a50a40abbc4807f8cc283906' 'input/v102.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/v102.iso -extract /live/filesystem.squashfs out/extracted/base.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/rootfs out/extracted/base.squashfs >out/reports/unsquashfs.log
+      - name: Remove only unrelated locale directories and audit every other file
+        run: |
+          set -euo pipefail
+          sudo bash -c "cd out/rootfs && find . -path './usr/share/locale' -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum" >out/reports/nonlocale-before.sha256
+          sudo bash -c "cd out/rootfs && find . -path './usr/share/locale' -prune -o -type l -printf '%p -> %l\\n' | LC_ALL=C sort" >out/reports/nonlocale-symlinks-before.txt
+          sudo python3 web103/prune_locales.py out/rootfs | tee out/reports/locale-prune.json
+          sudo bash -c "cd out/rootfs && find . -path './usr/share/locale' -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum" >out/reports/nonlocale-after.sha256
+          sudo bash -c "cd out/rootfs && find . -path './usr/share/locale' -prune -o -type l -printf '%p -> %l\\n' | LC_ALL=C sort" >out/reports/nonlocale-symlinks-after.txt
+          cmp out/reports/nonlocale-before.sha256 out/reports/nonlocale-after.sha256
+          cmp out/reports/nonlocale-symlinks-before.txt out/reports/nonlocale-symlinks-after.txt
+          sudo test -e out/rootfs/usr/bin/firefox-esr
+          sudo test -e out/rootfs/usr/bin/nmcli
+          sudo test -f out/rootfs/etc/ssl/certs/ca-certificates.crt
+          sudo test -d out/rootfs/usr/lib/firmware/rtw89
+          sudo test -d out/rootfs/usr/lib/firmware/ath11k
+          sudo test -d out/rootfs/usr/lib/firmware/i915
+      - name: Repack with original bootloader
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/rootfs out/new.squashfs -comp xz -b 1M -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          xorriso -indev input/v102.iso -outdev out/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso -map out/new.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso -extract /live/filesystem.squashfs out/verify/filesystem.squashfs >out/reports/reextract.log 2>&1
+          cmp out/new.squashfs out/verify/filesystem.squashfs
+          stat -c '%s' input/v102.iso >out/reports/v102-iso-bytes.txt
+          stat -c '%s' out/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso >out/reports/v103-iso-bytes.txt
+          stat -c '%s' out/extracted/base.squashfs >out/reports/v102-root-bytes.txt
+          stat -c '%s' out/new.squashfs >out/reports/v103-root-bytes.txt
+          test "$(cat out/reports/v103-iso-bytes.txt)" -lt "$(cat out/reports/v102-iso-bytes.txt)"
+          (cd out && sha256sum Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso >SHA256SUMS)
+      - name: Preserve build audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v103_Build_Audit
+          path: out/reports/
+          retention-days: 20
+          if-no-files-found: warn
+      - name: Preserve test-only ISO and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          path: |
+            out/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso
+            out/SHA256SUMS
+          compression-level: 0
+          retention-days: 7
+
+  kvm:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: v102, ram: 2048, trial: baseline }
+          - { image: v103, ram: 1536, trial: low }
+          - { image: v103, ram: 1792, trial: mid }
+          - { image: v103, ram: 2048, trial: comparison }
+          - { image: v103, ram: 2560, trial: control }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install KVM test tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports}
+      - name: Download candidate image
+        if: matrix.image == 'v103'
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50_v103_Lean_Intel_TEST_ONLY_ISO
+          path: input
+      - name: Download published baseline
+        if: matrix.image == 'v102'
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output input/v102.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-intel-firefox-v102-small-https/Puppy50_v102_Intel_Firefox_ESR_RAM_ONLY_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'dc25a6ad706c5709518a9f811e09df4bd77cf3c3a50a40abbc4807f8cc283906' 'input/v102.iso' | sha256sum -c -
+      - name: Verify candidate checksum
+        if: matrix.image == 'v103'
+        run: cd input && sha256sum -c SHA256SUMS
+      - name: Start optional host HTTPS transport fallback
+        run: |
+          set -euo pipefail
+          nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; [(time.sleep(.2)) for _ in range(10)]; socket.create_connection(("127.0.0.1",3128),timeout=5).close()'
+      - name: Run real 300-second KVM trial and preserve failure evidence
+        timeout-minutes: 8
+        env:
+          IMAGE: ${{ matrix.image }}
+          RAM: ${{ matrix.ram }}
+        run: |
+          set +e
+          if [ "$IMAGE" = v102 ]; then iso=input/v102.iso; else iso=input/Puppy50_v103_Lean_Intel_EXPERIMENTAL.iso; fi
+          python3 web94/qemu_reliable_navigation.py --iso "$iso" --out evidence/qemu --ram "$RAM" --seconds 300 >evidence/reports/guest-test.log 2>&1
+          printf 'qemu_test_exit=%s\n' "$?" >evidence/reports/exit-code.txt
+          exit 0
+      - name: Analyze guest results without treating a typed URL as a rendered page
+        if: always()
+        env:
+          RAM: ${{ matrix.ram }}
+        run: |
+          mkdir -p evidence/reports
+          python3 web99/analyze_guest.py --evidence evidence/qemu --out evidence/reports/GUEST_AUDIT.json --mode original --ram "$RAM" || true
+      - name: Preserve actual screenshots, serial, and test outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50_v103_${{ matrix.image }}_${{ matrix.ram }}MiB_${{ matrix.trial }}_proof
+          path: evidence/
+          retention-days: 20
+          if-no-files-found: warn
