@@ -53,6 +53,8 @@ jobs:
           test -x out/tools/lib/ld-linux-x86-64.so.2
           sudo mkdir -p out/main/usr/lib/p50-stage
           sudo cp -a out/tools/. out/main/usr/lib/p50-stage/
+          sudo chown -R 0:0 out/main/usr/lib/p50-stage
+          sudo chmod -R go-w out/main/usr/lib/p50-stage
           sudo python3 web109/stage_boot_patch.py out/main
           sudo python3 - <<'PY'
           from pathlib import Path
