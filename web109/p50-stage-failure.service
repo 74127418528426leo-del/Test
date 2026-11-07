@@ -1,0 +1,6 @@
+[Unit]
+Description=Record an unsuccessful Puppy50 RAM migration
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/touch /run/p50-stage/FAILED
