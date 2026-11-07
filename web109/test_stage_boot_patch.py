@@ -28,6 +28,11 @@ class BootPatchTests(unittest.TestCase):
         self.assertIn('graphical.target.wants/p50-staged-migration.service',result)
         self.assertIn('/run/p50-stage/tools',result)
         self.assertIn('\n\tFstab\n\tNetbase\n',result)
+    def test_tools_use_a_bounded_readonly_executable_ram_mount(self):
+        result=patch_main('abc\n\tFstab\n\tNetbase\n')
+        self.assertIn('size=32M,mode=0755,nosuid,nodev,exec',result)
+        self.assertIn('remount,ro,nosuid,nodev,exec',result)
+        self.assertIn('mount -t tmpfs',result)
     def test_rejects_missing_or_duplicate_service_location(self):
         with self.assertRaises(ValueError): patch_main('Fstab\n')
         with self.assertRaises(ValueError): patch_main('\n\tFstab\n\tNetbase\n\tFstab\n\tNetbase\n')
