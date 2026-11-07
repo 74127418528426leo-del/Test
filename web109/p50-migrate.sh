@@ -6,8 +6,10 @@ B=/run/p50-stage/tools/busybox
 DM=/run/p50-stage/tools/dm-run
 SRC=/run/live/medium/live/filesystem.squashfs
 MANIFEST=/run/live/medium/sha256sum.txt
-COPY=/run/p50-stage/root.squashfs
+STORE=/run/p50-stage/store
+COPY=$STORE/root.squashfs
 NEW_LOOP=''
+STORE_MOUNTED=0
 TABLE_LOADED=0
 SWITCH_ATTEMPTED=0
 SWITCHED=0
@@ -28,6 +30,7 @@ cleanup() {
         if [ "$TABLE_LOADED" = 1 ]; then "$DM" clear p50-staged-root || true; fi
         if [ -n "$NEW_LOOP" ]; then "$B" losetup -d "$NEW_LOOP" || true; fi
         "$B" rm -f "$COPY" || true
+        if [ "$STORE_MOUNTED" = 1 ]; then "$B" umount "$STORE" || true; fi
     else
         # A failed or interrupted switch has uncertain active backing.
         # Keep both devices and the RAM copy until reboot; never claim ready.
@@ -51,10 +54,14 @@ size=$("$B" stat -c %s "$SRC")
 case "$size" in ''|*[!0-9]*) fail 'invalid source size';; esac
 need_k=$(( (size + 1023) / 1024 ))
 mem_k=$("$B" awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
-free_k=$("$B" df -Pk /run/p50-stage | "$B" awk 'NR==2 {print $4}')
-case "$mem_k:$free_k" in *[!0-9:]*) fail 'cannot measure free space';; esac
+case "$mem_k" in ''|*[!0-9]*) fail 'cannot measure available memory';; esac
 [ "$mem_k" -ge $((need_k + 393216)) ] || fail 'insufficient available memory and reserve'
-[ "$free_k" -ge $((need_k + 32768)) ] || fail 'insufficient tmpfs space'
+"$B" mkdir -p "$STORE" || fail 'cannot prepare RAM store'
+"$B" mount -t tmpfs -o "size=$((need_k + 32768))k,mode=0700,nosuid,nodev,noexec" tmpfs "$STORE" || fail 'cannot mount RAM store'
+STORE_MOUNTED=1
+free_k=$("$B" df -Pk "$STORE" | "$B" awk 'NR==2 {print $4}')
+case "$free_k" in ''|*[!0-9]*) fail 'cannot measure RAM store space';; esac
+[ "$free_k" -ge $((need_k + 16384)) ] || fail 'insufficient RAM store space'
 set -f
 old_table=$("$DM" table p50-staged-root) || fail 'cannot inspect original table'
 set -- $old_table
