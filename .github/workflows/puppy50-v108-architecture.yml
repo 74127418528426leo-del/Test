@@ -1,0 +1,169 @@
+name: Puppy50 v108 Acer graphics profile architecture comparison
+on:
+  push:
+    branches: [puppy50-v108-architecture]
+    paths: [.github/workflows/puppy50-v108-architecture.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 38
+    strategy:
+      fail-fast: false
+      matrix:
+        block: [262144, 1048576]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO and virtualization tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{root,verify,reports,tree,rechecked} fixture
+          python3 -m unittest discover -s web108 -p 'test_*.py' -v
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - name: Fetch and pin the published v107 image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o input/v107.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v107-zstd-fastboot-experimental/Puppy50_v107_FastBoot_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'cbdf605f87d345ca60d1a0a3cebb20312864c81c2a286c8eacb5acb85769c0c2' input/v107.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v107.iso -extract /live/filesystem.squashfs input/base.squashfs >out/reports/extract.log 2>&1
+          unsquashfs -s input/base.squashfs >out/reports/base-format.txt
+          sudo unsquashfs -d out/root input/base.squashfs >out/reports/unsquash.log
+      - name: Record all firmware outside selected graphics directories
+        run: |
+          set -euo pipefail
+          firmware_manifest() {
+            sudo bash -c 'cd out/root && find usr/lib/firmware \( -path usr/lib/firmware/amdgpu -o -path usr/lib/firmware/radeon -o -path usr/lib/firmware/nvidia \) -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum'
+          }
+          firmware_links() {
+            sudo bash -c 'cd out/root && find usr/lib/firmware \( -path usr/lib/firmware/amdgpu -o -path usr/lib/firmware/radeon -o -path usr/lib/firmware/nvidia \) -prune -o -type l -printf "%p -> %l\n" | LC_ALL=C sort'
+          }
+          firmware_manifest >out/reports/firmware-before.sha256
+          firmware_links >out/reports/firmware-links-before.txt
+          if grep -E ' -> ([^ ]*/)?(amdgpu|radeon|nvidia)(/|$)' out/reports/firmware-links-before.txt; then
+            echo 'Non-target firmware links to a targeted collection; refusing to trim.' >&2
+            exit 1
+          fi
+          sudo python3 web108/trim_gpu_firmware.py --root out/root --report out/reports/trim.json
+          firmware_manifest >out/reports/firmware-after.sha256
+          firmware_links >out/reports/firmware-links-after.txt
+          cmp out/reports/firmware-before.sha256 out/reports/firmware-after.sha256
+          cmp out/reports/firmware-links-before.txt out/reports/firmware-links-after.txt
+          test -d out/root/usr/lib/firmware/i915
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('out/reports/trim.json').read_text())
+          assert sum(x['files'] for x in d.values())>0
+          print('Graphics firmware bytes removed from root:',sum(x['bytes'] for x in d.values()))
+          PY
+      - name: Build compact root with selected compression block
+        env:
+          BLOCK: ${{ matrix.block }}
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          sudo mksquashfs out/root out/new.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b "$BLOCK" -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          unsquashfs -s out/new.squashfs >out/reports/candidate-format.txt
+          sudo unsquashfs -d out/verify/root out/new.squashfs >out/reports/verify-unsquash.log
+          sudo rsync -aHAXnci --delete --numeric-ids out/root/ out/verify/root/ >out/reports/rsync-forward.txt
+          sudo rsync -aHAXnci --delete --numeric-ids out/verify/root/ out/root/ >out/reports/rsync-reverse.txt
+          test ! -s out/reports/rsync-forward.txt
+          test ! -s out/reports/rsync-reverse.txt
+          stat -c '%n %s' input/base.squashfs out/new.squashfs | tee out/reports/root-sizes.txt
+      - name: Rebuild ISO and refresh existing media checksums
+        run: |
+          set -euo pipefail
+          xorriso -indev input/v107.iso -outdev out/stage.iso -map out/new.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/stage-repack.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree-extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve()
+          old=(root/'sha256sum.txt').read_text(encoding='utf-8')
+          lines=[];seen=set()
+          for line in old.splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line)
+              assert m,repr(line)
+              name=m.group(3); assert name.startswith('./') and name not in seen
+              seen.add(name); target=(root/name).resolve(strict=True); target.relative_to(root)
+              assert target.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024),b''): h.update(chunk)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==292
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/final-repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck-extract.log 2>&1
+          cmp out/new.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/sha256sum.txt out/rechecked/sha256sum.txt
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          grep -F './live/filesystem.squashfs: OK' out/reports/media-checksums.txt
+          grep -F 'boot=live components toram ' out/rechecked/isolinux/live.cfg
+          grep -F 'boot=live components toram ' out/rechecked/boot/grub/grub.cfg
+          if grep -F 'puppy50.test_bridge=1' out/rechecked/isolinux/live.cfg out/rechecked/boot/grub/grub.cfg; then exit 1; fi
+          sha256sum out/candidate.iso >out/reports/candidate-sha256.txt
+          stat -c '%n %s' input/v107.iso out/candidate.iso | tee out/reports/iso-sizes.txt
+      - name: Start a local post-removal test page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.block }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare baseline and candidate on the same host
+        timeout-minutes: 16
+        env:
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.block }}
+        run: |
+          set -euo pipefail
+          baseline() { python3 -u web107/boot_bench.py --iso input/v107.iso --out "out/$1" --mode online --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          candidate() { python3 -u web107/boot_bench.py --iso out/candidate.iso --out "out/$1" --mode online --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          baseline base1
+          candidate cand1
+          candidate cand2
+          baseline base2
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          times={n:json.loads((Path('out')/n/'result.json').read_text())['first_home_seen_seconds'] for n in ['base1','cand1','cand2','base2']}
+          times['baseline_mean_seconds']=statistics.mean([times['base1'],times['base2']])
+          times['candidate_mean_seconds']=statistics.mean([times['cand1'],times['cand2']])
+          times['difference_seconds']=times['baseline_mean_seconds']-times['candidate_mean_seconds']
+          times['physical_acer_tested']=False
+          Path('out/reports/comparison.json').write_text(json.dumps(times,indent=2)+'\n')
+          print(json.dumps(times,indent=2))
+          PY
+      - name: Preserve results and actual guest frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-block-${{ matrix.block }}-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep candidate temporarily for further validation
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v108-block-${{ matrix.block }}-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/candidate-sha256.txt
+          compression-level: 0
+          retention-days: 3
