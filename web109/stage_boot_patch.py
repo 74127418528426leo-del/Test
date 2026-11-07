@@ -38,7 +38,11 @@ INSTALL='''
 	# Experimental staged boot: these tools and the service live in RAM.
 	if [ -z "${TORAM:-}" ] && [ -b /dev/mapper/p50-staged-root ]; then
 		mkdir -p /run/p50-stage/tools "${rootmnt}/etc/systemd/system/graphical.target.wants" || panic "p50: cannot prepare migration tools"
+		mount -t tmpfs -o size=32M,mode=0755,nosuid,nodev,exec tmpfs /run/p50-stage/tools || panic "p50: cannot mount migration tools"
 		cp -a /usr/lib/p50-stage/. /run/p50-stage/tools/ || panic "p50: cannot stage migration tools"
+		chown -R 0:0 /run/p50-stage/tools || panic "p50: cannot secure migration tools"
+		chmod -R go-w /run/p50-stage/tools || panic "p50: cannot secure migration permissions"
+		mount -o remount,ro,nosuid,nodev,exec /run/p50-stage/tools || panic "p50: cannot protect migration tools"
 		cp /usr/lib/p50-stage/p50-staged-migration.service "${rootmnt}/etc/systemd/system/" || panic "p50: cannot install migration service"
 		ln -s ../p50-staged-migration.service "${rootmnt}/etc/systemd/system/graphical.target.wants/p50-staged-migration.service" || panic "p50: cannot enable migration service"
 	fi
