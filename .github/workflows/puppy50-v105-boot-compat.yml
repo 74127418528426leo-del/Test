@@ -1,0 +1,79 @@
+name: Puppy50 v105 virtual media and bridge tests
+on:
+  push:
+    branches: [puppy50-v105-fast-boot]
+    paths: [.github/workflows/puppy50-v105-boot-compat.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  virtual-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-usb, uefi-optical, restricted-https-bridge]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU, UEFI and network test utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil ovmf iptables
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/{qemu,reports} fixture
+      - name: Retrieve exact combined experimental image
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v105-combined-test-only
+          run-id: 42330320993
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify image
+        run: |
+          set -euo pipefail
+          (cd input && sha256sum -c SHA256SUMS)
+          printf '%s  %s\n' '01a861bd064408ce1814bb79d8c43274e54061435423cc009ca4924815f3d355' 'input/Puppy50_v105_Fast_TEST_ONLY.iso' | sha256sum -c -
+      - name: Start restricted bridge and marker
+        if: matrix.trial != 'uefi-optical'
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sudo nohup python3 -u web66/host_https_bridge.py --port 3128 >evidence/reports/bridge.log 2>&1 </dev/null &
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",3128),timeout=5).close(); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot and exercise actual guest
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          iso=input/Puppy50_v105_Fast_TEST_ONLY.iso
+          if [ "$TRIAL" = bios-usb ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode online --ram 2560 --seconds 210 --emulate-acer-id --media usb --bandwidth 31457280
+          elif [ "$TRIAL" = uefi-optical ]; then
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode offline --ram 2560 --seconds 210 --emulate-acer-id --firmware uefi
+          else
+            runner_uid=$(id -u)
+            sudo iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT
+            cleanup() { sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j REJECT; }
+            trap cleanup EXIT
+            if curl --noproxy '*' --silent --connect-timeout 3 --max-time 5 https://example.com/ >/dev/null; then
+              echo 'Direct runner HTTPS was not blocked; test invalid.' >&2
+              exit 1
+            fi
+            python3 -u web105/boot_bench.py --iso "$iso" --out evidence/qemu --mode online --ram 2560 --seconds 210
+            grep -F 'PUPPY50_V85_GUEST_CA_VERIFIED_PUBLIC_HTTPS_BRIDGE=PASS' evidence/qemu/serial.log
+          fi
+      - name: Preserve results and real framebuffer images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v105-compat-${{ matrix.trial }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
