@@ -9,18 +9,21 @@ MANIFEST=/run/live/medium/sha256sum.txt
 COPY=/run/p50-stage/root.squashfs
 NEW_LOOP=''
 TABLE_LOADED=0
-SUSPENDED=0
+SWITCH_ATTEMPTED=0
 SWITCHED=0
 READY=0
 exec >/dev/ttyS0 2>&1
 fail() { echo "P50_STAGE_FAILED: $*"; exit 1; }
 cleanup() {
     if [ "$READY" = 1 ]; then return; fi
-    if [ "$SWITCHED" = 0 ]; then
+    if [ "$SWITCH_ATTEMPTED" = 0 ]; then
         if [ "$TABLE_LOADED" = 1 ]; then "$DM" clear p50-staged-root || true; fi
-        if [ "$SUSPENDED" = 1 ]; then "$DM" resume p50-staged-root || true; fi
         if [ -n "$NEW_LOOP" ]; then "$B" losetup -d "$NEW_LOOP" || true; fi
         "$B" rm -f "$COPY" || true
+    else
+        # A failed or interrupted switch has uncertain active backing.
+        # Keep both devices and the RAM copy until reboot; never claim ready.
+        echo P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH
     fi
     echo P50_STAGE_NOT_READY
 }
@@ -70,10 +73,11 @@ new_sectors=$("$B" cat "/sys/block/$new_name/size") || fail 'cannot size RAM loo
 [ "$new_sectors" = "$old_sectors" ] || fail 'loop sizes differ'
 "$DM" reload p50-staged-root --readonly --table "0 $new_sectors linear $NEW_LOOP 0" || fail 'cannot load new table'
 TABLE_LOADED=1
-"$DM" suspend p50-staged-root || fail 'cannot suspend mapping'
-SUSPENDED=1
-"$DM" resume p50-staged-root || fail 'cannot resume mapping'
-SUSPENDED=0
+# This static helper performs suspend and resume in the same process. It and
+# its executable pages are in tmpfs, so it does not start a dynamic loader from
+# the root filesystem while that filesystem is suspended.
+SWITCH_ATTEMPTED=1
+/run/p50-stage/tools/p50-switch || fail 'cannot complete mapper switch'
 SWITCHED=1
 new_table=$("$DM" table p50-staged-root) || fail 'cannot inspect new table'
 set -- $new_table
