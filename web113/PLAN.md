@@ -1,0 +1,10 @@
+# Puppy50 v113: eight-second startup research
+
+Baseline is the public v112 Fast Read ISO, SHA-256 `317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7`. A matched BIOS/USB QEMU test showed 15.47 s to the first Firefox home frame and 36.63 s to verified RAM readiness. Timings start immediately before QEMU launches, not at physical power-on; i3 feature masking does not simulate its execution speed.
+
+The goal is an actually usable Firefox, not a splash screen, with network selection and the verified staged RAM migration retained. Keep the original full-RAM fallback, Firefox sandbox/TLS behavior, existing driver/firmware coverage and v112 release. Do not claim the eight-second target, 384 MiB Firefox operation, physical hardware compatibility, or 4K streaming without matching evidence.
+
+1. Instrument a test-only v112 fast initramfs with timestamps around the device-mapper/udev wait, the root boot hook, LightDM preflight, and browser launch. Report systemd and session timing from inside the guest while preserving actual screenshots. Compare instrumented and unmodified boots; account for measurement perturbation.
+2. Test speculative early reading of the existing Firefox executable and libraries, with separate bounded variants, preserving filesystem and fast/full fallback content. Measure first home, genuine early interaction, RAM-ready time and memory on matched hosts; discard changes without a clear net win or with degraded security/network behavior.
+3. Test avoiding the global early udev settle only if the device-mapper major/minor node is still independently verified. Treat this as experimental; test diverse BIOS/UEFI and physical-device compatibility before any public image. Because virtual tests cannot establish arbitrary Wi-Fi/storage hardware behavior, prefer retaining the barrier unless its benefit and safety are demonstrated.
+4. If any experiment improves results materially, repeat and validate the exact candidate across BIOS/UEFI, 2 GiB, network restoration, media removal after RAM ready, full-RAM fallback, public HTTPS and an independent image audit. Keep the existing release until such a candidate is demonstrated.
