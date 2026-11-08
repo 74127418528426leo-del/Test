@@ -38,6 +38,16 @@ At 3 GiB, separate UEFI offline USB, UEFI online optical, BIOS full-RAM fallback
 
 [Clean initial comparison](https://github.com/74127418528426leo-del/Test/actions/runs/42535754369) · [Clean repeat](https://github.com/74127418528426leo-del/Test/actions/runs/42536479145) · [3 GiB passes and 2 GiB failure](https://github.com/74127418528426leo-del/Test/actions/runs/42536475888) · [Low-memory observations](https://github.com/74127418528426leo-del/Test/actions/runs/42536910497) · [Clean independent audit](https://github.com/74127418528426leo-del/Test/actions/runs/42536473883) · [Firefox preference repeat](https://github.com/74127418528426leo-del/Test/actions/runs/42536105814)
 
+## Follow-up: 2 GiB and a direct desktop experiment
+
+The exact clean image's separate 2 GiB validation failed its memory-reserve check once. A later same-host A–B–B–A test used diagnostic copies of v112 and the clean layout, adding only a report of the existing guard values; both samples of each diagnostic image completed the RAM copy and worked after virtual USB removal. At the guard, available memory ranged from 1,143,080 to 1,216,324 KiB, above the required 680,220 KiB root copy plus the unchanged 393,216 KiB reserve. These diagnostic copies are not identical to the release ISO. Together with the earlier failure, this demonstrates variability rather than a reliable 2 GiB minimum or a proven regression.
+
+A separate A–B–B–A 2 GiB comparison of v112 against the Firefox preallocation-disabled test image also passed RAM migration in all four samples. This small test does not establish a memory improvement, and the 3 GiB finer timing repeat found no meaningful speed benefit. The setting is not included in the clean candidate.
+
+The first direct X11-session experiment failed to show Firefox. The audit revealed that the original display manager was still being started by a diagnostic service. After isolating the old display manager, the second attempt also failed: its journal showed that systemd tried to resolve the live user before the preflight had created that user. A further test moves user preparation into a separate root service. None of these direct-session experiments is included in the clean candidate.
+
+[2 GiB guard investigation](https://github.com/74127418528426leo-del/Test/actions/runs/42536785403) · [2 GiB Firefox preallocation comparison](https://github.com/74127418528426leo-del/Test/actions/runs/42536862696) · [Initial direct-session attempt](https://github.com/74127418528426leo-del/Test/actions/runs/42536424516) · [Isolated direct-session diagnostic](https://github.com/74127418528426leo-del/Test/actions/runs/42537043469)
+
 ## Boot timing profile
 
 A separate, lightly instrumented v112 fast boot measured the device-mapper `udevadm settle` at 0.03 s in each of two VM runs (guest uptime 1.99→2.02 s and 1.95→1.98 s). In one run the live root hook occurred at guest uptime 2.08 s, LightDM preflight at 5.38–5.41 s, and the Firefox launch command at 7.50 s. The first Firefox home frame was seen at 15.46 s on the host clock. Guest uptime and host launch time have different origins and must not be subtracted directly; the gap before the kernel clock includes virtual firmware, boot menu, and image loading.
