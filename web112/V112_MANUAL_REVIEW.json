@@ -29,5 +29,20 @@
       "qemu/external_https.png": "f8e5f26f2e79b4a5a65f62b951bcaadf2548a7be72b4329622c75d6a3544919a"
     }
   },
-  "review_notes": "Screenshots were inspected for the browser home, a real JavaScript response while the USB was attached, RAM-ready after removal, offline browsing, fallback selection, and restored public HTTPS."
+  "review_notes": "Screenshots were inspected for the browser home, a real JavaScript response while the USB was attached, RAM-ready after removal, offline browsing, fallback selection, and restored public HTTPS. Public-site snapshots show the Bible home and CNN privacy prompt; YouTube requests sign-in and Pexels requests human verification.",
+  "sites_run_id": 42481132881,
+  "site_screenshots": {
+    "cnn": {
+      "qemu/requested_site.png": "a75d9fac85f96ef5712f5e06c0b96c929d17882f428bf36a4097529899069338"
+    },
+    "bible-project": {
+      "qemu/requested_site.png": "dfe6b51e0f840618f06df365a76d17266c7604f23cbdf53ee6a7f4b0805556db"
+    },
+    "youtube-4k-page": {
+      "qemu/requested_site.png": "4e250b746fe8bbcbe024365c6cf5353803a6bc4aca1672d520a956d37b8b395b"
+    },
+    "pexels-video-page": {
+      "qemu/requested_site.png": "349976b4f0c175ea752a065fbafabc5467f433718e23c2d23ab447ac44e6d74b"
+    }
+  }
 }
