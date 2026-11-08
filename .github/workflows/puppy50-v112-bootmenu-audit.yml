@@ -1,0 +1,34 @@
+name: Puppy50 v112 boot menu and timeout audit
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-bootmenu-audit.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - name: Install ISO inspection tool
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+          mkdir -p input out
+      - name: Extract boot menus from the published verified ISO
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v112.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/v112.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v112.iso -extract /isolinux out/isolinux -extract /boot/grub out/grub >out/extract.log 2>&1
+          find out/isolinux out/grub -type f \( -name '*.cfg' -o -name '*.conf' \) -print0 | sort -z | xargs -0 grep -inE 'timeout|ontimeout|default|menu hidden|menu autoboot' | tee out/boot-timeout-matches.txt || true
+          find out/isolinux out/grub -type f \( -name '*.cfg' -o -name '*.conf' \) -exec cat {} + >out/all-menu-configs.txt
+      - name: Preserve boot menu audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-bootmenu-audit
+          path: out/
+          if-no-files-found: warn
+          retention-days: 30
