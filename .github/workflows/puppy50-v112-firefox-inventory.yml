@@ -1,0 +1,35 @@
+name: Puppy50 v112 Firefox root layout inventory
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-firefox-inventory.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Install inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p input out
+      - name: Inspect Firefox paths in exact v111 image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v111.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v111-intel-faststart-experimental/Puppy50_v111_Intel_FastStart_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6' input/v111.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v111.iso -extract /live/filesystem.squashfs input/root.squashfs >out/extract.log 2>&1
+          unsquashfs -ll input/root.squashfs >out/all-paths.txt
+          grep -E '(/firefox-esr($|/distribution|/firefox)|/firefox($|/distribution|/policies)|/policies.json$|/usr/bin/firefox)' out/all-paths.txt | tee out/firefox-paths.txt || true
+          unsquashfs -cat input/root.squashfs /var/lib/dpkg/info/firefox-esr.list >out/dpkg-files.txt || true
+          wc -l out/all-paths.txt out/firefox-paths.txt out/dpkg-files.txt
+      - name: Preserve inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-firefox-layout-inventory
+          path: out/
+          retention-days: 30
