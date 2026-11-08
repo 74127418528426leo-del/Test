@@ -14,6 +14,13 @@ A separate 256 KiB versus v111 A–B–B–A interaction comparison detected the
 
 Virtual validation covered BIOS USB at 2 GiB, UEFI offline USB, UEFI online optical, full-RAM fallback, and HTTPS restoration after a deliberate outage. The boot media was removed only after RAM migration and the browser was exercised afterward. A byte- and metadata-level audit independently compared the two unpacked root filesystems and checked all 293 ISO checksum entries.
 
+
+A separate compression study compared 256 KiB blocks using Zstd level 1 and LZ4 against v111. Zstd level 1 changed the two-sample home-frame mean by 0.85 s while increasing ISO size to 962.31 MiB and delaying RAM-ready by 3.15 s. LZ4 changed the mean by 0.45 s (less than the 0.8 s sampling interval), increased ISO size to 1011.31 MiB, and delayed RAM-ready by 4.55 s. Neither was selected. Runs were on separate hosts, so differences between experiments cannot be treated as direct head-to-head results.
+
+The corrected first-run policy experiment booted but did not provide a measurable speed gain: its v111 versus candidate home-frame means were 16.68 s and 17.06 s. The selected image retains the standard browser behavior.
+
+Four separate browser snapshots were captured after virtual media removal. The Gospel of John project home rendered; CNN rendered behind a privacy notice and indicated that some media requires DRM. YouTube displayed a sign-in verification prompt; Pexels displayed human verification. No 4K playback or panorama interaction was verified in these snapshots. [Public-site snapshots](https://github.com/74127418528426leo-del/Test/actions/runs/42481132881) · [Compression experiments](https://github.com/74127418528426leo-del/Test/actions/runs/42480824389) · [First-run experiment](https://github.com/74127418528426leo-del/Test/actions/runs/42480890079).
+
 The first attempt to suppress Firefox's first-run page failed safely in a test-only image: Debian's Firefox distribution directory is a relative symlink. The root cause was identified by inspecting the real filesystem. That patch is not present in the selected v112 image.
 
 An early-payload audit found 865 early kernel module files identical to late-root copies, but byte identity alone does not prove safe removal: devices may require drivers or firmware before the root is available and may not reprobe later. Some graphics firmware was not present at the same late-root paths. No broad early-module or firmware removal was adopted on this evidence.
