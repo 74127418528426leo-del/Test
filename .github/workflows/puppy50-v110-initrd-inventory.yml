@@ -24,7 +24,7 @@ jobs:
           xorriso -osirrox on -indev input/v109.iso -extract /live/initrd.img input/initrd.img >out/reports/extract.log 2>&1
           sudo unmkinitramfs input/initrd.img out/initrd >out/reports/unpack.log 2>&1
           sudo du -h -d 4 out/initrd | sort -hr >out/reports/unpacked-sizes.txt
-          sudo find out/initrd -type f -printf '%s %p\n' | sort -nr | head -120 >out/reports/largest-files.txt
+          sudo find out/initrd -type f -printf '%s %p\n' | sort -nr | sed -n '1,120p' >out/reports/largest-files.txt
           stat -c '%n %s' input/initrd.img | tee out/reports/input-size.txt
           sudo find out/initrd -type f -path '*/kernel/x86/microcode/*' -printf '%s %p\n' | tee out/reports/microcode-sizes.txt
           sha256sum input/initrd.img | tee out/reports/input-hash.txt
