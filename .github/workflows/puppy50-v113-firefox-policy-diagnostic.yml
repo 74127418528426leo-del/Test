@@ -37,7 +37,7 @@ jobs:
           from pathlib import Path
           p=Path('web113/interactive_bench.py');s=p.read_text()
           marker="                    result['screenshots'].append('external_https.png')\n"
-          inject="                    navigate(monitor, 'about:policies')\n                    time.sleep(8)\n                    capture(monitor, out, 'about-policies.png')\n                    result['screenshots'].append('about-policies.png')\n"
+          inject="                    navigate(monitor, 'about:policies')\n                    time.sleep(8)\n                    capture(monitor, out, 'about-policies.png')\n                    result['screenshots'].append('about-policies.png')\n                    navigate(monitor, 'about:profiles')\n                    time.sleep(8)\n                    capture(monitor, out, 'about-profiles.png')\n                    result['screenshots'].append('about-profiles.png')\n"
           assert s.count(marker)==1;s=s.replace(marker,marker+inject,1);p.write_text(s)
           PY
           python3 -m py_compile web113/interactive_bench.py
