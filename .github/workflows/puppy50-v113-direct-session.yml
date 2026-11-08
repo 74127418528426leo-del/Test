@@ -1,4 +1,4 @@
-name: Puppy50 v113 direct non-root graphical session experiment
+name: Puppy50 v113 direct non-root graphical session experiment, isolated
 on:
   push:
     branches: [puppy50-v113-startup-research]
@@ -106,7 +106,7 @@ jobs:
           set -euo pipefail
           for run in base1 cand1 cand2 base2; do
             if [[ "$run" == base* ]]; then iso=input/v112.iso; else iso=out/candidate.iso; fi
-            python3 -u web113/interactive_bench.py --iso "$iso" --out "out/$run" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+            python3 -u web113/interactive_bench.py --iso "$iso" --out "out/$run" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 90 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
           done
           test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 4
           test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 4
