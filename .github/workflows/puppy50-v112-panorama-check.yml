@@ -1,0 +1,64 @@
+name: Puppy50 v112 Bible panorama snapshot
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-panorama-check.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - site: bible-panorama
+            url: https://3dbibleonline.github.io/john/chapter-01.html
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools and verify harness
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          python3 -m unittest discover -s web112 -p 'test_*.py' -v
+          python3 web112/site_probe.py web109/boot_bench_staged.py web112/generated_site_bench.py
+          python3 -m py_compile web112/generated_site_bench.py
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-262144-test-only-iso
+          run-id: 42479601193
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify image and prepare local RAM-removal fixture
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/candidate.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Capture requested page after RAM migration
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+          P50_TEST_URL: ${{ matrix.url }}
+        run: |
+          set -euo pipefail
+          python3 -u web112/generated_site_bench.py --iso input/candidate.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          test -s out/qemu/requested_site.png
+          grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
+          printf '%s\n' 'A screenshot was captured. Website availability and video playback/resolution require review; this is not a 4K playback test.' >out/reports/interpretation.txt
+      - name: Preserve screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-panorama-check-${{ matrix.site }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 30
