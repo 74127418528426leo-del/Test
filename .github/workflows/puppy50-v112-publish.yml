@@ -1,0 +1,142 @@
+name: Publish checked Puppy50 v112 Fast Read experiment
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v112-fast-read-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify all pinned benchmark, interaction, validation and audit runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42479601193 42480553607 42480523148 42480757160 42481132881 42480824389 42480890079 42480267230; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42480523148/jobs?per_page=100" --jq '.jobs[] | [.name,.conclusion] | @tsv' >jobs.txt
+          for trial in bios-usb-2048 uefi-usb-offline-3072 uefi-optical-online-3072 bios-fullram-fallback connectivity-restored; do
+            grep -Fx "$(printf 'test (%s)\tsuccess' "$trial")" jobs.txt
+          done
+          test "$(wc -l <jobs.txt)" -eq 5
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-262144-test-only-iso
+          run-id: 42479601193
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-262144-evidence
+          run-id: 42479601193
+          github-token: ${{ github.token }}
+          path: evidence/benchmark
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-block256-interaction-evidence
+          run-id: 42480553607
+          github-token: ${{ github.token }}
+          path: evidence/interaction
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v112-block256-validation-*
+          run-id: 42480523148
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-block256-independent-audit
+          run-id: 42480757160
+          github-token: ${{ github.token }}
+          path: evidence/audit
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v112-requested-site-*
+          run-id: 42481132881
+          github-token: ${{ github.token }}
+          path: evidence/sites
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v112-compression-*-evidence
+          run-id: 42480824389
+          github-token: ${{ github.token }}
+          path: evidence/compression
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-first-run-evidence
+          run-id: 42480890079
+          github-token: ${{ github.token }}
+          path: evidence/first-run
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-early-payload-audit
+          run-id: 42480267230
+          github-token: ${{ github.token }}
+          path: evidence/early-payload-audit
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v112-squashfs-*-evidence
+          run-id: 42479601193
+          github-token: ${{ github.token }}
+          path: evidence/block-study
+      - name: Verify exact image, evidence and reviewed screenshots
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' iso/candidate.iso | sha256sum -c -
+          python3 web112/verify_v112_release.py
+      - name: Prepare ISO, notes, checksum and evidence package
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/candidate.iso dist/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso
+          cp web112/V112_RELEASE_NOTES.md dist/README_V112_EXPERIMENTAL.md
+          cp web112/V112_MANUAL_REVIEW.json dist/
+          (cd dist && sha256sum Puppy50_v112_Fast_Read_EXPERIMENTAL.iso >SHA256SUMS)
+          stat -c '%n %s' dist/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso
+          git rev-parse HEAD >evidence/release-packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v112_Fast_Read_Test_Evidence.zip', 'w', compression=ZIP_DEFLATED, compresslevel=6) as z:
+              for root in (Path('evidence'), Path('web112'), Path('web109'), Path('web103'), Path('web85')):
+                  if root.exists():
+                      for p in sorted(root.rglob('*')):
+                          if p.is_file() and not p.is_symlink() and p.suffix not in ('.pyc',) and p.stat().st_size < 20000000:
+                              z.write(p, p.as_posix())
+              for p in sorted(Path('.github/workflows').glob('puppy50-v112-*.yml')):
+                  z.write(p, p.as_posix())
+          PY
+      - name: Publish a separate experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v112-fast-read-experimental'
+          build_sha='7db3e0dfa41b07bc6c9735af666368540493d8f7'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V112_EXPERIMENTAL.md dist/V112_MANUAL_REVIEW.json dist/Puppy50_v112_Fast_Read_Test_Evidence.zip --verify-tag --title 'Puppy50 v112 Fast Read (EXPERIMENTAL)' --notes-file web112/V112_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v112-fast-read-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' /tmp/puppy50-v112-fast-read-release.iso | sha256sum -c -
