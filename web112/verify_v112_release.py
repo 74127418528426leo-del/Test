@@ -79,6 +79,16 @@ for name, expected in review['validation'].items():
     if name == 'connectivity-restored':
         assert r['outbound_https_intentionally_blocked'] and r['network_restored_signal_observed']
 
+assert review['sites_run_id'] == 42481132881
+assert set(review['site_screenshots']) == {'cnn', 'bible-project', 'youtube-4k-page', 'pexels-video-page'}
+for site, expected in review['site_screenshots'].items():
+    folder = root / 'sites' / ('Puppy50-v112-requested-site-' + site)
+    frames(folder, expected)
+    r = load(folder / 'qemu/result.json')
+    result_ok(r)
+    assert 'requested_site.png' in r['screenshots']
+    assert 'GET /after.html?nonce=P50-42481132881 HTTP/1.1" 200' in (folder / 'reports/fixture.log').read_text()
+
 audit = root / 'audit'
 assert not (audit / 'rsync-forward.txt').read_bytes()
 assert not (audit / 'rsync-reverse.txt').read_bytes()
