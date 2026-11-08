@@ -10,3 +10,5 @@ The goal is an actually usable Firefox, not a splash screen, with network select
 4. If any experiment improves results materially, repeat and validate the exact candidate across BIOS/UEFI, 2 GiB, network restoration, media removal after RAM ready, full-RAM fallback, public HTTPS and an independent image audit. Keep the existing release until such a candidate is demonstrated.
 
 5. Recompress the exact existing boot archives with higher Zstandard levels, including an option to compress the previously uncompressed early driver archive. Preserve both raw microcode archives byte-for-byte and verify the decompressed archive hashes, all hardware files, fallback image, real interaction, RAM transition and network. This tests whether loading fewer bytes can reduce the pre-kernel startup cost without removing drivers.
+
+6. Test 16 KiB, 32 KiB and 64 KiB SquashFS blocks against the exact 256 KiB v112 image. Compare actual early interaction, image size, RAM readiness, and unpacked filesystem content and metadata; discard a faster-looking layout if it harms usability or lacks repeatable evidence.
