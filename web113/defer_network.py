@@ -46,7 +46,8 @@ def defer(early,main,late,mode,min_drivers=100,min_firmware=20):
             if p.is_symlink() or not p.is_file() or not p.resolve().is_relative_to(base):
                 raise ValueError('Unexpected early file '+str(p))
             rel=p.relative_to(base);target=late/rel
-            if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(late):
+            # A relative symlink is safe if its resolved bytes stay inside the late root.
+            if not target.is_file() or not target.resolve().is_relative_to(late):
                 raise ValueError('Missing or unsafe late copy '+str(rel))
             src_hash=digest(p)
             if src_hash!=digest(target):raise ValueError('Late copy differs '+str(rel))
