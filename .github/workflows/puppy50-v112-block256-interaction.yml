@@ -1,0 +1,92 @@
+name: Puppy50 v112 matched early interaction comparison
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-block256-interaction.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools and run test-harness checks
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          python3 -m unittest discover -s web112 -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web112/generated_interactive_bench.py
+          python3 -m py_compile web112/generated_interactive_bench.py
+          lscpu >out/reports/host-cpu.txt
+      - name: Fetch the exact published v111 image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v111.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v111-intel-faststart-experimental/Puppy50_v111_Intel_FastStart_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6' input/v111.iso | sha256sum -c -
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-262144-test-only-iso
+          run-id: 42479601193
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify the exact test candidate
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/candidate.iso | sha256sum -c -
+      - name: Start separate early and post-removal fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Measure four alternating real Firefox interaction attempts
+        timeout-minutes: 13
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for run in base1 cand1 cand2 base2; do
+            if [[ "$run" == base* ]]; then iso=input/v111.iso; else iso=input/candidate.iso; fi
+            python3 -u web112/generated_interactive_bench.py --iso "$iso" --out "out/$run" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 4
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 4
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+          results={n:json.loads((Path('out')/n/'result.json').read_text()) for n in ('base1','cand1','cand2','base2')}
+          for n,r in results.items():
+              assert r['first_home_seen_seconds'] is not None
+              assert r['early_page_seen_seconds'] is not None and r['early_js_response_seconds'] is not None
+              assert r['early_navigation_start_seconds'] >= r['first_home_seen_seconds']
+              assert r['early_js_response_seconds'] >= r['early_page_seen_seconds'] >= r['early_navigation_start_seconds']
+              assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response']
+              assert r['media_ejected'] and r['input_sent_after_eject'] and not r['errors']
+          report={'runs':{n:{k:r[k] for k in ('first_home_seen_seconds','early_navigation_start_seconds','early_page_seen_seconds','early_js_response_seconds','early_media_attached_before_navigation','early_media_attached_after_js_response','ram_ready_before_early_navigation','ram_ready_before_early_js_response','staged_ram_ready_seconds')} for n,r in results.items()},'measurement':'Host monotonic seconds from immediately before QEMU launch; automated URL typing starts after home screenshot detection; input was sent while virtual media remained attached.','physical_acer_tested':False}
+          for key in ('first_home_seen_seconds','early_page_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds'):
+              report['baseline_mean_'+key]=statistics.mean(results[n][key] for n in ('base1','base2'))
+              report['candidate_mean_'+key]=statistics.mean(results[n][key] for n in ('cand1','cand2'))
+          Path('out/reports/interaction-summary.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve serial logs and actual browser frames even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-block256-interaction-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/cand1/
+            out/cand2/
+            out/base2/
+          if-no-files-found: warn
+          retention-days: 30
