@@ -1,0 +1,60 @@
+name: Independently audit Puppy50 v112 block-layout candidate
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-block256-audit.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Install filesystem inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync
+          mkdir -p input audit/{old,new,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-262144-test-only-iso
+          run-id: 42479601193
+          github-token: ${{ github.token }}
+          path: input
+      - name: Obtain the pinned original and exact candidate
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v111.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v111-intel-faststart-experimental/Puppy50_v111_Intel_FastStart_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6' input/v111.iso | sha256sum -c -
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/candidate.iso | sha256sum -c -
+          for side in old new; do
+            if [ "$side" = old ]; then image=input/v111.iso; else image=input/candidate.iso; fi
+            xorriso -osirrox on -indev "$image" -extract /live/initrd.img "audit/$side/initrd" -extract /live/initrd-full.img "audit/$side/full-initrd" -extract /live/vmlinuz "audit/$side/vmlinuz" -extract /live/filesystem.squashfs "audit/$side/root.squashfs" -extract /isolinux/live.cfg "audit/$side/bios.cfg" -extract /boot/grub/grub.cfg "audit/$side/grub.cfg" >"audit/reports/$side-extract.log" 2>&1
+          done
+          for file in initrd full-initrd vmlinuz bios.cfg grub.cfg; do cmp "audit/old/$file" "audit/new/$file"; done
+          unsquashfs -s audit/old/root.squashfs >audit/reports/old-format.txt
+          unsquashfs -s audit/new/root.squashfs >audit/reports/new-format.txt
+      - name: Compare every unpacked file and filesystem metadata
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -d audit/old-root audit/old/root.squashfs >audit/reports/old-unpack.log
+          sudo unsquashfs -d audit/new-root audit/new/root.squashfs >audit/reports/new-unpack.log
+          sudo rsync -aHAXnci --delete --numeric-ids audit/old-root/ audit/new-root/ >audit/reports/rsync-forward.txt
+          sudo rsync -aHAXnci --delete --numeric-ids audit/new-root/ audit/old-root/ >audit/reports/rsync-reverse.txt
+          test ! -s audit/reports/rsync-forward.txt
+          test ! -s audit/reports/rsync-reverse.txt
+          xorriso -osirrox on -indev input/candidate.iso -extract / audit/image >audit/reports/image-extract.log 2>&1
+          (cd audit/image && sha256sum -c sha256sum.txt) >audit/reports/media-checksums.txt
+          test "$(wc -l < audit/reports/media-checksums.txt)" -eq 293
+          printf '%s\n' 'The unpacked root contents and checked metadata match v111. Kernel, fast and fallback initramfs, BIOS and UEFI boot menus match byte-for-byte. All 293 candidate image checksums pass.' >audit/reports/audit-result.txt
+          cat audit/reports/audit-result.txt
+      - name: Preserve independent audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-block256-independent-audit
+          path: audit/reports/
+          if-no-files-found: warn
+          retention-days: 30
