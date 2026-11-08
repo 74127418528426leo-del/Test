@@ -94,7 +94,7 @@ jobs:
           stat -c '%n %s' input/v111.iso out/candidate.iso | tee out/reports/iso-sizes.txt
       - name: Start local post-removal test page
         env:
-          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.compression }}
+          P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
           nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
@@ -102,7 +102,7 @@ jobs:
       - name: Compare matched virtual boots in alternating order
         timeout-minutes: 18
         env:
-          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.compression }}
+          P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
           bench() { python3 -u web109/boot_bench_staged.py --iso "$1" --out "out/$2" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
