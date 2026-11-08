@@ -20,9 +20,11 @@ class DeferredNetworkTests(unittest.TestCase):
     def test_removes_only_verified_early_network_copies(self):
         with tempfile.TemporaryDirectory() as t:
             e,m,l,drv,fw,keep=self.create_fixture(Path(t))
+            link=(m/fw).parent/'fw-link.bin';link.symlink_to('fw.bin')
             report=d.defer(e,m,l,'drivers-firmware',1,1)
             self.assertFalse((e/drv).exists());self.assertFalse((m/fw).exists())
             self.assertTrue((l/drv).exists() and (l/fw).exists() and keep.exists())
+            self.assertTrue(link.is_symlink())
             self.assertEqual((report['drivers'],report['firmware_files']),(1,1))
 
     def test_mismatched_late_copy_aborts_without_any_removal(self):
