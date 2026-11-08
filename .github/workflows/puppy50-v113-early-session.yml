@@ -1,0 +1,162 @@
+name: Puppy50 v113 earlier display-manager scheduling
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-early-session.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [parallel, earlybus]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM and ISO tools; test patching and browser probes
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{main,reports,tree,rechecked} fixture
+          python3 -m unittest discover -s web113 -p 'test_*.py' -v
+          python3 -m unittest discover -s web112 -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web113/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web113/interactive_bench.py');s=p.read_text()
+          old="'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN']"
+          new="'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN', 'P50_V113_SETTLE_BEGIN', 'P50_V113_SETTLE_END', 'P50_V113_ROOT_HOOK', 'P50_V113_PREFLIGHT_BEGIN', 'P50_V113_PREFLIGHT_END', 'P50_V113_LIGHTDM_STARTED']"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          python3 -m py_compile web113/interactive_bench.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - name: Fetch pinned v112 and patch only its fast initramfs
+        env:
+          EXPERIMENT_MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v112.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/v112.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v112.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/base.squashfs >out/reports/extract.log 2>&1
+          head -c 45312000 out/original.initrd >out/early-prefix
+          tail -c +45312001 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo python3 web113/session_patch.py out/main "$EXPERIMENT_MODE"
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/main/usr/lib/live/boot/9990-misc-helpers.sh
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+      - name: Create test-only ISO and verify boot and media integrity
+        run: |
+          set -euo pipefail
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 45312000 out/original.initrd out/candidate.initrd
+          stat -c '%n %s' out/original.initrd out/candidate.initrd out/base.squashfs >out/reports/component-sizes.txt
+          xorriso -indev input/v112.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve();lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in seen;seen.add(name)
+              p=(root/name).resolve(strict=True);p.relative_to(root);assert p.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for block in iter(lambda:f.read(1048576),b''):h.update(block)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==293
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/base.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/candidate.initrd out/rechecked/live/initrd.img
+          cmp out/candidate.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+          cmp out/original-full.initrd out/rechecked/live/initrd-full.img
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          test "$(wc -l <out/reports/media-checksums.txt)" -eq 293
+          sha256sum input/v112.iso out/candidate.iso >out/reports/iso-hashes.txt
+          stat -c '%n %s' input/v112.iso out/candidate.iso >out/reports/iso-sizes.txt
+      - name: Start separate early interaction and post-removal fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Compare four alternating real interactive boots
+        timeout-minutes: 20
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+          EXPERIMENT_MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          for run in base1 cand1 cand2 base2; do
+            if [[ "$run" == base* ]]; then iso=input/v112.iso; else iso=out/candidate.iso; fi
+            python3 -u web113/interactive_bench.py --iso "$iso" --out "out/$run" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 4
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 4
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          for run in cand1 cand2; do
+            tr -d '\r' <"out/$run/serial.log" >"out/reports/$run-serial-clean.log"
+            for marker in P50_V113_LIGHTDM_STARTED P50_V113_SESSION_UI_OK P50_V113_SESSION_PROFILE_BEGIN P50_V113_SESSION_PROFILE_END; do grep -F "$marker" "out/reports/$run-serial-clean.log"; done
+            if grep -Fq P50_V113_SESSION_UI_MISSING "out/reports/$run-serial-clean.log"; then exit 1; fi
+            sed -n '/P50_V113_SESSION_PROFILE_BEGIN/,/P50_V113_SESSION_PROFILE_END/p' "out/reports/$run-serial-clean.log" >"out/reports/$run-session-profile.txt"
+          done
+          python3 - <<'PY'
+          import json,statistics,re,os
+          from pathlib import Path
+          keys=('first_home_seen_seconds','early_navigation_start_seconds','early_page_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')
+          names=('base1','cand1','cand2','base2');r={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,x in r.items():
+              assert all(x.get(k) is not None for k in keys),(n,x)
+              assert x['early_navigation_start_seconds']>=x['first_home_seen_seconds']
+              assert x['early_js_response_seconds']>=x['early_page_seen_seconds']>=x['early_navigation_start_seconds']
+              assert x['early_media_attached_before_navigation'] and x['early_media_attached_after_js_response']
+              assert x['media_ejected'] and x['input_sent_after_eject'] and x['qemu_running_at_end'] and not x['errors']
+          report={'mode':os.environ['EXPERIMENT_MODE'],'results':{n:{k:x[k] for k in keys} for n,x in r.items()},'physical_acer_tested':False,'sample_interval_seconds':.8,'measurement':'Host monotonic from QEMU launch; automated URL entry starts after home frame; 2 vCPUs, 3 GiB, virtual BIOS/USB 30 MiB/s.'}
+          for label,pair in [('baseline',('base1','base2')),('candidate',('cand1','cand2'))]:
+              for key in keys:report[label+'_mean_'+key]=statistics.mean(r[n][key] for n in pair)
+          report['home_difference_seconds']=report['baseline_mean_first_home_seen_seconds']-report['candidate_mean_first_home_seen_seconds']
+          report['response_difference_seconds']=report['baseline_mean_early_js_response_seconds']-report['candidate_mean_early_js_response_seconds']
+          for n in names:
+              serial=(Path('out')/n/'serial.log').read_text(errors='replace')
+              available=[int(v) for v in re.findall(r'P50_V99_RAM_SAMPLE.*?availableKiB=(\d+)',serial)]
+              report['results'][n]['observed_min_available_kib']=min(available) if available else None
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve logs, timings and actual browser screenshots on any result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-session-${{ matrix.mode }}-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Preserve exact test-only ISO temporarily if verified
+        if: success() && matrix.mode != 'profile'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-session-${{ matrix.mode }}-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-hashes.txt
+          compression-level: 0
+          retention-days: 3
