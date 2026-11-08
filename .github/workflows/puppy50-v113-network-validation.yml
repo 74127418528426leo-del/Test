@@ -1,0 +1,107 @@
+name: Validate Puppy50 v113 deferred-network candidate
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-network-validation.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-usb-2048, uefi-usb-offline-3072, uefi-optical-online-3072, bios-fullram-fallback, connectivity-restored]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install guest tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil iptables
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/reports fixture
+          lscpu >evidence/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-network-defer-drivers-test-only-iso
+          run-id: 42534368869
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact candidate and start local page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '1560775eb1ad9c2240fbdc096d4f22a48c60634713f1f95eb3c49de6a70d2616' input/candidate.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Boot, switch to RAM, remove media, and exercise Firefox
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bench() { python3 -u web109/boot_bench_staged.py --iso input/candidate.iso --out evidence/qemu --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --allow-no-startup-probe "$@"; }
+          case "$TRIAL" in
+            bios-usb-2048) bench --wait-ram-ready --mode online --ram 2048 --media usb --bandwidth 31457280 ;;
+            uefi-usb-offline-3072) bench --wait-ram-ready --mode offline --ram 3072 --firmware uefi --media usb ;;
+            uefi-optical-online-3072) bench --wait-ram-ready --mode online --ram 3072 --firmware uefi --media optical ;;
+            bios-fullram-fallback) bench --select-fullram-fallback --mode online --ram 3072 --media usb --bandwidth 31457280 ;;
+            connectivity-restored)
+              runner_uid=$(id -u)
+              sudo iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP
+              cleanup() { if sudo iptables -C OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP 2>/dev/null; then sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP; fi; }
+              trap cleanup EXIT
+              if curl --noproxy '*' --silent --connect-timeout 3 --max-time 5 https://example.com/ >/dev/null; then echo 'Direct HTTPS was not blocked' >&2; exit 1; fi
+              (
+                for n in $(seq 1 360); do
+                  if [ -f evidence/qemu/network_restore_requested ]; then
+                    sudo iptables -D OUTPUT -p tcp --dport 443 -m owner --uid-owner "$runner_uid" -j DROP
+                    touch evidence/qemu/network_restored
+                    exit 0
+                  fi
+                  sleep 1
+                done
+                exit 1
+              ) &
+              watcher=$!
+              bench --wait-ram-ready --mode online --ram 3072 --media usb --bandwidth 31457280 --expect-no-https --test-network-restore
+              wait "$watcher"
+              ;;
+            *) exit 1 ;;
+          esac
+          tr -d '\r' <evidence/qemu/serial.log >evidence/reports/serial-clean.log
+          if [ "$TRIAL" = bios-fullram-fallback ]; then
+            if grep -Fx 'P50_STAGE_READY' evidence/reports/serial-clean.log; then echo 'Fallback unexpectedly used staged migration' >&2; exit 1; fi
+            test -s evidence/qemu/fallback-menu-selected.png
+          else
+            grep -Fx 'P50_STAGE_COPY_VERIFIED' evidence/reports/serial-clean.log
+            grep -Fx 'P50_STAGE_READY' evidence/reports/serial-clean.log
+            grep -F 'P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs' evidence/reports/serial-clean.log
+            python3 - <<'PY'
+          from PIL import Image
+          im=Image.open('evidence/qemu/after_input.png').convert('RGB')
+          assert im.getpixel((830,740))==(102,220,160),im.getpixel((830,740))
+          print('Green RAM-ready indicator visible after virtual media removal.')
+          PY
+          fi
+          if [ "$TRIAL" != uefi-usb-offline-3072 ]; then
+            grep -F "GET /after.html?nonce=$P50_NONCE" evidence/reports/fixture.log | grep -F ' 200 '
+          fi
+          if [ "$TRIAL" != uefi-usb-offline-3072 ] && [ "$TRIAL" != bios-fullram-fallback ]; then
+            grep -Fx 'P50_V113_E1000_LOADED_AFTER_ROOT' evidence/reports/serial-clean.log
+          fi
+      - name: Keep screenshots, results and logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-network-validation-${{ matrix.trial }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
