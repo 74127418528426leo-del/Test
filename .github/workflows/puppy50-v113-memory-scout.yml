@@ -48,8 +48,10 @@ jobs:
           RAM_MIB: ${{ matrix.ram }}
         run: |
           set -uo pipefail
+          set +e
           python3 -u web113/memory_bench.py --iso input/candidate.iso --out evidence/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram "$RAM_MIB" --seconds 120 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280 >evidence/reports/console.log 2>&1
           rc=$?
+          set -e
           printf '%s\n' "$rc" >evidence/reports/benchmark-exit-code.txt
           test -s evidence/qemu/serial.log || exit 1
           test -s evidence/qemu/result.json || exit 1
