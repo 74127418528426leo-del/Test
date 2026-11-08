@@ -1,4 +1,4 @@
-name: Puppy50 v113 direct non-root graphical session experiment, isolated
+name: Puppy50 v113 direct non-root graphical session experiment, isolated and prepared
 on:
   push:
     branches: [puppy50-v113-startup-research]
