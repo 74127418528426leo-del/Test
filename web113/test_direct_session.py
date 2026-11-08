@@ -12,6 +12,7 @@ class DirectSessionTests(unittest.TestCase):
         self.assertIn('ExecStart=/usr/bin/startx /usr/bin/dbus-run-session /usr/bin/openbox-session',result)
         self.assertIn('TTYPath=/dev/tty1',result)
         self.assertIn('/lib/systemd/system/lightdm.service',result)
+        self.assertIn('ln -s /dev/null "${rootmnt}/etc/systemd/system/lightdm.service"',result)
         self.assertIn('\n\tFstab\n\tNetbase\n',result)
     def test_rejects_missing_duplicate_and_previously_patched_hook(self):
         for source in ('oops','\n\tFstab\n\tNetbase\n\n\tFstab\n\tNetbase\n','P50_V113_DIRECT_X\n\tFstab\n\tNetbase\n'):
