@@ -1,0 +1,49 @@
+{
+  "iso_sha256": "b2f6ce26c4a794d87fd2e29d1d22b7e49a1ee175d58d89f7b72215dd54bc8a9e",
+  "note": "The listed screenshots were visually inspected. A VM does not establish physical USB, Wi-Fi, or Acer timing.",
+  "benchmark": {
+    "run_id": 42457412894,
+    "screenshots_sha256": {
+      "cand1/first_home.png": "016d151b49047271012498edea1db30f560a56add3b81b6818fae063ad293c5b",
+      "cand1/after_input.png": "fda40174fd1abf559113aebf13ed55b125d35fbb1f8da8051ac806198f05b6cf",
+      "cand1/external_https.png": "cf4b9ec8f384f4558c7bd56abd1a4ae4f7083c607f9183628faee261f0a4e0f8"
+    }
+  },
+  "validation_run_id": 42458605379,
+  "validation": {
+    "bios-usb-2048": {
+      "artifact_id": 13608687265,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "ed77745ff10c1c0f105522db1f4a7ababd48006a9a6c6453f14de555018344e9",
+        "qemu/external_https.png": "87ae08bc1959d4c2d5f94e2d70794067df2eb38fd427b6c1551d9e56e0b05bfd"
+      }
+    },
+    "bios-fullram-fallback": {
+      "artifact_id": 13608452553,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "c96032149b0136fe6d55a53fa2010101a8b5a317cd4987d1955f3e90df2c47d6",
+        "qemu/external_https.png": "5a8f97ba786189cd434a6f15e900185c15dda8904851e1206a825082517a7029"
+      }
+    },
+    "uefi-usb-offline-3072": {
+      "artifact_id": 13608871530,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "0752306a9b2763939247a30641d038449b1ffd05d3d603e48360e3644a5bf356"
+      }
+    },
+    "uefi-optical-online-3072": {
+      "artifact_id": 13609076259,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "cce72d9494698f59150a438df58a83559ccdd0416f232f188e309d3a9b875d9e",
+        "qemu/external_https.png": "0ea5fa598909bf49645cc4ca96e28f52b6c9610092df6c8d23471763971397d6"
+      }
+    },
+    "connectivity-restored": {
+      "artifact_id": 13609250666,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "4f6e6cd1cb72a88a495dede0ad2ccb57781c49e3180c6e66e889b1642fbd433d",
+        "qemu/external_https.png": "0ea5fa598909bf49645cc4ca96e28f52b6c9610092df6c8d23471763971397d6"
+      }
+    }
+  }
+}
