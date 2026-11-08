@@ -31,6 +31,12 @@ class FirefoxPreferenceTests(unittest.TestCase):
             self.assertEqual(json.loads(dst.read_text()),json.loads(p.policy('off')))
             r=subprocess.run(['sh','-c',wrapper+s],env=env,text=True,capture_output=True)
             self.assertNotEqual(r.returncode,0)
+    def test_checks_current_and_legacy_firefox_profile_locations(self):
+        report=p.patch_migration(p.MIGRATE,'off')
+        self.assertIn('/home/user/.config/mozilla/firefox/*/prefs.js',report)
+        self.assertIn('/home/user/.mozilla/firefox/*/prefs.js',report)
+        self.assertIn('user_pref("dom.ipc.processPrelaunch.enabled", false);',report)
+
     def test_invalid_or_duplicate_hooks_are_rejected(self):
         marker='\n\tFstab\n\tNetbase\n'
         for src in ('absent',marker+marker,'P50_V113_PRELAUNCH_PREF'+marker):
