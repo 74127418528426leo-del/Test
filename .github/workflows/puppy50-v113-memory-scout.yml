@@ -53,7 +53,7 @@ jobs:
           rc=$?
           set -e
           printf '%s\n' "$rc" >evidence/reports/benchmark-exit-code.txt
-          test -s evidence/qemu/serial.log || exit 1
+          test -f evidence/qemu/serial.log || exit 1
           test -s evidence/qemu/result.json || exit 1
           RAM_MIB="$RAM_MIB" EXIT_CODE="$rc" python3 - <<'PY'
           import json, os
