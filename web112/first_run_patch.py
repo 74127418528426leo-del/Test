@@ -8,12 +8,13 @@ MARKER = '\n\tFstab\n\tNetbase\n'
 HOOK = r'''
 \t# P50_V112_FIRST_RUN_POLICY: test-only; leave full-RAM fallback alone.
 \tif [ -z "${TORAM:-}" ] && [ -b /dev/mapper/p50-staged-root ]; then
-\t\tfor p50_policy in "${rootmnt}/etc/firefox/policies/policies.json" "${rootmnt}/etc/firefox-esr/policies/policies.json" "${rootmnt}/usr/lib/firefox-esr/distribution/policies.json"; do
+\t\tp50_distribution_link="${rootmnt}/usr/lib/firefox-esr/distribution"
+\t\t[ -L "${p50_distribution_link}" ] && [ "$(readlink "${p50_distribution_link}")" = '../../share/firefox-esr/distribution' ] || panic "p50: unexpected Firefox distribution link"
+\t\tp50_policy_dir="${rootmnt}/usr/share/firefox-esr/distribution"
+\t\t[ -d "${p50_policy_dir}" ] && [ ! -L "${p50_policy_dir}" ] || panic "p50: unexpected Firefox policy directory"
+\t\tfor p50_policy in "${rootmnt}/etc/firefox/policies/policies.json" "${rootmnt}/etc/firefox-esr/policies/policies.json" "${p50_policy_dir}/policies.json"; do
 \t\t\t[ ! -e "${p50_policy}" ] && [ ! -L "${p50_policy}" ] || panic "p50: unexpected existing Firefox policy"
 \t\tdone
-\t\tp50_policy_dir="${rootmnt}/usr/lib/firefox-esr/distribution"
-\t\t[ -d "${rootmnt}/usr/lib/firefox-esr" ] && [ ! -L "${p50_policy_dir}" ] || panic "p50: unexpected Firefox directory"
-\t\tmkdir -p "${p50_policy_dir}" || panic "p50: cannot create policy directory"
 \t\tprintf '%s\n' '{"policies":{"OverrideFirstRunPage":""}}' > "${p50_policy_dir}/policies.json" || panic "p50: cannot write first-run policy"
 \tfi
 '''.replace('\\t', '\t')
