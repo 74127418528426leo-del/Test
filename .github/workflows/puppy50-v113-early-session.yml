@@ -1,4 +1,4 @@
-name: Puppy50 v113 earlier display-manager scheduling
+name: Puppy50 v113 verified display-manager dependency removal
 on:
   push:
     branches: [puppy50-v113-startup-research]
@@ -110,7 +110,7 @@ jobs:
           if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
           for run in cand1 cand2; do
             tr -d '\r' <"out/$run/serial.log" >"out/reports/$run-serial-clean.log"
-            for marker in P50_V113_LIGHTDM_STARTED P50_V113_SESSION_UI_OK P50_V113_SESSION_PROFILE_BEGIN P50_V113_SESSION_PROFILE_END; do grep -F "$marker" "out/reports/$run-serial-clean.log"; done
+            for marker in P50_V113_LIGHTDM_STARTED P50_V113_SESSION_ORDER_OK P50_V113_SESSION_UI_OK P50_V113_SESSION_PROFILE_BEGIN P50_V113_SESSION_PROFILE_END; do grep -F "$marker" "out/reports/$run-serial-clean.log"; done
             if grep -Fq P50_V113_SESSION_UI_MISSING "out/reports/$run-serial-clean.log"; then exit 1; fi
             sed -n '/P50_V113_SESSION_PROFILE_BEGIN/,/P50_V113_SESSION_PROFILE_END/p' "out/reports/$run-serial-clean.log" >"out/reports/$run-session-profile.txt"
           done
@@ -141,7 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50-v113-session-${{ matrix.mode }}-evidence
+          name: Puppy50-v113-session2-${{ matrix.mode }}-evidence
           path: |
             out/reports/
             out/base1/
@@ -154,7 +154,7 @@ jobs:
         if: success() && matrix.mode != 'profile'
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50-v113-session-${{ matrix.mode }}-test-only-iso
+          name: Puppy50-v113-session2-${{ matrix.mode }}-test-only-iso
           path: |
             out/candidate.iso
             out/reports/iso-hashes.txt
