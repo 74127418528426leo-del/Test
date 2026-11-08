@@ -6,7 +6,6 @@ from pathlib import Path
 MAIN='\n\tFstab\n\tNetbase\n'
 MIGRATE='"$B" sleep 8\nemit P50_STAGE_START\n'
 LIGHTDM=r'''[Unit]
-After=
 After=live-config.service plymouth-quit.service
 Wants=live-config.service
 P50_DEFAULT_DEPENDENCIES
@@ -32,6 +31,12 @@ REPORT=r'''(
         printf '\n--- startup timing ---\n'; systemd-analyze time || true
         printf '\n--- relevant journal ---\n'; journalctl -b -u dbus.service -u dbus.socket -u lightdm.service -u live-config.service -u systemd-logind.service --no-pager -o short-monotonic || true
         printf '\n--- service ordering ---\n'; systemctl show -p After -p Before -p Wants -p Requires -p DefaultDependencies lightdm.service dbus.service dbus.socket || true
+        p50_fragment="$(systemctl show -p FragmentPath --value lightdm.service)"
+        p50_after="$(systemctl show -p After --value lightdm.service)"
+        case " ${p50_after} " in
+          *' systemd-user-sessions.service '*) printf 'P50_V113_SESSION_ORDER_MISSING\n' ;;
+          *) if [ "${p50_fragment}" = /etc/systemd/system/lightdm.service ]; then printf 'P50_V113_SESSION_ORDER_OK\n'; else printf 'P50_V113_SESSION_ORDER_MISSING\n'; fi ;;
+        esac
         printf '\n--- user processes ---\n'; ps -eo user,comm,args | grep -E '[f]irefox|[n]m-applet|[p]olkit|[o]penbox|[X]org' || true
         if pgrep -u user -f '[f]irefox' >/dev/null 2>&1 && pgrep -u user -x nm-applet >/dev/null 2>&1 && pgrep -u user -x tint2 >/dev/null 2>&1 && pgrep -u user -x p50-status >/dev/null 2>&1; then
             printf 'P50_V113_SESSION_UI_OK\n'
@@ -52,6 +57,11 @@ def patch_main(text,mode):
     hook=r'''
 \t# P50_V113_SESSION_EXPERIMENT: test-only service ordering; full-RAM fallback unchanged.
 \tif [ -z "${TORAM:-}" ] && [ -b /dev/mapper/p50-staged-root ]; then
+\t\tp50_session_base="${rootmnt}/usr/lib/systemd/system/lightdm.service"
+\t\tp50_session_override="${rootmnt}/etc/systemd/system/lightdm.service"
+\t\t[ -f "${p50_session_base}" ] && [ ! -L "${p50_session_base}" ] && [ ! -e "${p50_session_override}" ] && [ ! -L "${p50_session_override}" ] || panic "p50: unexpected LightDM unit"
+\t\t[ "$(grep -Fxc 'After=systemd-user-sessions.service' "${p50_session_base}")" = 1 ] && grep -Fqx 'ExecStart=/usr/sbin/lightdm' "${p50_session_base}" || panic "p50: unexpected LightDM dependency"
+\t\tsed '/^After=systemd-user-sessions.service$/d' "${p50_session_base}" > "${p50_session_override}" || panic "p50: cannot copy LightDM unit"
 \t\tp50_session_dir="${rootmnt}/etc/systemd/system/lightdm.service.d"
 \t\tp50_session_drop="${p50_session_dir}/80-v113-experiment.conf"
 \t\t[ -d "${p50_session_dir}" ] && [ ! -L "${p50_session_dir}" ] && [ ! -e "${p50_session_drop}" ] && [ ! -L "${p50_session_drop}" ] || panic "p50: unexpected LightDM configuration"
