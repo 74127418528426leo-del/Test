@@ -1,0 +1,48 @@
+{
+  "iso_sha256": "4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1",
+  "benchmark_run_id": 42535754369,
+  "repeat_run_id": 42536479145,
+  "validation_run_id": 42536475888,
+  "audit_run_id": 42536473883,
+  "memory_run_id": 42536910497,
+  "note": "Frame hashes correspond to reviewed VM screenshots, including failed low-memory and 2 GiB outcomes.",
+  "screenshots": {
+    "benchmark": {
+      "cand2/early_responded.png": "9d692b61161fabcfd5bee7f833edd1d29ba3d1be01a48a682f5184696926d545",
+      "cand2/external_https.png": "2c385d9c4de47c5c97f1996d712842637d7a3a61006143ea66bf9a5ea5cc50bc"
+    },
+    "repeat": {
+      "cand2/early_responded.png": "1c7b8d1f75732ed291337b1dccfa6fd97d82de7929f587cfdc9943371a9ef991",
+      "cand2/external_https.png": "b7704d50c705aa83fa2c214f4f2a9b8db2e5f86013fcab0290196909bb788ff2"
+    },
+    "validation": {
+      "bios-usb-2048": {
+        "qemu/first_home.png": "9e6bd247184fd44daa7749e8fe8498a482d0c7412166e33eff5b1ab2a5e1d6ff"
+      },
+      "uefi-usb-offline-3072": {
+        "qemu/after_input.png": "b7ac43f19074d71a36f61d9a51eb6b42bcfa05fd00f816eb2fcc64036f535505"
+      },
+      "uefi-optical-online-3072": {
+        "qemu/external_https.png": "a4fdc5c5e10a4c41e4a180d67f975f188a729d3f82c75c7d5afb9388cfdfef0e"
+      },
+      "bios-fullram-fallback": {
+        "qemu/fallback-menu-selected.png": "eef2f7471400c37cacc1de3f9c9ec04ee71a1661fa8ba113e842811c44c7384b",
+        "qemu/after_input.png": "54b6a9d5bd668211c3a78160198ef3a63554c80b04702d1aff0c2fcd91aa1e79"
+      },
+      "connectivity-restored": {
+        "qemu/external_https.png": "9e30583b4b7e5442195dfe14b886d125cecc5ad5d69f735d1283fd10b878d717"
+      }
+    },
+    "memory": {
+      "384": {
+        "qemu/checkpoint_110.png": "0b2d569d6f2bbb932103a692dca5cfcac686d9c6b8d10c71ad312f5ce027b7b7"
+      },
+      "1024": {
+        "qemu/early_responded.png": "4ee874dc65092e6fc20a5c5518e41084e409a0c0451a47c3c20ac98f9513970d"
+      },
+      "1536": {
+        "qemu/early_responded.png": "31360a7515267b633323e6ade8dcee50ed49bdd71b1f5b51541a83955e90a51a"
+      }
+    }
+  }
+}
