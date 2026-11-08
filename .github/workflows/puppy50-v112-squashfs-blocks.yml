@@ -1,0 +1,148 @@
+name: Puppy50 v112 demand-boot SquashFS block-size study
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-squashfs-blocks.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        block: [131072, 262144, 1048576]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and virtual-machine tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync qemu-system-x86 python3-pil time
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{verify,reports,tree,rechecked} fixture
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+          df -h . >out/reports/host-disk.txt
+          python3 -m unittest discover -s web110 -p 'test_*.py' -v
+      - name: Fetch the exact published v111 image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v111.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v111-intel-faststart-experimental/Puppy50_v111_Intel_FastStart_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6' input/v111.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v111.iso -extract /live/filesystem.squashfs input/base.squashfs -extract /live/initrd.img input/base.initrd -extract /live/initrd-full.img input/base-full.initrd >out/reports/extract.log 2>&1
+          unsquashfs -s input/base.squashfs | tee out/reports/base-format.txt
+          sudo unsquashfs -d out/root input/base.squashfs >out/reports/unsquash.log
+          sudo du -sh out/root | tee out/reports/unpacked-size.txt
+      - name: Repack the same filesystem with the selected block size
+        env:
+          BLOCK: ${{ matrix.block }}
+        timeout-minutes: 38
+        run: |
+          set -euo pipefail
+          /usr/bin/time -p -o out/reports/compress-time.txt sudo mksquashfs out/root out/new.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b "$BLOCK" -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/compress.log 2>&1
+          unsquashfs -s out/new.squashfs | tee out/reports/candidate-format.txt
+          sudo unsquashfs -d out/verify/root out/new.squashfs >out/reports/verify-unsquash.log
+          sudo rsync -aHAXnci --delete --numeric-ids out/root/ out/verify/root/ >out/reports/rsync-forward.txt
+          sudo rsync -aHAXnci --delete --numeric-ids out/verify/root/ out/root/ >out/reports/rsync-reverse.txt
+          test ! -s out/reports/rsync-forward.txt
+          test ! -s out/reports/rsync-reverse.txt
+          stat -c '%n %s' input/base.squashfs out/new.squashfs | tee out/reports/root-sizes.txt
+          sha256sum input/base.squashfs out/new.squashfs >out/reports/root-hashes.txt
+          sudo rm -rf -- out/root out/verify/root
+      - name: Build a test-only ISO and verify all media checksums
+        run: |
+          set -euo pipefail
+          xorriso -indev input/v111.iso -outdev out/stage.iso -map out/new.squashfs /live/filesystem.squashfs -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, re
+          root = Path('out/tree').resolve()
+          lines, seen = [], set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m = re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line)
+              assert m, repr(line)
+              name = m.group(3)
+              assert name.startswith('./') and name not in seen
+              seen.add(name)
+              target = (root/name).resolve(strict=True)
+              target.relative_to(root)
+              assert target.is_file() and name != './sha256sum.txt'
+              h=hashlib.sha256()
+              with target.open('rb') as f:
+                  for block in iter(lambda:f.read(1048576),b''): h.update(block)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==293
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/new.squashfs out/rechecked/live/filesystem.squashfs
+          cmp input/base.initrd out/rechecked/live/initrd.img
+          cmp input/base.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+          cmp input/base-full.initrd out/rechecked/live/initrd-full.img
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          sha256sum input/v111.iso out/candidate.iso >out/reports/iso-hashes.txt
+          stat -c '%n %s' input/v111.iso out/candidate.iso | tee out/reports/iso-sizes.txt
+      - name: Start local post-removal test page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.block }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare matched virtual boots in alternating order
+        timeout-minutes: 18
+        env:
+          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.block }}
+        run: |
+          set -euo pipefail
+          bench() { python3 -u web109/boot_bench_staged.py --iso "$1" --out "out/$2" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          bench input/v111.iso base1
+          bench out/candidate.iso cand1
+          bench out/candidate.iso cand2
+          bench input/v111.iso base2
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          names=('base1','cand1','cand2','base2')
+          results={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          assert all(r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'] for r in results.values())
+          out={'results':{n:{'first_home_seconds':r['first_home_seen_seconds'],'ram_ready_seconds':r['staged_ram_ready_seconds']} for n,r in results.items()}}
+          for label,pair in [('baseline',('base1','base2')),('candidate',('cand1','cand2'))]:
+              out[label+'_home_mean']=statistics.mean(results[n]['first_home_seen_seconds'] for n in pair)
+              out[label+'_ready_mean']=statistics.mean(results[n]['staged_ram_ready_seconds'] for n in pair)
+          out['home_difference_seconds']=out['baseline_home_mean']-out['candidate_home_mean']
+          out['physical_acer_tested']=False
+          out['sample_interval_seconds']=0.8
+          Path('out/reports/comparison.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - name: Preserve results, checksums, and screenshots even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-${{ matrix.block }}-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep exact experimental ISO temporarily after passing tests
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-squashfs-${{ matrix.block }}-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-hashes.txt
+          compression-level: 0
+          retention-days: 3
