@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [off, delay]
+        mode: ['off', delay]
     steps:
       - uses: actions/checkout@v4
       - name: Install VM and ISO tools; test patching and browser probes
