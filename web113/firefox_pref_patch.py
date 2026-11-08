@@ -55,7 +55,7 @@ def patch_migration(text,mode):
             tr '\000' '\n' <"/proc/$p50_pid/environ" | grep -E '^(HOME|XDG_CONFIG_HOME|XDG_CACHE_HOME)=' || true
         fi
         p50_found=0
-        for p50_pref_file in /home/user/.mozilla/firefox/*/prefs.js; do
+        for p50_pref_file in /home/user/.config/mozilla/firefox/*/prefs.js /home/user/.mozilla/firefox/*/prefs.js; do
             if [ -r "$p50_pref_file" ]; then
                 printf 'P50_V113_PREF_FILE %s\n' "$p50_pref_file"
                 grep -F 'dom.ipc.processPrelaunch.' "$p50_pref_file" || true
