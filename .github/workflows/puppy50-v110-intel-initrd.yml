@@ -1,0 +1,145 @@
+name: Puppy50 v110 Intel-focused early boot comparison
+on:
+  push:
+    branches: [puppy50-v110-boot-research]
+    paths: [.github/workflows/puppy50-v110-intel-initrd.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and VM tools and run patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s web110 -p 'test_*.py' -v
+          mkdir -p input out/{main,reports,tree,rechecked} fixture
+          lscpu >out/reports/host-cpu.txt
+      - name: Fetch the exact v109 release and extract its boot files
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v109.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v109-faststart-ram-experimental/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/v109.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v109.iso -extract /live/initrd.img out/original.initrd -extract /live/filesystem.squashfs out/base.squashfs -extract /isolinux/live.cfg out/bios.cfg -extract /boot/grub/grub.cfg out/grub.cfg >out/reports/extract.log 2>&1
+          chmod u+w out/bios.cfg out/grub.cfg
+          head -c 45312000 out/original.initrd >out/early-prefix
+          tail -c +45312001 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+      - name: Prepare Intel-focused fast initramfs and original fallback
+        run: |
+          set -euo pipefail
+          sudo python3 web110/lean_initrd.py out/main out/bios.cfg out/grub.cfg out/reports/removed-firmware.json
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/lean.cpio
+          zstd -q -3 -T2 -o out/lean.cpio.zst out/lean.cpio
+          cat out/early-prefix out/lean.cpio.zst >out/lean.initrd
+          cmp -n 45312000 out/original.initrd out/lean.initrd
+          test "$(stat -c %s out/lean.initrd)" -lt "$(stat -c %s out/original.initrd)"
+          stat -c '%n %s' out/original.initrd out/lean.initrd out/base.squashfs | tee out/reports/sizes.txt
+          sha256sum out/original.initrd out/lean.initrd out/base.squashfs | tee out/reports/components.sha256
+          xorriso -indev input/v109.iso -outdev out/stage.iso -map out/lean.initrd /live/initrd.img -map out/lean.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -map out/original.initrd /live/initrd-full.img -map out/bios.cfg /isolinux/live.cfg -map out/grub.cfg /boot/grub/grub.cfg -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, re
+          root = Path('out/tree').resolve()
+          lines, seen = [], set()
+          def digest(path):
+              h = hashlib.sha256()
+              with path.open('rb') as f:
+                  for block in iter(lambda: f.read(1048576), b''):
+                      h.update(block)
+              return h.hexdigest()
+          for line in (root / 'sha256sum.txt').read_text().splitlines():
+              m = re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)', line)
+              assert m, repr(line)
+              name = m.group(3)
+              assert name.startswith('./') and name not in seen
+              seen.add(name)
+              target = (root / name).resolve(strict=True)
+              target.relative_to(root)
+              assert target.is_file() and name != './sha256sum.txt'
+              lines.append(digest(target) + m.group(2) + name)
+          assert len(lines) == 292 and './live/initrd-full.img' not in seen
+          lines.append(digest(root / 'live/initrd-full.img') + '  ./live/initrd-full.img')
+          Path('out/sha256sum.txt').write_text('\n'.join(lines) + '\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/base.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/lean.initrd out/rechecked/live/initrd.img
+          cmp out/lean.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+          cmp out/original.initrd out/rechecked/live/initrd-full.img
+          cmp out/bios.cfg out/rechecked/isolinux/live.cfg
+          cmp out/grub.cfg out/rechecked/boot/grub/grub.cfg
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          sha256sum input/v109.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Start local post-removal page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare fast boots and verify the original fallback
+        timeout-minutes: 17
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bench() { python3 -u web109/boot_bench_staged.py --iso "$1" --out "out/$2" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          bench input/v109.iso base1
+          bench out/candidate.iso cand1
+          bench out/candidate.iso cand2
+          bench input/v109.iso base2
+          python3 -u web109/boot_bench_staged.py --iso out/candidate.iso --out out/fallback --mode online --allow-no-startup-probe --select-fullram-fallback --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 5
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2,fallback}/qemu.log; then exit 1; fi
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+          names = ('base1', 'cand1', 'cand2', 'base2')
+          results = {n: json.loads((Path('out') / n / 'result.json').read_text()) for n in names}
+          assert all(r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'] for r in results.values())
+          fallback = json.loads(Path('out/fallback/result.json').read_text())
+          assert fallback['fullram_fallback_selected'] and fallback['first_home_seen_seconds'] and fallback['media_ejected'] and fallback['input_sent_after_eject'] and not fallback['errors']
+          summary = {'results': {n: {'first_home_seconds': r['first_home_seen_seconds'], 'ram_ready_seconds': r['staged_ram_ready_seconds']} for n, r in results.items()}}
+          for label, pair in [('baseline', ('base1', 'base2')), ('candidate', ('cand1', 'cand2'))]:
+              summary[label + '_home_mean'] = statistics.mean(results[n]['first_home_seen_seconds'] for n in pair)
+              summary[label + '_ready_mean'] = statistics.mean(results[n]['staged_ram_ready_seconds'] for n in pair)
+          summary['home_difference_seconds'] = summary['baseline_home_mean'] - summary['candidate_home_mean']
+          summary['bios_original_fallback_tested'] = True
+          summary['physical_acer_tested'] = False
+          summary['sample_interval_seconds'] = 0.8
+          (Path('out/reports') / 'comparison.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Preserve timings, checksums, serial logs, and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v110-intel-initrd-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/fallback/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep the test image temporarily if the tests pass
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v110-intel-initrd-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-hashes.txt
+          compression-level: 0
+          retention-days: 3
