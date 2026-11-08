@@ -10,6 +10,8 @@ UNIT='''[Unit]
 Description=Puppy50 direct X11 session experiment
 After=live-config.service systemd-user-sessions.service systemd-logind.service
 Wants=live-config.service systemd-logind.service
+Requires=p50-user-preparation.service
+After=p50-user-preparation.service
 Conflicts=getty@tty1.service
 After=getty@tty1.service
 
@@ -18,7 +20,6 @@ Type=simple
 User=user
 PAMName=login
 Environment=HOME=/home/user XDG_SESSION_TYPE=x11 XDG_SESSION_CLASS=user XDG_SEAT=seat0
-ExecStartPre=+/usr/local/sbin/puppy50-prepare-session
 ExecStart=/usr/bin/startx /usr/bin/dbus-run-session /usr/bin/openbox-session -- :0 vt1 -keeptty -nolisten tcp
 StandardInput=tty
 TTYPath=/dev/tty1
@@ -62,6 +63,18 @@ def patch_main(text):
 \t\trm "${p50_dm}" || panic "p50: cannot replace test display-manager link"
 \t\t[ ! -e "${rootmnt}/etc/systemd/system/lightdm.service" ] && [ ! -L "${rootmnt}/etc/systemd/system/lightdm.service" ] || panic "p50: unexpected LightDM override"
 \t\tln -s /dev/null "${rootmnt}/etc/systemd/system/lightdm.service" || panic "p50: cannot mask old display manager"
+\t\tp50_prep="${rootmnt}/etc/systemd/system/p50-user-preparation.service"
+\t\t[ ! -e "${p50_prep}" ] && [ ! -L "${p50_prep}" ] || panic "p50: unexpected user preparation service"
+\t\tcat > "${p50_prep}" <<'P50_V113_DIRECT_PREP_UNIT'
+[Unit]
+Description=Prepare Puppy50 live user before direct session
+After=live-config.service
+Wants=live-config.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/puppy50-prepare-session
+RemainAfterExit=yes
+P50_V113_DIRECT_PREP_UNIT
 \t\tcat > "${p50_dm}" <<'P50_V113_DIRECT_X_UNIT'
 P50_UNIT
 P50_V113_DIRECT_X_UNIT
