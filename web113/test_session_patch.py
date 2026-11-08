@@ -27,6 +27,8 @@ class SessionPatchTests(unittest.TestCase):
     def test_shell_injection_is_reversible_and_fallback_untouched(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);(root/'etc/systemd/system/lightdm.service.d').mkdir(parents=True)
+            (root/'usr/lib/systemd/system').mkdir(parents=True)
+            (root/'usr/lib/systemd/system/lightdm.service').write_text('[Unit]\nAfter=systemd-user-sessions.service\n[Service]\nExecStart=/usr/sbin/lightdm\n')
             text=p.patch_main('\n\tFstab\n\tNetbase\n','earlybus')
             text=text.replace('[ -b /dev/mapper/p50-staged-root ]','[ -d "$rootmnt" ]')
             setup='panic(){ echo "$*" >&2; exit 55; }; Fstab(){ :; }; Netbase(){ :; }\n'
@@ -39,6 +41,11 @@ class SessionPatchTests(unittest.TestCase):
             self.assertEqual(r.returncode,0,r.stderr)
             for service in ('lightdm.service.d','dbus.socket.d','dbus.service.d'):
                 self.assertTrue((root/'etc/systemd/system'/service/'80-v113-experiment.conf').is_file())
+            override_file=root/'etc/systemd/system/lightdm.service'
+            self.assertTrue(override_file.is_file())
+            override=override_file.read_text()
+            self.assertNotIn('After=systemd-user-sessions.service',override)
+            self.assertIn('ExecStart=/usr/sbin/lightdm',override)
             r=subprocess.run(['sh','-c',setup+text],env=env,text=True,capture_output=True)
             self.assertNotEqual(r.returncode,0)
 
