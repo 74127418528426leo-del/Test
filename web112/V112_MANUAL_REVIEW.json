@@ -1,0 +1,33 @@
+{
+  "iso_sha256": "317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7",
+  "benchmark_run_id": 42479601193,
+  "validation_run_id": 42480523148,
+  "audit_run_id": 42480757160,
+  "interaction_run_id": 42480553607,
+  "benchmark_screenshots": {
+    "cand1/first_home.png": "c3acb26d8d9d3b76d93c502d5a9141d630bfd15d82fb6c0dd572c00084480f73"
+  },
+  "interaction_screenshots": {
+    "base1/early_responded.png": "9f83b4472f3881e438121fc19419dad03ad7f55d500f84d2bd99b2e2f4f34033",
+    "cand1/early_responded.png": "b4f7543cd5e366fc8fa0abac101f6162015c193fb4e7917431bd45591902777b"
+  },
+  "validation": {
+    "bios-usb-2048": {
+      "qemu/after_input.png": "82b53f12ebb62eaf33a2af781452a0e3874a1b264f9df661ec39a6a46bfb74a7"
+    },
+    "uefi-usb-offline-3072": {
+      "qemu/after_input.png": "1fb08ab932260fa7a1be11e23cfdfe2282fe8b03b6d4ee0a5b1782846f8eec89"
+    },
+    "uefi-optical-online-3072": {
+      "qemu/external_https.png": "30ea6676c9b48d5a520c72e4d834b753fef988d1e836369a9a97a41c7549e13b"
+    },
+    "bios-fullram-fallback": {
+      "qemu/fallback-menu-selected.png": "eef2f7471400c37cacc1de3f9c9ec04ee71a1661fa8ba113e842811c44c7384b",
+      "qemu/after_input.png": "223e1324b3560f4af597514e972f2734969df39a8ae7edad40cd3a64da4db716"
+    },
+    "connectivity-restored": {
+      "qemu/external_https.png": "f8e5f26f2e79b4a5a65f62b951bcaadf2548a7be72b4329622c75d6a3544919a"
+    }
+  },
+  "review_notes": "Screenshots were inspected for the browser home, a real JavaScript response while the USB was attached, RAM-ready after removal, offline browsing, fallback selection, and restored public HTTPS."
+}
