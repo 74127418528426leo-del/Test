@@ -1,0 +1,122 @@
+name: Publish checked Puppy50 v113 local-media experiment
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v113-local-media-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check exact benchmark, audit, and honest validation outcomes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42535754369 42536479145 42536473883 42536910497; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42536475888" --jq '.status + ":" + (.conclusion // "null")')
+          test "$state" = 'completed:failure'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42536475888/jobs?per_page=100" --jq '.jobs[] | [.name,.conclusion] | @tsv' >jobs.txt
+          grep -Fx "$(printf 'test (bios-usb-2048)\tfailure')" jobs.txt
+          for trial in uefi-usb-offline-3072 uefi-optical-online-3072 bios-fullram-fallback connectivity-restored; do
+            grep -Fx "$(printf 'test (%s)\tsuccess' "$trial")" jobs.txt
+          done
+          test "$(wc -l <jobs.txt)" -eq 5
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42535754369" --jq .head_sha)" = '267d6018bee2dceac90a5a885a56df94232da9a8'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-drivers-test-only-iso
+          run-id: 42535754369
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-drivers-evidence
+          run-id: 42535754369
+          github-token: ${{ github.token }}
+          path: evidence/benchmark
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-repeat-evidence
+          run-id: 42536479145
+          github-token: ${{ github.token }}
+          path: evidence/repeat
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v113-clean-network-validation-*
+          run-id: 42536475888
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-independent-audit
+          run-id: 42536473883
+          github-token: ${{ github.token }}
+          path: evidence/audit
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v113-memory-*-evidence
+          run-id: 42536910497
+          github-token: ${{ github.token }}
+          path: evidence/memory
+      - name: Verify exact image and reviewed evidence, including failures
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' iso/candidate.iso | sha256sum -c -
+          test "$(stat -c %s iso/candidate.iso)" -eq 906297344
+          python3 web113/verify_v113_release.py
+          python3 -m unittest discover -s web113 -p 'test_*.py' -v
+      - name: Package image, checksums, notes, sources and evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/candidate.iso dist/Puppy50_v113_Local_Media_EXPERIMENTAL.iso
+          cp web113/V113_RELEASE_NOTES.md dist/README_V113_EXPERIMENTAL.md
+          cp web113/V113_MANUAL_REVIEW.json dist/
+          (cd dist && sha256sum Puppy50_v113_Local_Media_EXPERIMENTAL.iso >SHA256SUMS)
+          git rev-parse HEAD >evidence/release-packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v113_Local_Media_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web113'),Path('web112'),Path('web109'),Path('web103'),Path('web85')):
+                  if root.exists():
+                      for p in sorted(root.rglob('*')):
+                          if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:
+                              z.write(p,p.as_posix())
+              for p in sorted(Path('.github/workflows').glob('puppy50-v113-*.yml')):z.write(p,p.as_posix())
+          PY
+      - name: Publish a separate experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v113-local-media-experimental'
+          build_sha='267d6018bee2dceac90a5a885a56df94232da9a8'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v113_Local_Media_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V113_EXPERIMENTAL.md dist/V113_MANUAL_REVIEW.json dist/Puppy50_v113_Local_Media_Test_Evidence.zip --verify-tag --title 'Puppy50 v113 Local Media (EXPERIMENTAL)' --notes-file web113/V113_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v113-local-media-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' /tmp/puppy50-v113-local-media-release.iso | sha256sum -c -
