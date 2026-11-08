@@ -1,0 +1,73 @@
+name: Puppy50 v113 exact-image memory boundaries
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-memory-scout.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  memory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        ram: [384, 1024, 1536]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare VM and interactive probe
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/reports fixture
+          python3 web112/early_probe.py web109/boot_bench_staged.py web113/memory_bench.py
+          python3 -m py_compile web113/memory_bench.py
+          lscpu >evidence/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-drivers-test-only-iso
+          run-id: 42535754369
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify image and prepare network fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/candidate.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >evidence/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Observe guest boot and RAM readiness without assuming success
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+          RAM_MIB: ${{ matrix.ram }}
+        run: |
+          set -uo pipefail
+          python3 -u web113/memory_bench.py --iso input/candidate.iso --out evidence/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram "$RAM_MIB" --seconds 120 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280 >evidence/reports/console.log 2>&1
+          rc=$?
+          printf '%s\n' "$rc" >evidence/reports/benchmark-exit-code.txt
+          test -s evidence/qemu/serial.log || exit 1
+          test -s evidence/qemu/result.json || exit 1
+          RAM_MIB="$RAM_MIB" EXIT_CODE="$rc" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path('evidence/qemu/result.json');r=json.loads(p.read_text())
+          rc=int(os.environ['EXIT_CODE']); assert r['guest_ram_mib']==int(os.environ['RAM_MIB'])
+          passed=(rc==0 and r.get('staged_ram_ready_seconds') is not None and r.get('media_ejected') and r.get('input_sent_after_eject') and r.get('qemu_running_at_end') and not r.get('errors'))
+          summary={'ram_mib':int(os.environ['RAM_MIB']),'benchmark_exit_code':rc,'browser_home_seen_seconds':r.get('first_home_seen_seconds'),'early_js_response_seconds':r.get('early_js_response_seconds'),'ram_ready_seconds':r.get('staged_ram_ready_seconds'),'media_ejected':r.get('media_ejected'),'browser_after_eject':r.get('input_sent_after_eject'),'ram_only_test_passed':bool(passed),'errors':r.get('errors',[]),'measurement':'QEMU/KVM virtual BIOS and 30 MiB/s virtual USB; not a physical Acer.'}
+          Path('evidence/reports/outcome.json').write_text(json.dumps(summary,indent=2)+'\n')
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Preserve exact logs and screenshots regardless of guest outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-memory-${{ matrix.ram }}-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
