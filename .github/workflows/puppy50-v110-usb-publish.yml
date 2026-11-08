@@ -1,0 +1,135 @@
+name: Publish checked Puppy50 v110 USB experiment
+on:
+  push:
+    branches: [puppy50-v110-boot-research]
+    paths: [.github/workflows/puppy50-v110-usb-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v110-usb-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the completed build and every validation job
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42457412894 42458605379; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42458605379/jobs?per_page=100" --jq '.jobs[] | [.name,.conclusion] | @tsv' >jobs.txt
+          for trial in bios-usb-2048 uefi-usb-offline-3072 uefi-optical-online-3072 bios-fullram-fallback connectivity-restored; do
+            grep -Fx "$(printf 'test (%s)\tsuccess' "$trial")" jobs.txt
+          done
+          test "$(wc -l <jobs.txt)" -eq 5
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v110-usb-delay-test-only-iso
+          run-id: 42457412894
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v110-usb-delay-evidence
+          run-id: 42457412894
+          github-token: ${{ github.token }}
+          path: evidence/benchmark
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v110-usb-validation-*
+          run-id: 42458605379
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - name: Verify ISO, screenshot review and logs
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'b2f6ce26c4a794d87fd2e29d1d22b7e49a1ee175d58d89f7b72215dd54bc8a9e' iso/candidate.iso | sha256sum -c -
+          python3 web110/verify_usb_release.py
+      - name: Independently compare the v109 boot payload and menus
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+          mkdir -p audit/{old,new}
+          curl --fail --location --retry 3 --silent --show-error -o audit/v109.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v109-faststart-ram-experimental/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' audit/v109.iso | sha256sum -c -
+          for side in old new; do
+            if [ "$side" = old ]; then image=audit/v109.iso; else image=iso/candidate.iso; fi
+            xorriso -osirrox on -indev "$image" -extract /live/initrd.img "audit/$side/initrd" -extract /live/vmlinuz "audit/$side/vmlinuz" -extract /live/filesystem.squashfs "audit/$side/root" -extract /isolinux/live.cfg "audit/$side/bios.cfg" -extract /boot/grub/grub.cfg "audit/$side/grub.cfg" -extract /sha256sum.txt "audit/$side/sha256sum.txt" >"audit/$side/extract.log" 2>&1
+          done
+          cmp audit/old/initrd audit/new/initrd
+          cmp audit/old/vmlinuz audit/new/vmlinuz
+          cmp audit/old/root audit/new/root
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          old, new = Path('audit/old'), Path('audit/new')
+          for name in ('bios.cfg', 'grub.cfg'):
+              a, b = (old/name).read_text(), (new/name).read_text()
+              needle = 'usb-storage.delay_use=0 '
+              assert b.count(needle) == 1 and needle not in a
+              assert b.replace(needle, '', 1) == a
+          def read_manifest(path):
+              d = {}
+              for line in path.read_text().splitlines():
+                  m = re.fullmatch(r'([0-9a-fA-F]{64}) [ *](.*)', line)
+                  assert m, repr(line)
+                  assert m.group(2) not in d
+                  d[m.group(2)] = m.group(1).lower()
+              return d
+          a, b = read_manifest(old/'sha256sum.txt'), read_manifest(new/'sha256sum.txt')
+          assert a.keys() == b.keys() and len(a) == 292
+          changed = {k for k in a if a[k] != b[k]}
+          assert changed == {'./isolinux/live.cfg', './boot/grub/grub.cfg'}, changed
+          Path('evidence/independent-audit.txt').write_text('Root, kernel and initramfs match v109 byte for byte. Only the BIOS and UEFI menu checksums differ; each adds the USB scan parameter to its Fast Start entry.\n')
+          PY
+      - name: Prepare the downloadable ISO, notes, and evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/candidate.iso dist/Puppy50_v110_USB_FastStart_EXPERIMENTAL.iso
+          cp web110/V110_USB_RELEASE_NOTES.md dist/README_V110_EXPERIMENTAL.md
+          cp web110/V110_USB_MANUAL_REVIEW.json dist/
+          (cd dist && sha256sum Puppy50_v110_USB_FastStart_EXPERIMENTAL.iso >SHA256SUMS)
+          git rev-parse HEAD >evidence/release-packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v110_USB_Test_Evidence.zip', 'w', compression=ZIP_DEFLATED, compresslevel=6) as z:
+              for root in (Path('evidence'), Path('web110')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_socket(): z.write(p, p.as_posix())
+              for p in sorted(Path('.github/workflows').glob('puppy50-v110-*.yml')):
+                  z.write(p, p.as_posix())
+          PY
+      - name: Publish a separate experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v110-usb-faststart-experimental'
+          build_sha='15c1a081e8890926f78487f86f0f48f47f0cda32'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v110_USB_FastStart_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V110_EXPERIMENTAL.md dist/V110_USB_MANUAL_REVIEW.json dist/Puppy50_v110_USB_Test_Evidence.zip --verify-tag --title 'Puppy50 v110 USB Fast Start (EXPERIMENTAL)' --notes-file web110/V110_USB_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify the publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v110-usb-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v110-usb-faststart-experimental/Puppy50_v110_USB_FastStart_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'b2f6ce26c4a794d87fd2e29d1d22b7e49a1ee175d58d89f7b72215dd54bc8a9e' /tmp/puppy50-v110-usb-release.iso | sha256sum -c -
