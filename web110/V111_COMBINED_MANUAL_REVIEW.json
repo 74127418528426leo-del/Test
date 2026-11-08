@@ -1,0 +1,50 @@
+{
+  "iso_sha256": "3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6",
+  "note": "The listed screenshots were visually inspected. A VM does not establish physical USB, Wi-Fi, graphics, or Acer timing.",
+  "benchmark": {
+    "run_id": 42458887918,
+    "screenshots_sha256": {
+      "cand1/first_home.png": "22897d51f4e440223285b9c9e239c3161e221c26fe2b49341e9e3990660b6fdf",
+      "cand1/after_input.png": "4353b06c5849a3e3944e5a78aee445a8a88d79d70975ff05b97a9e6b379baa46",
+      "cand1/external_https.png": "95af4d95fa412301b9796f94fc0a729a2540c225159ec700d9cf3849effc37f9"
+    }
+  },
+  "validation_run_id": 42459484089,
+  "audit_run_id": 42459548980,
+  "validation": {
+    "bios-usb-2048": {
+      "artifact_id": 13608079993,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "ac5f684c29b23aa0870b81587e7ed5c25577e663ea0b0c98f7029c26b383e08b",
+        "qemu/external_https.png": "ecf804774556c7d29e33e010034dc14013c68b56b01259d599667349dcc9f9bb"
+      }
+    },
+    "bios-fullram-fallback": {
+      "artifact_id": 13609450273,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "25601e6df62eaf917c678f20055ce7f885a9ca66211a39e9b6f64a99c34693b2",
+        "qemu/external_https.png": "832c8fb8b0014fee99702aeda9608140368bfa61cbba307c3f1f50fd2c8f5a28"
+      }
+    },
+    "uefi-usb-offline-3072": {
+      "artifact_id": 13608597779,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "bc58e32d6711e85f0aabe1afababe7b59194694f98fa881e61064e38d7eb97da"
+      }
+    },
+    "uefi-optical-online-3072": {
+      "artifact_id": 13609381487,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "c01cc064b5e17aabc3f748581a8a47c7ab68516dc6e7f7b2d4c8c474d1a21c55",
+        "qemu/external_https.png": "ecf804774556c7d29e33e010034dc14013c68b56b01259d599667349dcc9f9bb"
+      }
+    },
+    "connectivity-restored": {
+      "artifact_id": 13608259526,
+      "screenshots_sha256": {
+        "qemu/after_input.png": "070a5b8bb445402ae5b8808e231ae033c8155c7a86516fc3a82bcbb4ba64d63d",
+        "qemu/external_https.png": "ecf804774556c7d29e33e010034dc14013c68b56b01259d599667349dcc9f9bb"
+      }
+    }
+  }
+}
