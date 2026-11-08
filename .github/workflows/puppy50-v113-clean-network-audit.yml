@@ -1,0 +1,104 @@
+name: Independently audit Puppy50 v113 clean deferred-network image
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-clean-network-audit.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install read-only inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio rsync
+          mkdir -p input audit/{old,new,early-old,early-new,main-old,main-new,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-drivers-test-only-iso
+          run-id: 42535754369
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact images, core files, and raw microcode
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v112.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/v112.iso | sha256sum -c -
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/candidate.iso | sha256sum -c -
+          for side in old new; do
+            if [ "$side" = old ]; then image=input/v112.iso; else image=input/candidate.iso; fi
+            xorriso -osirrox on -indev "$image" -extract /live/initrd.img "audit/$side/initrd" -extract /live/initrd-full.img "audit/$side/full-initrd" -extract /live/vmlinuz "audit/$side/vmlinuz" -extract /live/filesystem.squashfs "audit/$side/root.squashfs" -extract /isolinux/live.cfg "audit/$side/bios.cfg" -extract /boot/grub/grub.cfg "audit/$side/grub.cfg" >"audit/reports/$side-extract.log" 2>&1
+          done
+          for file in full-initrd vmlinuz root.squashfs bios.cfg grub.cfg; do cmp "audit/old/$file" "audit/new/$file"; done
+          cmp -n 14922752 audit/old/initrd audit/new/initrd
+          dd if=audit/old/initrd of=audit/early-old.cpio iflag=skip_bytes,count_bytes bs=1M skip=14922752 count=30389248 status=none
+          dd if=audit/new/initrd of=audit/early-new.cpio iflag=skip_bytes,count_bytes bs=1M skip=14922752 count=21232128 status=none
+          tail -c +45312001 audit/old/initrd | zstd -q -dc >audit/main-old.cpio
+          tail -c +36154881 audit/new/initrd | zstd -q -dc >audit/main-new.cpio
+          for part in early-old early-new main-old main-new; do (cd "audit/$part" && sudo cpio -idm --quiet --no-absolute-filenames <"../$part.cpio"); done
+          sudo unsquashfs -d audit/late-root audit/old/root.squashfs usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net >audit/reports/late-extract.log
+      - name: Check every removed driver against the unchanged late root
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          rel=Path('usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net')
+          old,new,late=Path('audit/early-old'),Path('audit/early-new'),Path('audit/late-root')
+          files=sorted((old/rel).rglob('*.ko.xz'))
+          assert len(files)==199,len(files)
+          assert not list((new/rel).rglob('*.ko.xz'))
+          def sha(p):
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(1048576),b''): h.update(b)
+              return h.hexdigest()
+          out=[]
+          for p in files:
+              r=p.relative_to(old);q=late/r
+              assert p.is_file() and not p.is_symlink() and q.is_file() and q.resolve().is_relative_to(late.resolve()),str(r)
+              h=sha(p);assert h==sha(q),str(r)
+              out.append({'path':str(r),'sha256':h})
+          assert sum(x['path'].endswith('/e1000/e1000.ko.xz') for x in out)==1
+          before={str(p.relative_to(old)):p for p in (old/rel).rglob('*')}
+          after={str(p.relative_to(new)):p for p in (new/rel).rglob('*')}
+          removed={x['path'] for x in out}
+          assert set(before)-set(after)==removed
+          assert not set(after)-set(before)
+          for name,q in after.items():
+              p=before[name];a=p.lstat();b=q.lstat()
+              assert (a.st_mode,a.st_uid,a.st_gid)==(b.st_mode,b.st_uid,b.st_gid),name
+              if p.is_symlink():assert q.is_symlink() and p.readlink()==q.readlink(),name
+              elif p.is_file():assert q.is_file() and sha(p)==sha(q),name
+          Path('audit/reports/verified-drivers.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+          exclusion=(--exclude='/usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/***')
+          sudo rsync -aHAXnciO --delete "${exclusion[@]}" audit/early-old/ audit/early-new/ >audit/reports/early-forward.txt
+          sudo rsync -aHAXnciO --delete "${exclusion[@]}" audit/early-new/ audit/early-old/ >audit/reports/early-reverse.txt
+          test ! -s audit/reports/early-forward.txt
+          test ! -s audit/reports/early-reverse.txt
+      - name: Verify the main archive is identical and every image checksum passes
+        run: |
+          set -euo pipefail
+          cmp audit/main-old.cpio audit/main-new.cpio
+          tail -c +45312001 audit/old/initrd >audit/original-main.cpio.zst
+          tail -c +36154881 audit/new/initrd >audit/candidate-main.cpio.zst
+          cmp audit/original-main.cpio.zst audit/candidate-main.cpio.zst
+          xorriso -osirrox on -indev input/candidate.iso -extract / audit/image >audit/reports/image-extract.log 2>&1
+          (cd audit/image && sha256sum -c sha256sum.txt) >audit/reports/media-checksums.txt
+          test "$(wc -l <audit/reports/media-checksums.txt)" -eq 293
+          printf '%s\n' 'Microcode prefix, the compressed main archive, kernel, root filesystem, boot menus, and full fallback initramfs match v112 byte for byte. 199 early network modules were removed and each matches its late-root copy. Every other checked early metadata/content matches. All 293 media checksums pass.' >audit/reports/audit-result.txt
+          cat audit/reports/audit-result.txt
+      - name: Preserve audit logs and verified paths
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-independent-audit
+          path: audit/reports/
+          if-no-files-found: warn
+          retention-days: 30
