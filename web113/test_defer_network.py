@@ -33,6 +33,21 @@ class DeferredNetworkTests(unittest.TestCase):
             with self.assertRaises(ValueError):d.defer(e,m,l,'drivers-firmware',1,1)
             self.assertTrue((e/drv).exists() and (m/fw).exists() and keep.exists())
 
+    def test_rejects_late_symlink_that_escapes_the_root(self):
+        with tempfile.TemporaryDirectory() as t:
+            e,m,l,drv,fw,keep=self.create_fixture(Path(t))
+            (l/fw).unlink();(l/fw).symlink_to('/etc/passwd')
+            with self.assertRaises(ValueError):d.defer(e,m,l,'drivers-firmware',1,1)
+            self.assertTrue((e/drv).exists() and (m/fw).exists())
+
+    def test_accepts_late_symlink_to_identical_file_inside_root(self):
+        with tempfile.TemporaryDirectory() as t:
+            e,m,l,drv,fw,keep=self.create_fixture(Path(t))
+            dst=l/fw;other=dst.with_name('real-fw.bin');dst.rename(other);dst.symlink_to('real-fw.bin')
+            report=d.defer(e,m,l,'drivers-firmware',1,1)
+            self.assertEqual(report['firmware_files'],1)
+            self.assertTrue(dst.is_symlink() and other.exists())
+
     def test_driver_only_leaves_firmware_and_rejects_overlapping_roots(self):
         with tempfile.TemporaryDirectory() as t:
             e,m,l,drv,fw,keep=self.create_fixture(Path(t))
