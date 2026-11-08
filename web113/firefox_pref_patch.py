@@ -45,8 +45,16 @@ def patch_migration(text,mode):
     "$B" sleep 12
     {
         printf '\nP50_V113_PREF_PROFILE_BEGIN\n'
+        printf '%s\n' '--- installed experiment policy ---'
+        cat /usr/share/firefox-esr/distribution/policies.json 2>/dev/null || true
+        printf '\n%s\n' '--- Firefox profile paths ---'
+        ls -la /home/user/.mozilla/firefox 2>/dev/null || true
         p50_found=0
         for p50_pref_file in /home/user/.mozilla/firefox/*/prefs.js; do
+            if [ -r "$p50_pref_file" ]; then
+                printf 'P50_V113_PREF_FILE %s\n' "$p50_pref_file"
+                grep -F 'dom.ipc.processPrelaunch.' "$p50_pref_file" || true
+            fi
             if [ -r "$p50_pref_file" ] && grep -Fqx 'P50_EXPECTED_PREF' "$p50_pref_file"; then p50_found=1; fi
         done
         if [ "$p50_found" = 1 ]; then printf 'P50_V113_PREF_OBSERVED\n'; else printf 'P50_V113_PREF_MISSING\n'; fi
