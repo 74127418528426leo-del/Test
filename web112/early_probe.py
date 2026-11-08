@@ -63,10 +63,19 @@ def wait_for_color(monitor, out, color, filename, timeout=20):
 
 def run_early_probe(monitor, out, started, serial):
     from web103.site_test import char_keys, send_key
+    from web85.qemu_debian_live_smoke import qmp
+    def usb_attached():
+        tree = str(qmp(monitor, 'human-monitor-command', {'command-line': 'info qtree'}))
+        return 'id "bootusb"' in tree
+
     report = {'early_navigation_start_seconds': round(time.monotonic()-started, 2),
               'early_page_seen_seconds': None, 'early_js_response_seconds': None,
-              'early_media_removed': False, 'ram_ready_before_early_navigation': ram_ready(serial),
+              'early_media_attached_before_navigation': usb_attached(),
+              'early_media_attached_after_js_response': None,
+              'ram_ready_before_early_navigation': ram_ready(serial),
               'ram_ready_before_early_js_response': None, 'early_screenshots': []}
+    if not report['early_media_attached_before_navigation']:
+        raise RuntimeError('Virtual USB was not attached before early browser interaction')
     send_key(monitor, ['ctrl', 'l'], 100)
     time.sleep(0.25)
     for char in 'http://10.0.2.2:8766/e':
@@ -83,6 +92,9 @@ def run_early_probe(monitor, out, started, serial):
         return report
     report['early_js_response_seconds'] = round(time.monotonic()-started, 2)
     report['ram_ready_before_early_js_response'] = ram_ready(serial)
+    report['early_media_attached_after_js_response'] = usb_attached()
+    if not report['early_media_attached_after_js_response']:
+        raise RuntimeError('Virtual USB was unexpectedly detached during early browser interaction')
     report['early_screenshots'].append('early_responded.png')
     return report
 
