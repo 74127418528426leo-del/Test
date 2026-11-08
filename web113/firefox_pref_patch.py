@@ -49,6 +49,11 @@ def patch_migration(text,mode):
         cat /usr/share/firefox-esr/distribution/policies.json 2>/dev/null || true
         printf '\n%s\n' '--- Firefox profile paths ---'
         ls -la /home/user/.mozilla/firefox 2>/dev/null || true
+        find /home/user /tmp -maxdepth 7 -name prefs.js -type f -print 2>/dev/null | head -30 || true
+        p50_pid="$(pgrep -u user -x firefox-esr | head -1)"
+        if [ -n "$p50_pid" ] && [ -r "/proc/$p50_pid/environ" ]; then
+            tr '\000' '\n' <"/proc/$p50_pid/environ" | grep -E '^(HOME|XDG_CONFIG_HOME|XDG_CACHE_HOME)=' || true
+        fi
         p50_found=0
         for p50_pref_file in /home/user/.mozilla/firefox/*/prefs.js; do
             if [ -r "$p50_pref_file" ]; then
