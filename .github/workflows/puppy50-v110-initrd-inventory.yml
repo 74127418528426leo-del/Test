@@ -1,0 +1,82 @@
+name: Puppy50 v110 initramfs byte inventory
+on:
+  push:
+    branches: [puppy50-v110-boot-research]
+    paths: [.github/workflows/puppy50-v110-initrd-inventory.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Install read-only inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso initramfs-tools-core cpio zstd
+          mkdir -p input out/{initrd,reports}
+      - name: Fetch and unpack the pinned v109 initramfs
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v109.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v109-faststart-ram-experimental/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/v109.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v109.iso -extract /live/initrd.img input/initrd.img >out/reports/extract.log 2>&1
+          sudo unmkinitramfs input/initrd.img out/initrd >out/reports/unpack.log 2>&1
+          sudo du -h -d 4 out/initrd | sort -hr >out/reports/unpacked-sizes.txt
+          sudo find out/initrd -type f -printf '%s %p\n' | sort -nr | head -120 >out/reports/largest-files.txt
+          stat -c '%n %s' input/initrd.img | tee out/reports/input-size.txt
+          sudo find out/initrd -type f -path '*/kernel/x86/microcode/*' -printf '%s %p\n' | tee out/reports/microcode-sizes.txt
+          sha256sum input/initrd.img | tee out/reports/input-hash.txt
+      - name: Inventory the uncompressed early archive boundaries
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          b = Path('input/initrd.img').read_bytes()[:45312000]
+          pos = 0
+          archives, members = [], []
+          archive_start = None
+          while pos < len(b):
+              while pos < len(b) and b[pos] == 0:
+                  pos += 1
+              if pos == len(b):
+                  break
+              if b[pos:pos+6] not in (b'070701', b'070702'):
+                  raise ValueError(f'unexpected archive bytes at {pos}: {b[pos:pos+8]!r}')
+              if archive_start is None:
+                  archive_start = pos
+              h = b[pos:pos+110]
+              if len(h) != 110:
+                  raise ValueError('truncated cpio header')
+              fields = [int(h[6+i*8:14+i*8], 16) for i in range(13)]
+              size, namesize = fields[6], fields[11]
+              endname = pos + 110 + namesize
+              if namesize < 1 or endname > len(b):
+                  raise ValueError('invalid cpio name')
+              name = b[pos+110:endname-1].decode('utf-8', 'replace')
+              data_start = (endname + 3) & ~3
+              end = (data_start + size + 3) & ~3
+              if end > len(b):
+                  raise ValueError('truncated cpio file')
+              if name == 'TRAILER!!!':
+                  archives.append({'start': archive_start, 'end': end, 'members': len(members), 'file_bytes': sum(x['size'] for x in members), 'largest': sorted(members, key=lambda x:x['size'], reverse=True)[:20]})
+                  members = []
+                  archive_start = None
+              else:
+                  members.append({'name': name, 'size': size})
+              pos = end
+          assert archive_start is None and not members
+          report = {'prefix_bytes': len(b), 'archives': archives, 'physical_hardware_tested': False}
+          Path('out/reports/early-archive-inventory.json').write_text(json.dumps(report, indent=2)+'\n')
+          print(json.dumps(report, indent=2))
+          PY
+      - name: Preserve inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v110-initramfs-inventory
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
