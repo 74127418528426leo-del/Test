@@ -1,0 +1,85 @@
+name: Puppy50 v112 early boot payload dependency audit
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-early-payload-audit.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install read-only image tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools cpio zstd
+          mkdir -p input out/{main,early3,reports}
+      - name: Extract exact v111 initramfs and filesystem
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v111.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v111-intel-faststart-experimental/Puppy50_v111_Intel_FastStart_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6' input/v111.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v111.iso -extract /live/initrd.img input/initrd.img -extract /live/filesystem.squashfs input/root.squashfs >out/reports/extract.log 2>&1
+          tail -c +45312001 input/initrd.img | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          dd if=input/initrd.img of=out/early3.cpio bs=1M iflag=skip_bytes,count_bytes skip=14922752 count=30389248 status=none
+          (cd out/early3 && sudo cpio -idm --quiet --no-absolute-filenames <../early3.cpio)
+          sudo unsquashfs -d out/root input/root.squashfs >out/reports/unsquash.log
+          stat -c '%n %s' input/initrd.img out/early3.cpio input/root.squashfs | tee out/reports/sizes.txt
+      - name: Compare early files with their root filesystem copies
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import hashlib,json
+          from collections import defaultdict
+          from pathlib import Path
+          root=Path('out/root').resolve()
+          main=Path('out/main').resolve()
+          early=Path('out/early3').resolve()
+          def sha(p):
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(1048576),b''):h.update(b)
+              return h.hexdigest()
+          def compare_tree(src, relative_root, classification):
+              source=src/relative_root
+              assert source.is_dir(), str(source)
+              groups=defaultdict(lambda:{'files':0,'bytes':0,'identical_files':0,'identical_bytes':0,'missing_or_different':[]})
+              for p in source.rglob('*'):
+                  if p.is_symlink() or not p.is_file(): continue
+                  rel=p.relative_to(src)
+                  candidate=root/rel
+                  group=classification(p.relative_to(source))
+                  x=groups[group];x['files']+=1;x['bytes']+=p.stat().st_size
+                  identical=False
+                  if candidate.is_file():
+                      try: candidate.resolve(strict=True).relative_to(root)
+                      except ValueError: pass
+                      else:
+                          identical=(candidate.stat().st_size==p.stat().st_size and sha(candidate)==sha(p))
+                  if identical:
+                      x['identical_files']+=1;x['identical_bytes']+=p.stat().st_size
+                  elif len(x['missing_or_different'])<20:
+                      x['missing_or_different'].append(str(rel))
+              return dict(groups)
+          firmware=compare_tree(main,Path('usr/lib/firmware'),lambda p:p.parts[0] if len(p.parts)>1 else '(top-level)')
+          kver='6.12.115+deb13.1-amd64'
+          module_root=Path('usr/lib/modules')/kver
+          modules=compare_tree(early,module_root,lambda p:'/'.join(p.parts[:3]) if len(p.parts)>=3 else str(p))
+          report={'firmware':firmware,'early_modules':modules,'physical_hardware_tested':False,'interpretation':'Byte-identical late-root copies alone do not prove early removal is safe or that devices reprobe correctly.'}
+          Path('out/reports/duplicate-inventory.json').write_text(json.dumps(report,indent=2)+'\n')
+          for section,groups in [('firmware',firmware),('early_modules',modules)]:
+              print(section)
+              for name,x in sorted(groups.items(),key=lambda it:it[1]['bytes'],reverse=True)[:20]:
+                  print(name,'bytes=',x['bytes'],'identical_root_bytes=',x['identical_bytes'],'files=',x['files'])
+          PY
+      - name: Preserve the read-only audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v112-early-payload-audit
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
