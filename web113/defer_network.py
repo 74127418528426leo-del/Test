@@ -35,7 +35,8 @@ def defer(early,main,late,mode,min_drivers=100,min_firmware=20):
             if not folder.exists():continue
             if folder.is_symlink() or not folder.is_dir():raise ValueError('Unexpected firmware directory')
             groups.append(name)
-            firmware.extend(p for p in folder.rglob('*') if p.is_file() or p.is_symlink())
+            # Leave symlinks alone; the unmodified late root still contains them.
+            firmware.extend(p for p in folder.rglob('*') if p.is_file() and not p.is_symlink())
         firmware.sort()
         if len(firmware)<min_firmware or (min_firmware>=20 and set(groups)!=set(FIRMWARE_GROUPS)):
             raise ValueError('Expected firmware groups/files are missing')
