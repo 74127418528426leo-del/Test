@@ -1,0 +1,13 @@
+# Puppy50 v112 — 8-second startup experiments
+
+Baseline: the exact published v111 Intel Fast Start ISO, SHA-256 `3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6`. Its matched v109 comparison gave 17.085 seconds to the first local Firefox home frame and 35.740 seconds to verified RAM migration, measured from QEMU launch, with 3 GiB guest memory, a conservative old-Intel feature mask, and 30 MiB/s capped virtual USB. Those figures do not measure a physical Acer.
+
+Goal: reduce actual browser startup toward eight seconds while maintaining network selection, Firefox security features and the verified staged RAM switch. Do not count a splash, a running process, or a first frame as proven interaction. Leave v111 publicly available and do not publish a new image without exact-image tests.
+
+## Experiments
+
+1. Rebuild the existing immutable system image with 128 KiB and 256 KiB SquashFS blocks using the existing Zstandard compression settings. A 1 MiB rebuilt control detects effects of rebuilding and file placement. Audit the full extracted system tree and metadata, refresh the ISO's checksums, and compare every variant against unmodified v111 on its own host in A–B–B–A order. Test input, local-page loading, HTTPS, RAM-ready verification, and browsing after virtual media removal. Repacking may increase image size, copying time or memory demand; measure all three instead of assuming a win.
+2. Instrument a separate, test-only build to capture boot stage timings and Firefox startup without suppressing failed results. Improve the timing harness so it types a local URL immediately after the first Firefox frame, confirms the resulting rendered page and server request while the medium is retained, and reports its own separately defined interaction time. Continue to verify staged RAM transition and post-removal browsing afterward.
+3. Test whether suppressing Firefox's extra first-run page changes startup time, preserving the normal browser, TLS, sandbox, networking, and user ability to navigate. Document this behavior and reject the change if the gain is not clear or if browser functionality regresses.
+
+If an experiment wins, validate the exact resulting bytes across BIOS/UEFI, online/offline, a 2 GiB guest, original fallback, and network restoration. Inspect the actual screenshots and verify a fresh page after removal. Maintain the original full-initramfs fallback and never tell users to remove media before the RAM-ready indication. Physical Acer, Wi-Fi, actual drive compatibility, 4K playback and the 384 MiB browser target remain unverified unless independently tested.
