@@ -43,7 +43,7 @@ jobs:
           marker = '"$B" sleep 8\nemit P50_STAGE_START\n'
           assert s.count(marker) == 1
           inject = r'''(
-              "$B" sleep 35
+              "$B" sleep 12
               {
                   printf '\nP50_V110_PROFILE_BEGIN\n'
                   printf 'UPTIME '; cat /proc/uptime
