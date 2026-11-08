@@ -1,4 +1,4 @@
-name: Puppy50 v113 Firefox preallocation comparison
+name: Puppy50 v113 verified Firefox preallocation comparison
 on:
   push:
     branches: [puppy50-v113-startup-research]
@@ -141,7 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50-v113-firefox-${{ matrix.mode }}-evidence
+          name: Puppy50-v113-firefox2-${{ matrix.mode }}-evidence
           path: |
             out/reports/
             out/base1/
@@ -154,7 +154,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50-v113-firefox-${{ matrix.mode }}-test-only-iso
+          name: Puppy50-v113-firefox2-${{ matrix.mode }}-test-only-iso
           path: |
             out/candidate.iso
             out/reports/iso-hashes.txt
