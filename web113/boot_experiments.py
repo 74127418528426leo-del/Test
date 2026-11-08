@@ -52,17 +52,47 @@ def patch_main(text, mode):
         raise ValueError('Unexpected or already patched main boot script')
     if mode=='profile':
         return text.replace(MAIN_MARKER,PROFILE_MAIN+MAIN_MARKER,1)
-    if mode not in ('xul','browser'):
+    if mode not in ('xul','omni','browser'):
         raise ValueError('Unknown main experiment')
-    files=['"${rootmnt}/usr/lib/firefox-esr/libxul.so"']
-    if mode=='browser':
-        files += ['"${rootmnt}/usr/lib/firefox-esr/omni.ja"','"${rootmnt}/usr/lib/firefox-esr/browser/omni.ja"']
-    hook='''
-\t# P50_V113_PREFETCH: speculative, reclaimable page-cache reads; no file changes.
+    files=[]
+    if mode in ('xul','browser'):
+        files.append('/usr/lib/firefox-esr/libxul.so')
+    if mode in ('omni','browser'):
+        files += ['/usr/lib/firefox-esr/omni.ja','/usr/lib/firefox-esr/browser/omni.ja']
+    hook=r'''
+\t# P50_V113_PREFETCH: speculative, reclaimable page-cache reads after switch-root.
 \tif [ -z "${TORAM:-}" ] && [ -b /dev/mapper/p50-staged-root ]; then
-\t\t( cat '''+' '.join(files)+''' >/dev/null 2>&1 ) &
+\t\tp50_pf="${rootmnt}/usr/local/sbin/p50-v113-prefetch"
+\t\tp50_unit="${rootmnt}/etc/systemd/system/p50-v113-prefetch.service"
+\t\tp50_wants="${rootmnt}/etc/systemd/system/sysinit.target.wants"
+\t\t[ ! -e "${p50_pf}" ] && [ ! -L "${p50_pf}" ] && [ ! -e "${p50_unit}" ] && [ ! -L "${p50_unit}" ] || panic "p50: unexpected prefetch file"
+\t\tmkdir -p "${p50_wants}" || panic "p50: cannot create prefetch directory"
+\t\tcat > "${p50_pf}" <<'P50_V113_PREFETCH_SCRIPT'
+#!/bin/sh
+printf 'P50_V113_PREFETCH_BEGIN %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
+cat P50_V113_FILES >/dev/null
+p50_rc=$?
+printf 'P50_V113_PREFETCH_END rc=%s uptime=%s\n' "$p50_rc" "$(cat /proc/uptime)" >/dev/ttyS0
+exit "$p50_rc"
+P50_V113_PREFETCH_SCRIPT
+\t\tchmod 0755 "${p50_pf}" || panic "p50: cannot set prefetch permissions"
+\t\tcat > "${p50_unit}" <<'P50_V113_PREFETCH_UNIT'
+[Unit]
+Description=Experimental Puppy50 Firefox page-cache prefetch
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/p50-v113-prefetch
+
+[Install]
+WantedBy=sysinit.target
+P50_V113_PREFETCH_UNIT
+\t\tln -s ../p50-v113-prefetch.service "${p50_wants}/p50-v113-prefetch.service" || panic "p50: cannot enable prefetch service"
 \tfi
-'''
+'''.replace('\\t','\t').replace('P50_V113_FILES',' '.join(files))
     return text.replace(MAIN_MARKER,hook+MAIN_MARKER,1)
 
 
@@ -88,11 +118,11 @@ def patch_migration(text):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('root',type=Path)
-    parser.add_argument('mode',choices=('xul','browser','no-settle','profile'));args=parser.parse_args()
+    parser.add_argument('mode',choices=('xul','omni','browser','no-settle','profile'));args=parser.parse_args()
     root=args.root.resolve(strict=True)
     if root==Path('/'):raise ValueError('Refusing to modify the running system')
     targets=[]
-    if args.mode in ('xul','browser','profile'):
+    if args.mode in ('xul','omni','browser','profile'):
         targets.append((root/'usr/lib/live/boot/9990-main.sh',lambda s:patch_main(s,args.mode)))
     if args.mode in ('no-settle','profile'):
         targets.append((root/'usr/lib/live/boot/9990-misc-helpers.sh',lambda s:patch_helper(s,args.mode)))
