@@ -1,0 +1,58 @@
+name: Puppy50 v113 display session architecture inventory
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-session-inventory.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    steps:
+      - name: Install read-only image inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          mkdir -p input out/files
+      - name: Inspect exact v112 session setup and ordering
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v112.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/v112.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v112.iso -extract /live/filesystem.squashfs input/root.squashfs >out/extract.log 2>&1
+          unsquashfs -ll input/root.squashfs >out/root-paths.txt
+          for file in \
+            usr/local/sbin/puppy50-prepare-session \
+            usr/lib/systemd/system/lightdm.service \
+            usr/lib/systemd/system/live-config.service \
+            usr/lib/systemd/system/systemd-user-sessions.service \
+            usr/lib/systemd/system/systemd-logind.service \
+            usr/lib/systemd/system/dbus.socket \
+            etc/systemd/system/lightdm.service.d/10-puppy50-live-preflight.conf \
+            etc/lightdm/lightdm.conf.d/99-puppy50-autologin.conf \
+            etc/lightdm/lightdm.conf.d/50-puppy50.conf \
+            etc/X11/Xwrapper.config \
+            usr/share/xsessions/openbox.desktop \
+            usr/bin/openbox-session \
+            usr/bin/startx \
+            etc/skel/.config/openbox/autostart; do
+            name="${file//\//_}"
+            if unsquashfs -cat input/root.squashfs "$file" >"out/files/$name" 2>"out/files/$name.error"; then
+              rm -f "out/files/$name.error"
+              printf 'FOUND %s\n' "$file"
+            else
+              rm -f "out/files/$name"
+              printf 'NOT FOUND %s\n' "$file"
+            fi
+          done
+          grep -E '/(Xorg\.wrap|Xwrapper\.config|xinit|runuser|loginctl|openbox-session|xauth|dbus-run-session)$' out/root-paths.txt >out/display-binaries.txt || true
+      - name: Preserve exact architecture inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-session-inventory
+          path: out/
+          if-no-files-found: warn
+          retention-days: 30
