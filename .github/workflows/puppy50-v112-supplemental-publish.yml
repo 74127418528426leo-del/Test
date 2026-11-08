@@ -1,0 +1,80 @@
+name: Publish checked v112 4K and panorama evidence
+on:
+  push:
+    branches: [puppy50-v112-8second-research]
+    paths: [.github/workflows/puppy50-v112-supplemental-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v112-supplemental-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify test runs and existing release image identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42481962218 42482106330; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          digest=$(gh release view puppy50-v112-fast-read-experimental --json assets --jq '.assets[] | select(.name=="Puppy50_v112_Fast_Read_EXPERIMENTAL.iso") | .digest')
+          test "$digest" = 'sha256:317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-synthetic-4k-evidence
+          run-id: 42481962218
+          github-token: ${{ github.token }}
+          path: evidence/video
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v112-panorama-check-bible-panorama
+          run-id: 42482106330
+          github-token: ${{ github.token }}
+          path: evidence/panorama
+      - name: Verify telemetry and the manually reviewed screenshots
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-pil
+          python3 web112/verify_supplemental.py
+          python3 -m unittest discover -s web112 -p 'test_*.py' -v
+      - name: Prepare reproducible evidence package
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp web112/ADDITIONAL_RESULTS.md dist/README_V112_4K_AND_PANORAMA.md
+          git rev-parse HEAD >evidence/packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v112_4K_and_Panorama_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(Path('evidence').rglob('*')):
+                  if p.is_file() and not p.is_symlink(): z.write(p,p.as_posix())
+              for name in ('ADDITIONAL_RESULTS.md','video4k_fixture.py','video4k_evaluate.py','test_video4k_fixture.py','test_video4k_evaluate.py','panorama_probe.py','test_panorama_probe.py','site_probe.py','verify_supplemental.py'):
+                  p=Path('web112')/name;z.write(p,p.as_posix())
+              for name in ('puppy50-v112-synthetic-4k.yml','puppy50-v112-panorama-check.yml','puppy50-v112-supplemental-publish.yml'):
+                  p=Path('.github/workflows')/name;z.write(p,p.as_posix())
+          PY
+          (cd dist && sha256sum Puppy50_v112_4K_and_Panorama_Evidence.zip README_V112_4K_AND_PANORAMA.md >SHA256_V112_4K_AND_PANORAMA)
+      - name: Attach supplemental evidence without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v112-fast-read-experimental'
+          for asset in Puppy50_v112_4K_and_Panorama_Evidence.zip README_V112_4K_AND_PANORAMA.md SHA256_V112_4K_AND_PANORAMA; do
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fx "$asset"; then echo 'Asset exists; refusing to overwrite.' >&2; exit 1; fi
+          done
+          gh release upload "$tag" dist/Puppy50_v112_4K_and_Panorama_Evidence.zip dist/README_V112_4K_AND_PANORAMA.md dist/SHA256_V112_4K_AND_PANORAMA
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v112-supplemental.zip 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_4K_and_Panorama_Evidence.zip'
+          cmp dist/Puppy50_v112_4K_and_Panorama_Evidence.zip /tmp/puppy50-v112-supplemental.zip
+          echo 'Public supplemental evidence matches uploaded bytes.'
