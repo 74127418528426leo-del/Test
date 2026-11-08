@@ -1,4 +1,4 @@
-name: Puppy50 v112 Bible panorama snapshot
+name: Puppy50 v112 Bible panorama keyboard probe
 on:
   push:
     branches: [puppy50-v112-8second-research]
@@ -28,7 +28,8 @@ jobs:
           mkdir -p input out/reports fixture
           python3 -m unittest discover -s web112 -p 'test_*.py' -v
           python3 web112/site_probe.py web109/boot_bench_staged.py web112/generated_site_bench.py
-          python3 -m py_compile web112/generated_site_bench.py
+          python3 web112/panorama_probe.py web112/generated_site_bench.py web112/generated_panorama_bench.py
+          python3 -m py_compile web112/generated_panorama_bench.py
           lscpu >out/reports/host-cpu.txt
       - uses: actions/download-artifact@v4
         with:
@@ -50,10 +51,24 @@ jobs:
           P50_TEST_URL: ${{ matrix.url }}
         run: |
           set -euo pipefail
-          python3 -u web112/generated_site_bench.py --iso input/candidate.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          python3 -u web112/generated_panorama_bench.py --iso input/candidate.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
           test -s out/qemu/requested_site.png
+          test -s out/qemu/panorama_after_keys.png
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image, ImageChops
+          before=Image.open('out/qemu/requested_site.png').convert('RGB').crop((360,320,1260,650))
+          after=Image.open('out/qemu/panorama_after_keys.png').convert('RGB').crop((360,320,1260,650))
+          diff=ImageChops.difference(before,after).convert('L').point(lambda p:255 if p>=20 else 0)
+          fraction=diff.histogram()[255]/(diff.width*diff.height)
+          report={'changed_pixel_fraction':fraction,'keyboard_events_sent':12,'interpretation':'A large change in the visible panorama region after clicking and pressing Right; frames require human review.'}
+          Path('out/reports/panorama-change.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report))
+          assert fraction > .05, report
+          PY
           grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/fixture.log | grep -F ' 200 '
-          printf '%s\n' 'A screenshot was captured. Website availability and video playback/resolution require review; this is not a 4K playback test.' >out/reports/interpretation.txt
+          printf '%s\n' 'The panorama was captured before and after a simulated click and keyboard input; images require human review.' >out/reports/interpretation.txt
       - name: Preserve screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4
