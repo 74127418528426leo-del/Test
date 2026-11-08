@@ -1,0 +1,137 @@
+name: Puppy50 v110 prebuilt linker-cache comparison
+on:
+  push:
+    branches: [puppy50-v110-boot-research]
+    paths: [.github/workflows/puppy50-v110-ldconfig.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and VM tools and run patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s web110 -p 'test_*.py' -v
+          mkdir -p input out/{main,reports,tree,rechecked} fixture
+          lscpu >out/reports/host-cpu.txt
+      - name: Fetch and unpack the pinned v109 boot image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v109.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v109-faststart-ram-experimental/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/v109.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v109.iso -extract /live/initrd.img out/original.initrd -extract /live/filesystem.squashfs out/base.squashfs >out/reports/extract.log 2>&1
+          head -c 45312000 out/original.initrd >out/early-prefix
+          tail -c +45312001 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo python3 web110/ldconfig_patch.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+      - name: Create and verify the test-only ISO
+        run: |
+          set -euo pipefail
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 45312000 out/original.initrd out/candidate.initrd
+          xorriso -indev input/v109.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, re
+          root = Path('out/tree').resolve()
+          lines, seen = [], set()
+          for line in (root / 'sha256sum.txt').read_text().splitlines():
+              m = re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)', line)
+              assert m, repr(line)
+              name = m.group(3)
+              assert name.startswith('./') and name not in seen
+              seen.add(name)
+              target = (root / name).resolve(strict=True)
+              target.relative_to(root)
+              assert target.is_file() and name != './sha256sum.txt'
+              h = hashlib.sha256()
+              with target.open('rb') as f:
+                  for block in iter(lambda: f.read(1048576), b''):
+                      h.update(block)
+              lines.append(h.hexdigest() + m.group(2) + name)
+          assert len(lines) == 292
+          Path('out/sha256sum.txt').write_text('\n'.join(lines) + '\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/base.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/candidate.initrd out/rechecked/live/initrd.img
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          sha256sum input/v109.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Start the post-removal test page
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Compare staged boots with and without cache rebuild
+        timeout-minutes: 15
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bench() { python3 -u web109/boot_bench_staged.py --iso "$1" --out "out/$2" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280; }
+          check_cache() {
+            tr -d '\r' <"out/$1/serial.log" >"out/reports/$1-serial-clean.log"
+            grep -Fx P50_V110_LDCONFIG_MASKED "out/reports/$1-serial-clean.log"
+            grep -Fx P50_V110_CACHE_IDENTICAL "out/reports/$1-serial-clean.log"
+          }
+          bench input/v109.iso base1
+          bench out/candidate.iso cand1
+          check_cache cand1
+          bench out/candidate.iso cand2
+          check_cache cand2
+          bench input/v109.iso base2
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture.log)" -eq 4
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+          names = ('base1', 'cand1', 'cand2', 'base2')
+          results = {n: json.loads((Path('out') / n / 'result.json').read_text()) for n in names}
+          assert all(r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'] for r in results.values())
+          summary = {'results': {n: {'first_home_seconds': r['first_home_seen_seconds'], 'ram_ready_seconds': r['staged_ram_ready_seconds']} for n, r in results.items()}}
+          for label, pair in [('baseline', ('base1', 'base2')), ('candidate', ('cand1', 'cand2'))]:
+              summary[label + '_home_mean'] = statistics.mean(results[n]['first_home_seen_seconds'] for n in pair)
+              summary[label + '_ready_mean'] = statistics.mean(results[n]['staged_ram_ready_seconds'] for n in pair)
+          summary['home_difference_seconds'] = summary['baseline_home_mean'] - summary['candidate_home_mean']
+          summary['physical_acer_tested'] = False
+          summary['sample_interval_seconds'] = 0.8
+          (Path('out/reports') / 'comparison.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Preserve logs, timings, and screenshots even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v110-ldconfig-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep test-only image temporarily if all checks pass
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v110-ldconfig-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-hashes.txt
+          compression-level: 0
+          retention-days: 3
