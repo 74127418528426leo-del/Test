@@ -27,4 +27,7 @@ An early-payload audit found 865 early kernel module files identical to late-roo
 
 [Block size experiment](https://github.com/74127418528426leo-del/Test/actions/runs/42479601193) · [Interactive comparison](https://github.com/74127418528426leo-del/Test/actions/runs/42480553607) · [Five validation scenarios](https://github.com/74127418528426leo-del/Test/actions/runs/42480523148) · [Independent audit](https://github.com/74127418528426leo-del/Test/actions/runs/42480757160) · [Early payload audit](https://github.com/74127418528426leo-del/Test/actions/runs/42480267230)
 
-The eight-second goal, 384 MiB Firefox goal, physical Acer and physical Wi-Fi verification, and smooth 4K playback remain unverified or unmet. Results must not be presented as physical-hardware timings.
+
+Post-release, the same ISO played a local synthetic 3840 × 2160 H.264 clip at 24 fps. Browser telemetry recorded 770 frames and zero dropped over 32.08 s in a 3 GiB/two-vCPU VM; the virtual screen was 1280 × 800, the clip looped, and this does not establish online 4K streaming or performance on a physical Acer. A separate VM test loaded the John 1:1 panorama after virtual USB removal; twelve right-arrow presses visibly turned it. [Synthetic video](https://github.com/74127418528426leo-del/Test/actions/runs/42481962218) · [Panorama input](https://github.com/74127418528426leo-del/Test/actions/runs/42482106330).
+
+The eight-second goal, 384 MiB Firefox goal, physical Acer and physical Wi-Fi verification, and physical or online 4K performance remain unverified or unmet. Results must not be presented as physical-hardware timings.
