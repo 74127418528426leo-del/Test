@@ -1,0 +1,82 @@
+name: Puppy50 v113 Firefox preallocation at 2 GiB
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-firefox-2gib.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare VM and early interaction probe
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          python3 web112/early_probe.py web109/boot_bench_staged.py web113/browser2g_bench.py
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-firefox2-off-test-only-iso
+          run-id: 42535424434
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact images and start both local fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v112.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/v112.iso | sha256sum -c -
+          printf '%s  %s\n' 'f4f164c0d896d656287778790c532117a7f80c537a28c8ce1ee144e9008e86c3' input/candidate.iso | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Record four alternating 2 GiB browser outcomes
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          for name in base1 candidate1 candidate2 base2; do
+            if [[ "$name" == base* ]]; then image=input/v112.iso; else image=input/candidate.iso; fi
+            set +e
+            python3 -u web113/browser2g_bench.py --iso "$image" --out "out/$name" --mode online --allow-no-startup-probe --wait-ram-ready --ram 2048 --seconds 120 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280 >"out/reports/$name-console.log" 2>&1
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" >"out/reports/$name-exit-code.txt"
+            test -s "out/$name/result.json"
+            test -s "out/$name/serial.log"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          results={}
+          for name in ('base1','candidate1','candidate2','base2'):
+              r=json.loads((Path('out')/name/'result.json').read_text())
+              serial=(Path('out')/name/'serial.log').read_text(errors='replace')
+              passed=bool(r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'])
+              if not passed: assert not r['media_ejected'],name
+              results[name]={'ram_only_passed':passed,'home_seconds':r['first_home_seen_seconds'],'early_js_seconds':r.get('early_js_response_seconds'),'ram_ready_seconds':r['staged_ram_ready_seconds'],'preference_seen_in_diagnostic': 'P50_V113_PREF_OBSERVED' in serial,'insufficient_memory_guard': 'P50_STAGE_FAILED: insufficient available memory and reserve' in serial,'errors':r['errors']}
+          report={'measurement':'Same host, 2048 MiB virtual memory, A-B-B-A, BIOS, 30 MiB/s USB. The candidate changes one Firefox spare-process preference and includes a diagnostic. Not physical Acer.','results':results}
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve all logs and screenshots, including guest failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-firefox-2gib-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/candidate1/
+            out/candidate2/
+          if-no-files-found: warn
+          retention-days: 30
