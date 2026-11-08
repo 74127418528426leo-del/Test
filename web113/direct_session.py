@@ -33,6 +33,8 @@ REPORT=r'''(
         printf '\nP50_V113_DIRECT_PROFILE_BEGIN\n'
         printf '%s\n' '--- display manager PAMName, user and state ---'
         systemctl show -p User -p PAMName -p ActiveState display-manager.service || true
+        printf '%s\n' '--- display manager journal ---'
+        journalctl -b -u display-manager.service -u lightdm.service --no-pager -o short-monotonic | tail -100 || true
         printf '%s\n' '--- user session and processes ---'
         loginctl list-sessions --no-legend || true
         ps -eo user,comm,args | grep -E '[f]irefox|[n]m-applet|[p]olkit|[o]penbox|[X]org|[s]tartx' || true
@@ -58,6 +60,8 @@ def patch_main(text):
 \t\tp50_dm="${rootmnt}/etc/systemd/system/display-manager.service"
 \t\t[ -L "${p50_dm}" ] && [ "$(readlink "${p50_dm}")" = /lib/systemd/system/lightdm.service ] || panic "p50: unexpected display-manager link"
 \t\trm "${p50_dm}" || panic "p50: cannot replace test display-manager link"
+\t\t[ ! -e "${rootmnt}/etc/systemd/system/lightdm.service" ] && [ ! -L "${rootmnt}/etc/systemd/system/lightdm.service" ] || panic "p50: unexpected LightDM override"
+\t\tln -s /dev/null "${rootmnt}/etc/systemd/system/lightdm.service" || panic "p50: cannot mask old display manager"
 \t\tcat > "${p50_dm}" <<'P50_V113_DIRECT_X_UNIT'
 P50_UNIT
 P50_V113_DIRECT_X_UNIT
