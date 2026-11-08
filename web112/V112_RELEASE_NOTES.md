@@ -19,6 +19,8 @@ Each matched comparison ran in alternating v111–v112–v112–v111 order on on
 - In Fast Start cases, the guest reported a verified RAM copy, the virtual boot media was removed, and Firefox responded afterward. A new local page was fetched after removal when the guest was online. Public HTTPS was visually checked in the online restoration case.
 - A separate audit compared every unpacked root filesystem file and checked metadata against v111, checked boot files for equality, and verified all 293 included ISO checksums.
 
+- Separate virtual public-site snapshots showed the home page of the user's Gospel of John project and CNN behind a privacy prompt. CNN reported that some media needs DRM. YouTube requested sign-in to verify the session, and Pexels requested human verification. These snapshots do not establish successful video playback or its resolution. The captured frames are included in the release evidence.
+
 ## Limitations and use
 
 - The physical Acer Aspire X3950, its USB stick, Wi-Fi hardware, graphics, audio, and other computers have not been tested. The virtual CPU feature mask does not reproduce an i3-540's actual speed.
