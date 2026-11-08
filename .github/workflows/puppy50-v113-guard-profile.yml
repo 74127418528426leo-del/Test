@@ -1,0 +1,127 @@
+name: Puppy50 v113 2 GiB RAM-reserve investigation
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-guard-profile.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ISO and guest tools and validate guard instrumentation
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{main,reports} fixture
+          python3 -m unittest discover -s web113 -p 'test_*.py' -v
+          lscpu >out/reports/host-cpu.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-clean-network-drivers-test-only-iso
+          run-id: 42535754369
+          github-token: ${{ github.token }}
+          path: input
+      - name: Fetch both exact images and create matched diagnostic copies
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v112.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v112-fast-read-experimental/Puppy50_v112_Fast_Read_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '317999f51e47698d90889b129e9f74bbbefaa382b4d481f4da32016861d8ddc7' input/v112.iso | sha256sum -c -
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/candidate.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v112.iso -extract /live/initrd.img out/base.initrd >out/reports/base-extract.log 2>&1
+          xorriso -osirrox on -indev input/candidate.iso -extract /live/initrd.img out/candidate.initrd >out/reports/candidate-extract.log 2>&1
+          tail -c +45312001 out/base.initrd >out/base-main.zst
+          tail -c +36154881 out/candidate.initrd >out/candidate-main.zst
+          cmp out/base-main.zst out/candidate-main.zst
+          zstd -q -dc out/base-main.zst >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          cp out/main/usr/lib/p50-stage/p50-migrate.sh out/original-migrate.sh
+          sudo python3 web113/guard_profile.py out/main
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+          diff -u out/original-migrate.sh out/main/usr/lib/p50-stage/p50-migrate.sh >out/reports/guard-instrumentation.diff || test "$?" -eq 1
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/diagnostic.cpio
+          zstd -q -3 -T2 -o out/diagnostic.cpio.zst out/diagnostic.cpio
+          for side in base candidate; do
+            if [ "$side" = base ]; then image=input/v112.iso; length=45312000; else image=input/candidate.iso; length=36154880; fi
+            head -c "$length" "out/$side.initrd" >"out/$side-prefix"
+            cat "out/$side-prefix" out/diagnostic.cpio.zst >"out/$side-diagnostic.initrd"
+            cmp -n "$length" "out/$side.initrd" "out/$side-diagnostic.initrd"
+            xorriso -indev "$image" -outdev "out/$side-stage.iso" -map "out/$side-diagnostic.initrd" /live/initrd.img -map "out/$side-diagnostic.initrd" /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >"out/reports/$side-stage.log" 2>&1
+            xorriso -osirrox on -indev "out/$side-stage.iso" -extract / "out/$side-tree" >"out/reports/$side-tree.log" 2>&1
+            SIDE="$side" python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,os,re
+          side=os.environ['SIDE'];root=Path('out')/(side+'-tree');lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in seen;seen.add(name)
+              p=(root/name).resolve(strict=True);p.relative_to(root.resolve());assert p.is_file()
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(1048576),b''):h.update(b)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==293
+          (Path('out')/(side+'-sha256sum.txt')).write_text('\n'.join(lines)+'\n')
+          PY
+            xorriso -indev "out/$side-stage.iso" -outdev "out/$side-diagnostic.iso" -map "out/$side-sha256sum.txt" /sha256sum.txt -boot_image any replay -commit -end >"out/reports/$side-repack.log" 2>&1
+            sha256sum "out/$side-diagnostic.iso" >>out/reports/diagnostic-hashes.txt
+          done
+      - name: Prepare post-removal page fixture
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); socket.create_connection(("127.0.0.1",8765),timeout=5).close()'
+      - name: Record four alternating guest outcomes including guarded failures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          for name in base1 candidate1 candidate2 base2; do
+            if [[ "$name" == base* ]]; then image=out/base-diagnostic.iso; else image=out/candidate-diagnostic.iso; fi
+            set +e
+            python3 -u web109/boot_bench_staged.py --iso "$image" --out "out/$name" --mode online --allow-no-startup-probe --wait-ram-ready --ram 2048 --seconds 120 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280 >"out/reports/$name-console.log" 2>&1
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" >"out/reports/$name-exit-code.txt"
+            test -s "out/$name/result.json"
+            test -s "out/$name/serial.log"
+            tr -d '\r' <"out/$name/serial.log" >"out/reports/$name-serial-clean.log"
+            grep -F P50_V113_GUARD_AVAILABLE_KIB "out/reports/$name-serial-clean.log"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          results={}
+          for name in ('base1','candidate1','candidate2','base2'):
+              r=json.loads((Path('out')/name/'result.json').read_text())
+              serial=(Path('out/reports')/(name+'-serial-clean.log')).read_text()
+              m=re.search(r'P50_V113_GUARD_AVAILABLE_KIB=(\d+) NEED_KIB=(\d+) RESERVE_KIB=(\d+)',serial);assert m,name
+              av,need,reserve=map(int,m.groups());assert reserve==393216
+              passed=bool(r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'])
+              if passed: assert av>=need+reserve and 'P50_STAGE_READY' in serial
+              else: assert not r['media_ejected'] and ('P50_STAGE_NOT_READY' in serial or r['errors']),name
+              results[name]={'available_kib_at_guard':av,'root_kib':need,'reserve_kib':reserve,'meets_guard':av>=need+reserve,'ram_only_passed':passed,'first_home_seconds':r['first_home_seen_seconds'],'ram_ready_seconds':r['staged_ram_ready_seconds'],'errors':r['errors']}
+          report={'measurement':'Instrumented images; same original guard, 2048 MiB virtual memory, same host, A-B-B-A, 30 MiB/s BIOS USB. Not physical Acer.','results':results}
+          Path('out/reports/guard-comparison.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve all diagnostics, screenshots and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v113-2gib-guard-investigation
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/candidate1/
+            out/candidate2/
+          if-no-files-found: warn
+          retention-days: 30
