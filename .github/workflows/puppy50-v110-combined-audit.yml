@@ -1,0 +1,81 @@
+name: Audit Puppy50 v110 combined boot image
+on:
+  push:
+    branches: [puppy50-v110-boot-research]
+    paths: [.github/workflows/puppy50-v110-combined-audit.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install read-only inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso initramfs-tools-core zstd rsync
+          mkdir -p input audit/{old,new,old-unpacked,new-unpacked,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v110-combined-test-only-iso
+          run-id: 42458887918
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify image hashes and compare core boot files
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v109.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v109-faststart-ram-experimental/Puppy50_v109_FastStart_RAM_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'e6b341ae3a272bb6bfa063814b2b61a14ba9dadd5f41137a8203f651120671da' input/v109.iso | sha256sum -c -
+          printf '%s  %s\n' '3ead70c1876e0ae02759ffd5887ef89a7e47eb87f4756faba65958bd011101e6' input/candidate.iso | sha256sum -c -
+          for side in old new; do
+            if [ "$side" = old ]; then image=input/v109.iso; else image=input/candidate.iso; fi
+            xorriso -osirrox on -indev "$image" -extract /live/initrd.img "audit/$side/initrd" -extract /live/vmlinuz "audit/$side/vmlinuz" -extract /live/filesystem.squashfs "audit/$side/root" -extract /isolinux/live.cfg "audit/$side/bios.cfg" -extract /boot/grub/grub.cfg "audit/$side/grub.cfg" >"audit/reports/$side-extract.log" 2>&1
+          done
+          xorriso -osirrox on -indev input/candidate.iso -extract /live/initrd-full.img audit/new/full-initrd >audit/reports/full-extract.log 2>&1
+          cmp audit/old/root audit/new/root
+          cmp audit/old/vmlinuz audit/new/vmlinuz
+          cmp audit/old/initrd audit/new/full-initrd
+          cmp -n 45312000 audit/old/initrd audit/new/initrd
+          sudo unmkinitramfs audit/old/initrd audit/old-unpacked >audit/reports/old-unpack.log 2>&1
+          sudo unmkinitramfs audit/new/initrd audit/new-unpacked >audit/reports/new-unpack.log 2>&1
+      - name: Verify the two exact early firmware removals and all other contents
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          sys.path.insert(0,'web110')
+          from lean_initrd import TARGETS, patch_menus
+          old, new = Path('audit/old-unpacked/main'), Path('audit/new-unpacked/main')
+          expected = {'usr/lib/firmware/nvidia/ga102/gsp/gsp-535.113.01.bin':'e30231ec0d317021770e16c81ae2c0553f728d0344248827582f78132c9447d4', 'usr/lib/firmware/nvidia/tu102/gsp/gsp-535.113.01.bin':'be2c3bb39cee2c4bd6680dce9eb75b26105c576e5aaf2c82f59d11a79f103749'}
+          assert set(TARGETS) == set(expected)
+          for rel, digest in expected.items():
+              src, dst = old/rel, new/rel
+              assert src.is_file() and src.stat().st_size == TARGETS[rel]
+              assert hashlib.sha256(src.read_bytes()).hexdigest() == digest
+              assert not dst.exists() and not dst.is_symlink()
+          bios, grub = patch_menus(Path('audit/old/bios.cfg').read_text(), Path('audit/old/grub.cfg').read_text())
+          oldline = 'boot=live components quiet locales=en_US.UTF-8'
+          newline = 'boot=live components usb-storage.delay_use=0 quiet locales=en_US.UTF-8'
+          assert bios.count(oldline) == grub.count(oldline) == 1
+          assert bios.replace(oldline, newline, 1) == Path('audit/new/bios.cfg').read_text()
+          assert grub.replace(oldline, newline, 1) == Path('audit/new/grub.cfg').read_text()
+          PY
+          exclusions=(--exclude='/main/usr/lib/firmware/nvidia/ga102/gsp/gsp-535.113.01.bin' --exclude='/main/usr/lib/firmware/nvidia/tu102/gsp/gsp-535.113.01.bin')
+          sudo rsync -aHAXnciO --delete --numeric-ids "${exclusions[@]}" audit/old-unpacked/ audit/new-unpacked/ >audit/reports/rsync-forward.txt
+          sudo rsync -aHAXnciO --delete --numeric-ids "${exclusions[@]}" audit/new-unpacked/ audit/old-unpacked/ >audit/reports/rsync-reverse.txt
+          test ! -s audit/reports/rsync-forward.txt
+          test ! -s audit/reports/rsync-reverse.txt
+          printf '%s\n' 'Root filesystem, kernel, early microcode/module prefix and full fallback initramfs match v109 byte for byte. Extracted fast initramfs matches selected metadata and content except the two listed NVIDIA GSP firmware files. Menus differ only by the intended fast USB parameter and the original fallback initramfs paths.' >audit/reports/audit-result.txt
+          cat audit/reports/audit-result.txt
+      - name: Preserve the independent audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v110-combined-independent-audit
+          path: audit/reports/
+          if-no-files-found: warn
+          retention-days: 30
