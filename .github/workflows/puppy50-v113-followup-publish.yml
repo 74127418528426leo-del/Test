@@ -1,0 +1,109 @@
+name: Publish Puppy50 v113 RAM and startup follow-up evidence
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-followup-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v113-followup-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify run outcomes and unchanged published image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for run in 42536785403 42536862696 42536105814; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            test "$state" = 'completed:success'
+          done
+          state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42537043469" --jq '.status + ":" + (.conclusion // "null")')
+          test "$state" = 'completed:failure'
+          digest=$(gh release view puppy50-v113-local-media-experimental --json assets --jq '.assets[] | select(.name=="Puppy50_v113_Local_Media_EXPERIMENTAL.iso") | .digest')
+          test "$digest" = 'sha256:4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-2gib-guard-investigation
+          run-id: 42536785403
+          github-token: ${{ github.token }}
+          path: evidence/guard
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-firefox-2gib-evidence
+          run-id: 42536862696
+          github-token: ${{ github.token }}
+          path: evidence/firefox-2gib
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-firefox-off-repeat-evidence
+          run-id: 42536105814
+          github-token: ${{ github.token }}
+          path: evidence/firefox-repeat
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-direct-session-evidence
+          run-id: 42537043469
+          github-token: ${{ github.token }}
+          path: evidence/direct-session-failure
+      - name: Check passing and failed outcomes without conflating them
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('evidence')
+          guard=json.loads((root/'guard/reports/guard-comparison.json').read_text())['results']
+          assert set(guard)=={'base1','base2','candidate1','candidate2'}
+          for r in guard.values():
+              assert r['ram_only_passed'] and r['meets_guard'] and r['reserve_kib']==393216 and r['root_kib']==680220
+          fixture=(root/'guard/reports/fixture.log').read_text()
+          assert fixture.count('GET /after.html?nonce=P50-42536785403 HTTP/1.1" 200')==4
+          firefox=json.loads((root/'firefox-2gib/reports/comparison.json').read_text())['results']
+          assert all(r['ram_only_passed'] for r in firefox.values())
+          assert firefox['candidate1']['preference_seen_in_diagnostic'] and firefox['candidate2']['preference_seen_in_diagnostic']
+          timing=json.loads((root/'firefox-repeat/reports/comparison.json').read_text())
+          assert abs(timing['home_gain_seconds']-0.023333333333333428)<1e-6
+          direct=json.loads((root/'direct-session-failure/cand1/result.json').read_text())
+          serial=(root/'direct-session-failure/cand1/serial.log').read_text(errors='replace')
+          assert direct['first_home_seen_seconds'] is None and not direct['media_ejected']
+          assert 'Failed to determine user credentials' in serial and 'P50_V113_DIRECT_UI_MISSING' in serial
+          print('Verified four 2 GiB diagnostic passes, no material Firefox speed gain, and the failed direct-session experiment.')
+          PY
+      - name: Package follow-up evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp web113/V113_FOLLOWUP.md dist/README_V113_RAM_AND_STARTUP_FOLLOWUP.md
+          git rev-parse HEAD >evidence/packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v113_RAM_and_Startup_Followup_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(Path('evidence').rglob('*')):
+                  if p.is_file() and not p.is_symlink():z.write(p,p.as_posix())
+              for name in ('V113_FOLLOWUP.md','RESEARCH_RESULTS.md','guard_profile.py','test_guard_profile.py','direct_session_failed_v2.py','direct_session.py','test_direct_session.py','firefox_pref_patch.py','test_firefox_pref_patch.py'):
+                  p=Path('web113')/name;z.write(p,p.as_posix())
+              for name in ('puppy50-v113-guard-profile.yml','puppy50-v113-firefox-2gib.yml','puppy50-v113-firefox-off-repeat.yml','puppy50-v113-followup-publish.yml'):
+                  p=Path('.github/workflows')/name;z.write(p,p.as_posix())
+          PY
+          (cd dist && sha256sum Puppy50_v113_RAM_and_Startup_Followup_Evidence.zip README_V113_RAM_AND_STARTUP_FOLLOWUP.md >SHA256_V113_FOLLOWUP)
+      - name: Attach evidence without replacing prior assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v113-local-media-experimental'
+          for asset in Puppy50_v113_RAM_and_Startup_Followup_Evidence.zip README_V113_RAM_AND_STARTUP_FOLLOWUP.md SHA256_V113_FOLLOWUP; do
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fx "$asset"; then echo 'Asset exists; refusing to overwrite.' >&2; exit 1; fi
+          done
+          gh release upload "$tag" dist/Puppy50_v113_RAM_and_Startup_Followup_Evidence.zip dist/README_V113_RAM_AND_STARTUP_FOLLOWUP.md dist/SHA256_V113_FOLLOWUP
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v113-followup.zip 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_RAM_and_Startup_Followup_Evidence.zip'
+          cmp dist/Puppy50_v113_RAM_and_Startup_Followup_Evidence.zip /tmp/puppy50-v113-followup.zip
+          echo 'Public supplemental evidence matches the uploaded bytes.'
