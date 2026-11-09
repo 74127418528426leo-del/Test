@@ -109,6 +109,7 @@ jobs:
           EXPERIMENT_MODE: ${{ matrix.mode }}
         run: |
           set -uo pipefail
+          set +e
           for run in base2g cand2g cand1536 base1536; do
             if [[ "$run" == base* ]]; then iso=input/v113.iso; else iso=out/candidate.iso; fi
             if [[ "$run" == *2g ]]; then mem=2048; else mem=1536; fi
@@ -116,6 +117,7 @@ jobs:
             code=$?
             printf '%s\n' "$code" > "out/reports/$run-exit-code.txt"
           done
+          set -e
           python3 - <<'PYCODE'
           import json,re
           from pathlib import Path
