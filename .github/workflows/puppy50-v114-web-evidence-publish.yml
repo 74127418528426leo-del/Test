@@ -1,0 +1,90 @@
+name: Preserve Puppy50 v114 web and 4K VM test evidence
+on:
+  push:
+    branches: [puppy50-v114-release]
+    paths: [.github/workflows/puppy50-v114-web-evidence-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v114-web-evidence-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check completed exact-image test runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42645806119 42645952762; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+          done
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42645806119" --jq .head_sha)" = '7f999759302317c74869f7a256067b3187244144'
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42645952762" --jq .head_sha)" = 'b94b1358a6eacdc500a76fd46fa7ca53a4764543'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v114-requested-site-*
+          run-id: 42645806119
+          github-token: ${{ github.token }}
+          path: evidence/sites
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-synthetic-4k-evidence
+          run-id: 42645952762
+          github-token: ${{ github.token }}
+          path: evidence/synthetic-4k
+      - name: Check the reviewed screenshots and actual playback telemetry
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('evidence/sites')
+          for name in ('bible-panorama','cnn','youtube-4k-page','pexels-video-page'):
+              p=root/('Puppy50-v114-requested-site-'+name)/'qemu'
+              r=json.loads((p/'result.json').read_text())
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors']
+              assert (p/'requested_site.png').stat().st_size>0
+          assert (root/'Puppy50-v114-requested-site-bible-panorama/qemu/panorama_after_keys.png').stat().st_size>0
+          v=json.loads(Path('evidence/synthetic-4k/reports/playback-result.json').read_text())
+          assert v['verified_4k_frame_progress'] and (v['source_width'],v['source_height'])==(3840,2160)
+          assert v['observed_total_frames']==770 and v['observed_dropped_frames']==0
+          assert Path('evidence/synthetic-4k/qemu/requested_site.png').stat().st_size>0
+          PY
+      - name: Package observations, screenshots, and source evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp web114release/V114_WEB_TESTS.md dist/Puppy50_v114_Web_Test_Observations.md
+          cp evidence/sites/Puppy50-v114-requested-site-bible-panorama/qemu/requested_site.png dist/Puppy50_v114_Bible_Panorama.png
+          cp evidence/sites/Puppy50-v114-requested-site-bible-panorama/qemu/panorama_after_keys.png dist/Puppy50_v114_Bible_Panorama_After_Input.png
+          cp evidence/synthetic-4k/qemu/requested_site.png dist/Puppy50_v114_Synthetic_4K_VM.png
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v114_Web_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web114release')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:
+                          z.write(p,p.as_posix())
+              z.write('.github/workflows/puppy50-v114-web-evidence-publish.yml')
+          PY
+          (cd dist && sha256sum * >Web_Test_SHA256SUMS)
+      - name: Attach new evidence to existing experimental release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v114-fast-verification-experimental'
+          gh release view "$tag" --json isPrerelease --jq .isPrerelease | grep -Fx true
+          gh release view "$tag" --json assets --jq '.assets[].name' >existing-assets.txt
+          for f in dist/*; do
+            if grep -Fx "$(basename "$f")" existing-assets.txt; then echo 'Refusing to overwrite an existing asset' >&2; exit 1; fi
+          done
+          gh release upload "$tag" dist/*
+          gh release view "$tag" --json url,assets --jq '.url, (.assets[].name)'
