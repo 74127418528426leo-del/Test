@@ -1,0 +1,203 @@
+name: Puppy50 v114 trace-driven filesystem layout comparison
+on:
+  push:
+    branches: [puppy50-v114-boot-layout-research]
+    paths: [.github/workflows/puppy50-v114-trace-layout.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image and VM tools and verify utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync qemu-system-x86 python3-pil time
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{reports,control,ordered} fixture
+          python3 -m unittest discover -s web114 -p 'test_*.py' -v
+          python3 -m unittest discover -s web113 -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web114/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web114/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+          df -h . >out/reports/host-disk.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-open-trace-evidence
+          run-id: 42563947692
+          github-token: ${{ github.token }}
+          path: input/trace
+      - name: Extract exact v113 filesystem and generate order from recorded opens
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/filesystem.squashfs input/base.squashfs -extract /live/initrd.img input/base.initrd -extract /live/initrd-full.img input/base-full.initrd >out/reports/extract.log 2>&1
+          unsquashfs -s input/base.squashfs | tee out/reports/base-format.txt
+          sudo unsquashfs -d out/root input/base.squashfs >out/reports/unsquash.log
+          sudo python3 web114/trace_sort.py input/trace/reports/open-trace.tsv out/root out/reports/sort.list out/reports/sort-summary.json --require-firefox
+          test "$(wc -l <out/reports/sort.list)" -ge 100
+          sha256sum input/trace/reports/open-trace.tsv out/reports/sort.list >out/reports/trace-and-sort-hashes.txt
+      - name: Check actual SquashFS sort-file semantics
+        run: |
+          set -euo pipefail
+          mkdir -p out/sort-fixture
+          printf 'aaa' >out/sort-fixture/a
+          printf 'bbb' >out/sort-fixture/b
+          printf 'ccc' >out/sort-fixture/c
+          printf 'c 200\nb 100\n' >out/reports/sort-fixture.list
+          mksquashfs out/sort-fixture out/sort-fixture.squashfs -comp zstd -processors 1 -noappend -no-progress -info -sort out/reports/sort-fixture.list >out/reports/sort-fixture.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          lines=Path('out/reports/sort-fixture.log').read_text().splitlines()
+          files=[x for x in lines if x.startswith('file ') and 'uncompressed size' in x]
+          assert len(files)>=3,files
+          assert '/c,' in files[0] and '/b,' in files[1] and '/a,' in files[2],files[:5]
+          print('SquashFS tool honored the source-relative priority order.')
+          PY
+      - name: Build ordered image and unsorted rebuild control
+        timeout-minutes: 34
+        run: |
+          set -euo pipefail
+          for variant in control ordered; do
+            options=()
+            if [ "$variant" = ordered ]; then options=(-sort out/reports/sort.list); fi
+            /usr/bin/time -p -o "out/reports/$variant-compress-time.txt" sudo mksquashfs out/root "out/$variant/root.squashfs" -one-file-system -comp zstd -Xcompression-level 15 -b 262144 -processors 3 -mem 2048M -noappend -no-progress -exit-on-error -info "${options[@]}" >"out/reports/$variant-compress.log" 2>&1
+            if grep -Ei 'Cannot stat sortlist|Ambiguous sortlist|Ignoring.*sort' "out/reports/$variant-compress.log"; then exit 1; fi
+            unsquashfs -s "out/$variant/root.squashfs" >"out/reports/$variant-format.txt"
+            sudo unsquashfs -d out/verify-root "out/$variant/root.squashfs" >"out/reports/$variant-unsquash.log"
+            sudo rsync -aHAXnci --delete --numeric-ids out/root/ out/verify-root/ >"out/reports/$variant-forward.txt"
+            sudo rsync -aHAXnci --delete --numeric-ids out/verify-root/ out/root/ >"out/reports/$variant-reverse.txt"
+            test ! -s "out/reports/$variant-forward.txt"
+            test ! -s "out/reports/$variant-reverse.txt"
+            sudo rm -rf -- out/verify-root
+            stat -c '%n %s' "out/$variant/root.squashfs" >>out/reports/root-sizes.txt
+            sha256sum "out/$variant/root.squashfs" >>out/reports/root-hashes.txt
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          ordered=[x.rsplit(' ',1)[0] for x in Path('out/reports/sort.list').read_text().splitlines()]
+          info=Path('out/reports/ordered-compress.log').read_text(errors='replace').splitlines()
+          positions={}
+          for i,line in enumerate(info):
+              if line.startswith('file ') and ', uncompressed size' in line:
+                  p=line[5:].split(', uncompressed size',1)[0]
+                  if 'out/root/' in p:positions.setdefault(p.split('out/root/',1)[1],i)
+          indexes=[positions[p] for p in ordered[:200] if p in positions]
+          assert len(indexes)>=50,(len(indexes),info[:10],ordered[:5])
+          assert indexes==sorted(indexes),indexes[:30]
+          print('Verified actual ordered image writes for',len(indexes),'of the first 200 traced regular files.')
+          Path('out/reports/observed-sort-order.txt').write_text('\n'.join(f'{positions[p]} {p}' for p in ordered[:200] if p in positions)+'\n')
+          PY
+          sudo rm -rf -- out/root
+      - name: Create and verify the two comparison images
+        run: |
+          set -euo pipefail
+          for variant in control ordered; do
+            xorriso -indev input/v113.iso -outdev out/stage.iso -map "out/$variant/root.squashfs" /live/filesystem.squashfs -boot_image any replay -commit -end >"out/reports/$variant-stage.log" 2>&1
+            xorriso -osirrox on -indev out/stage.iso -extract / out/tree >"out/reports/$variant-tree.log" 2>&1
+            python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve();lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in seen;seen.add(name)
+              p=(root/name).resolve(strict=True);p.relative_to(root);assert p.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for block in iter(lambda:f.read(1048576),b''):h.update(block)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==293
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+            xorriso -indev out/stage.iso -outdev "out/$variant/candidate.iso" -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >"out/reports/$variant-repack.log" 2>&1
+            xorriso -osirrox on -indev "out/$variant/candidate.iso" -extract / out/rechecked >"out/reports/$variant-recheck.log" 2>&1
+            cmp "out/$variant/root.squashfs" out/rechecked/live/filesystem.squashfs
+            cmp input/base.initrd out/rechecked/live/initrd.img
+            cmp input/base.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+            cmp input/base-full.initrd out/rechecked/live/initrd-full.img
+            (cd out/rechecked && sha256sum -c sha256sum.txt) >"out/reports/$variant-media-checksums.txt"
+            test "$(wc -l <"out/reports/$variant-media-checksums.txt")" -eq 293
+            sha256sum "out/$variant/candidate.iso" >>out/reports/iso-hashes.txt
+            stat -c '%n %s' "out/$variant/candidate.iso" >>out/reports/iso-sizes.txt
+            rm -rf -- out/stage.iso out/tree out/rechecked
+          done
+          sha256sum input/v113.iso >>out/reports/iso-hashes.txt
+          stat -c '%n %s' input/v113.iso >>out/reports/iso-sizes.txt
+      - name: Start early and post-removal browser fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Compare six alternating true browser boots
+        timeout-minutes: 24
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for name in base1 control1 ordered1 ordered2 control2 base2; do
+            case "$name" in base*) iso=input/v113.iso;; control*) iso=out/control/candidate.iso;; ordered*) iso=out/ordered/candidate.iso;; esac
+            python3 -u web114/interactive_bench.py --iso "$iso" --out "out/$name" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 6
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 6
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics
+          names=('base1','control1','ordered1','ordered2','control2','base2')
+          keys=('first_home_seen_seconds','early_navigation_start_seconds','early_page_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')
+          data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in data.items():
+              assert all(r.get(k) is not None for k in keys),(n,r)
+              assert r['early_js_response_seconds']>=r['early_page_seen_seconds']>=r['early_navigation_start_seconds']>=r['first_home_seen_seconds']
+              assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response']
+              assert r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],n
+          result={'measurement':'One host, 2 vCPU, 3 GiB, BIOS, 30 MiB/s virtual USB; original/control/ordered/ordered/control/original; .2 s polling sleep plus frame capture.','physical_acer_tested':False,'results':{n:{k:r[k] for k in keys} for n,r in data.items()}}
+          for label,pair in [('baseline',('base1','base2')),('control',('control1','control2')),('ordered',('ordered1','ordered2'))]:
+              for key in keys:result[label+'_mean_'+key]=statistics.mean(data[n][key] for n in pair)
+          result['home_gain_vs_original']=result['baseline_mean_first_home_seen_seconds']-result['ordered_mean_first_home_seen_seconds']
+          result['home_gain_vs_control']=result['control_mean_first_home_seen_seconds']-result['ordered_mean_first_home_seen_seconds']
+          result['js_gain_vs_original']=result['baseline_mean_early_js_response_seconds']-result['ordered_mean_early_js_response_seconds']
+          Path('out/reports/comparison.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
+          PY
+      - name: Preserve measurements and screenshots even if a step fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-trace-layout-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/control1/
+            out/control2/
+            out/ordered1/
+            out/ordered2/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Retain exact ordered image temporarily after a successful test
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-trace-layout-test-only-iso
+          path: |
+            out/ordered/candidate.iso
+            out/reports/iso-hashes.txt
+          compression-level: 0
+          retention-days: 3
