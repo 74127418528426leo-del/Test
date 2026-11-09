@@ -4,6 +4,25 @@ import argparse
 from pathlib import Path
 
 MARKER='\n\tFstab\n\tNetbase\n'
+MIGRATE_MARKER='"$B" sleep 8\nemit P50_STAGE_START\n'
+DIAGNOSTIC=r'''
+# P50_V114_DIAG_BEGIN: diagnostic image only, delayed serial evidence.
+(
+  "$B" sleep 32
+  {
+    echo P50_V114_DIAG_BEGIN
+    ls -l /run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv /run/p50-stage/trace-response.txt
+    ls -l /etc/systemd/system/sysinit.target.wants/p50-open-trace.service
+    systemctl status p50-open-trace.service --no-pager -l
+    journalctl -b -u p50-open-trace.service -o short-monotonic --no-pager
+    if [ -f /run/p50-stage/open-trace.tsv ]; then
+      head -n 4 /run/p50-stage/open-trace.tsv
+      tail -n 4 /run/p50-stage/open-trace.tsv
+    fi
+    echo P50_V114_DIAG_END
+  } >/dev/ttyS0 2>&1
+) &
+'''
 HOOK=r'''
 \t# P50_V114_OPEN_TRACE: diagnostic only; unchanged full-RAM fallback.
 \tif [ -z "${TORAM:-}" ] && [ -b /dev/mapper/p50-staged-root ]; then
@@ -38,6 +57,11 @@ def patch_main(text):
         raise ValueError('Unexpected or already patched live boot main')
     return text.replace(MARKER,HOOK+MARKER,1)
 
+def patch_migration(text):
+    if text.count(MIGRATE_MARKER)!=1 or 'P50_V114_DIAG_BEGIN' in text:
+        raise ValueError('Unexpected or already patched migration script')
+    return text.replace(MIGRATE_MARKER,DIAGNOSTIC+MIGRATE_MARKER,1)
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('root',type=Path);a=p.parse_args()
     root=a.root.resolve(strict=True)
@@ -45,5 +69,8 @@ def main():
     path=root/'usr/lib/live/boot/9990-main.sh'
     if path.is_symlink() or not path.is_file():raise ValueError('Expected regular boot main')
     path.write_text(patch_main(path.read_text()))
+    path=root/'usr/lib/p50-stage/p50-migrate.sh'
+    if path.is_symlink() or not path.is_file():raise ValueError('Expected regular migration script')
+    path.write_text(patch_migration(path.read_text()))
 
 if __name__=='__main__':main()
