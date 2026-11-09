@@ -1,4 +1,4 @@
-name: Puppy50 v114 Xsession and DRM ordering prototype
+name: Puppy50 v114 Xsession and DRM ordering diagnostic repeat
 on:
   push:
     branches: [puppy50-v114-standard-session]
