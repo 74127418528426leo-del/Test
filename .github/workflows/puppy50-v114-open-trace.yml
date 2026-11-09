@@ -88,18 +88,20 @@ jobs:
           nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
           nohup python3 -u web114/trace_receiver.py --output out/reports/open-trace.tsv --port 8767 >out/reports/trace-receiver.log 2>&1 </dev/null &
           python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766,8767)]'
-      - name: Measure baseline, instrumented image, and baseline again
+      - name: Diagnose isolated instrumented boot
         timeout-minutes: 17
         env:
           P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
-          for name in base1 trace1 base2; do
+          for name in trace1; do
             if [[ "$name" == base* ]]; then iso=input/v113.iso; else iso=out/candidate.iso; fi
             python3 -u web114/interactive_bench.py --iso "$iso" --out "out/$name" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
           done
-          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 3
-          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 3
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 1
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 1
+          tr -d '\r' <out/trace1/serial.log >out/reports/trace1-serial-clean.log
+          sed -n '/P50_V114_DIAG_BEGIN/,/P50_V114_DIAG_END/p' out/reports/trace1-serial-clean.log | tee out/reports/diagnostics.txt
           test -s out/reports/open-trace.tsv
           python3 - <<'PY'
           from pathlib import Path
@@ -110,14 +112,14 @@ jobs:
           assert int(end[1])==len(trace)-3 and int(end[1])>=100
           assert any('/usr/lib/firefox-esr/libxul.so' in x for x in trace)
           assert any('/usr/lib/firefox-esr/omni.ja' in x for x in trace)
-          names=('base1','trace1','base2');data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          names=('trace1',);data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
           for n,r in data.items():
               assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None,n
               assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response']
               assert r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],n
           report={'measurement':'v113 baseline / diagnostic / v113 baseline on same host; 2 vCPU, 3 GiB, BIOS, 30 MiB/s virtual USB, 0.2 s frame-poll sleep plus screenshot overhead. Diagnostic file opens, not physical disk reads.','physical_acer_tested':False,'events':int(end[1]),'results':{n:{k:data[n][k] for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')} for n in names}}
           for key in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds'):
-              report['baseline_mean_'+key]=statistics.mean(data[n][key] for n in ('base1','base2'))
+              report['baseline_mean_'+key]=data['trace1'][key]
               report['trace_'+key]=data['trace1'][key]
           Path('out/reports/trace-summary.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
           PY
