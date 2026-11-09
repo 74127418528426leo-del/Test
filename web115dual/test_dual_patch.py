@@ -16,6 +16,7 @@ class DualPatchTests(unittest.TestCase):
   self.assertIn('(size + extra_size + 1023) / 1024',text)
   self.assertIn('"$B" losetup -d "$EXTRA_OLD_LOOP"',text)
   self.assertIn('"$B" losetup -d "$OLD_LOOP"',text)
+  self.assertIn('P50_DUAL_RETAINED_LOOPS_AND_COPIES',text)
   result=subprocess.run(['sh','-n'],input=text,text=True,capture_output=True)
   self.assertEqual(result.returncode,0,result.stderr)
  def test_failed_or_repeated_patch_is_refused(self):
