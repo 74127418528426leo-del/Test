@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from trace_patch import patch_main, patch_migration
+from trace_patch import DIAGNOSTIC, patch_main, patch_migration
 
 SOURCE='#!/bin/sh\n\tFstab\n\tNetbase\n'
 class TracePatchTests(unittest.TestCase):
@@ -40,5 +40,12 @@ function [ { if test "$#" -eq 3 && test "$1" = "-b" && test "$2" = "/dev/mapper/
         marker='"$B" sleep 8\nemit P50_STAGE_START\n'
         for source in ('nothing',marker+marker,patch_migration(marker)):
             with self.assertRaises(ValueError):patch_migration(source)
+    def test_diagnostics_finish_even_when_a_file_or_service_is_missing(self):
+        target=self.root/'diagnostics.txt'
+        script='set -e\nls(){ return 2; }\nsystemctl(){ return 3; }\njournalctl(){ return 4; }\nB=/bin/true\n'
+        script+=DIAGNOSTIC.replace('>/dev/ttyS0','>"$TEST_DIAG"')+'\nwait\n'
+        result=subprocess.run(['sh','-c',script],env={**os.environ,'TEST_DIAG':str(target)},capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('P50_V114_DIAG_END',target.read_text())
 
 if __name__=='__main__':unittest.main()
