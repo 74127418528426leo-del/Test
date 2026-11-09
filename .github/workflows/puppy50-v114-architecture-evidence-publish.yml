@@ -1,0 +1,102 @@
+name: Preserve Puppy50 v114 architecture research evidence
+on:
+  push:
+    branches: [puppy50-v114-release]
+    paths: [.github/workflows/puppy50-v114-architecture-evidence-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v114-architecture-evidence
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check research runs completed successfully
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42644905508 42599215909 42600711734 42599109899 42645762384 42600380568; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-trace-layout-evidence
+          run-id: 42644905508
+          github-token: ${{ github.token }}
+          path: evidence/trace-layout
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-early-session-independent-evidence
+          run-id: 42599215909
+          github-token: ${{ github.token }}
+          path: evidence/early-session
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-cache-compare-evidence
+          run-id: 42600711734
+          github-token: ${{ github.token }}
+          path: evidence/firefox-cache
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-layered-root-evidence
+          run-id: 42599109899
+          github-token: ${{ github.token }}
+          path: evidence/partial-layer
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-firmware-tier-feasibility
+          run-id: 42645762384
+          github-token: ${{ github.token }}
+          path: evidence/full-firmware-layer
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v114-copy-delay-memory-*-evidence
+          run-id: 42600380568
+          github-token: ${{ github.token }}
+          path: evidence/copy-memory
+      - name: Check representative comparisons and package evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          t=json.loads(Path('evidence/trace-layout/reports/comparison.json').read_text())
+          assert round(t['control_mean_first_home_seen_seconds'],2)==15.79 or round(t['control_mean_first_home_seen_seconds'],2)==15.80
+          assert round(t['ordered_mean_first_home_seen_seconds'],2)==15.69
+          c=json.loads(Path('evidence/firefox-cache/reports/comparison.json').read_text())
+          assert round(c['baseline_mean_first_home_seen_seconds'],2)==15.80 and round(c['candidate_mean_first_home_seen_seconds'],2)==15.79
+          e=json.loads(Path('evidence/early-session/reports/comparison-repeat.json').read_text())
+          assert len(e['results'])==8 and round(e['candidate_mean_first_home_seen_seconds'],2)==15.75
+          assert len(list(Path('evidence/copy-memory').iterdir()))==4
+          PY
+          mkdir dist
+          cp web114release/V114_ARCHITECTURE_TESTS.md dist/Puppy50_v114_Architecture_Experiments.md
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v114_Architecture_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web114release')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:
+                          z.write(p,p.as_posix())
+              z.write('.github/workflows/puppy50-v114-architecture-evidence-publish.yml')
+          PY
+          (cd dist && sha256sum * >Architecture_Test_SHA256SUMS)
+      - name: Attach evidence without overwriting existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v114-fast-verification-experimental'
+          gh release view "$tag" --json isPrerelease --jq .isPrerelease | grep -Fx true
+          gh release view "$tag" --json assets --jq '.assets[].name' >existing-assets.txt
+          for f in dist/*; do
+            if grep -Fx "$(basename "$f")" existing-assets.txt; then echo 'Refusing to overwrite an existing asset' >&2; exit 1; fi
+          done
+          gh release upload "$tag" dist/*
