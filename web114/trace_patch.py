@@ -8,7 +8,7 @@ MIGRATE_MARKER='"$B" sleep 8\nemit P50_STAGE_START\n'
 DIAGNOSTIC=r'''
 # P50_V114_DIAG_BEGIN: diagnostic image only, delayed serial evidence.
 (
-  "$B" sleep 32
+  "$B" sleep 20
   {
     echo P50_V114_DIAG_BEGIN
     ls -l /run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv /run/p50-stage/trace-response.txt
@@ -41,7 +41,7 @@ Before=sysinit.target lightdm.service
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv 22 /
+ExecStart=/run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv 15 /
 ExecStopPost=-/usr/bin/curl --fail --connect-timeout 5 --max-time 15 --noproxy=* --data-binary=@/run/p50-stage/open-trace.tsv http://10.0.2.2:8767/trace --output /run/p50-stage/trace-response.txt
 Nice=10
 TimeoutStartSec=10
