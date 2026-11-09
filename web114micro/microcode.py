@@ -23,7 +23,9 @@ def select_intel_records(blob,wanted):
         if len(blob)-pos<48:raise ValueError('Truncated microcode header')
         h=struct.unpack_from('<12I',blob,pos)
         version,rev,date,sig,checksum,loader,flags,dsize,tsize,*reserved=h
-        if version!=1 or loader!=1 or any(reserved):
+        # Modern Linux interprets one historically reserved field as the
+        # minimum permitted revision. Retain those bytes and verify checksum.
+        if version!=1 or loader!=1:
             raise ValueError(f'Unknown Intel record header at byte {pos}: version={version}, loader={loader}, reserved={reserved}, signature={sig:#x}, revision={rev:#x}, total={tsize}')
         if dsize==0 and tsize==0:dsize,tsize=2000,2048
         if dsize%4 or tsize%1024 or tsize<48+dsize or pos+tsize>len(blob):raise ValueError('Invalid Intel record size')
