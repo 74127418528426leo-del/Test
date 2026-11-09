@@ -1,0 +1,61 @@
+name: Preserve Puppy50 dual-layer real recovery test
+on:
+  push:
+    branches: [puppy50-v114-release]
+    paths: [.github/workflows/puppy50-v115-recovery-evidence-publish.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check completed recovery test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42696000366" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-dual-real-recovery-evidence
+          run-id: 42696000366
+          github-token: ${{ github.token }}
+          path: evidence
+      - name: Verify recovery markers and retained-media evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('evidence/qemu');s=(p/'serial.log').read_text().replace('\r','')
+          marks=('P50_DUAL_ROOT_SWITCHED','P50_TEST_REAL_RECOVERY_RETURNED_ZERO','P50_TEST_EXTRA_TABLE_RESTORED','P50_STAGE_FAILED: injected post-suspend failure','P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH','P50_DUAL_RETAINED_LOOPS_AND_COPIES','P50_STAGE_NOT_READY')
+          pos=[s.index(x) for x in marks];assert pos==sorted(pos)
+          assert 'P50_STAGE_READY' not in s
+          d=json.loads((p/'result.json').read_text())
+          assert not d['media_ejected'] and d['media_attached_at_failure'] and d['media_attached_after_recovery']
+          assert d['staged_ram_ready_seconds'] is None
+          assert (p/'failure_status.png').stat().st_size>0 and (p/'firmware_after_recovery.png').stat().st_size>0
+          PY
+          mkdir dist
+          cp web114release/V115_DUAL_RECOVERY.md dist/Puppy50_v115_Dual_Switch_Recovery.md
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v115_Dual_Switch_Recovery_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web114release')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:z.write(p,p.as_posix())
+          PY
+      - name: Attach evidence without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v114-fast-verification-experimental'
+          gh release view "$tag" --json assets --jq '.assets[].name' >existing-assets.txt
+          for f in dist/*; do if grep -Fx "$(basename "$f")" existing-assets.txt; then exit 1; fi; done
+          gh release upload "$tag" dist/*
