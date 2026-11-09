@@ -109,7 +109,7 @@ jobs:
           stat -c '%n %s' input/v113.iso out/candidate.iso >out/reports/iso-sizes.txt
       - name: Start separate early interaction and post-removal fixtures
         env:
-          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.mode }}
+          P50_NONCE: P50-${{ github.run_id }}
         run: |
           set -euo pipefail
           nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
@@ -118,7 +118,7 @@ jobs:
       - name: Compare four alternating real interactive boots
         timeout-minutes: 20
         env:
-          P50_NONCE: P50-${{ github.run_id }}-${{ matrix.mode }}
+          P50_NONCE: P50-${{ github.run_id }}
           EXPERIMENT_MODE: ${{ matrix.mode }}
         run: |
           set -euo pipefail
