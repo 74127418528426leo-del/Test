@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from trace_patch import patch_main
+from trace_patch import patch_main, patch_migration
 
 SOURCE='#!/bin/sh\n\tFstab\n\tNetbase\n'
 class TracePatchTests(unittest.TestCase):
@@ -28,5 +28,17 @@ function [ { if test "$#" -eq 3 && test "$1" = "-b" && test "$2" = "/dev/mapper/
     def test_rejects_wrong_or_already_patched_input(self):
         with self.assertRaises(ValueError):patch_main('different')
         with self.assertRaises(ValueError):patch_main(patch_main(SOURCE))
+    def test_diagnostic_migration_keeps_original_marker_and_is_valid_shell(self):
+        source='#!/bin/sh\n"$B" sleep 8\nemit P50_STAGE_START\n'
+        patched=patch_migration(source)
+        self.assertIn('P50_V114_DIAG_BEGIN',patched)
+        self.assertIn('P50_V114_DIAG_END',patched)
+        self.assertIn('"$B" sleep 8\nemit P50_STAGE_START\n',patched)
+        result=subprocess.run(['sh','-n'],input=patched,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+    def test_diagnostic_migration_rejects_missing_duplicate_or_prepatched_marker(self):
+        marker='"$B" sleep 8\nemit P50_STAGE_START\n'
+        for source in ('nothing',marker+marker,patch_migration(marker)):
+            with self.assertRaises(ValueError):patch_migration(source)
 
 if __name__=='__main__':unittest.main()
