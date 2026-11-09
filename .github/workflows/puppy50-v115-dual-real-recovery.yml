@@ -113,6 +113,7 @@ jobs:
         timeout-minutes: 8
         run: |
           set -uo pipefail
+          set +e
           python3 -u web115recovery/interactive_bench.py --iso out/diagnostic.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 160 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280 >out/reports/qemu-console.log 2>&1
           rc=$?
           set -e
