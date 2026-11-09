@@ -88,7 +88,7 @@ jobs:
           nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
           nohup python3 -u web114/trace_receiver.py --output out/reports/open-trace.tsv --port 8767 >out/reports/trace-receiver.log 2>&1 </dev/null &
           python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766,8767)]'
-      - name: Diagnose early instrumented boot before migration completion
+      - name: Inspect the trace service before migration completion
         timeout-minutes: 17
         env:
           P50_NONCE: P50-${{ github.run_id }}
