@@ -1,7 +1,7 @@
 name: Puppy50 v114 split-root local-media prototype
 on:
   push:
-    branches: [puppy50-v114-lean-root]
+    branches: [puppy50-v114-split-monitor]
     paths: [.github/workflows/puppy50-v114-layered-root.yml]
 permissions:
   contents: read
@@ -30,13 +30,12 @@ jobs:
           assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
           p=Path('web109/boot_bench_staged.py');s=p.read_text()
           old="            result['qemu_running_at_end'] = vm.poll() is None\n"
-          new="""            if args.select_fullram_fallback:
-                  navigate(monitor, 'file:///usr/lib/firmware/netronome/')
-                  time.sleep(5)
-                  capture(monitor, out, 'fallback_extra_directory.png')
-                  result['screenshots'].append('fallback_extra_directory.png')
-              result['qemu_running_at_end'] = vm.poll() is None
-          """
+          new=("            if args.select_fullram_fallback:\n"
+               "                navigate(monitor, 'file:///usr/lib/firmware/netronome/')\n"
+               "                time.sleep(5)\n"
+               "                capture(monitor, out, 'fallback_extra_directory.png')\n"
+               "                result['screenshots'].append('fallback_extra_directory.png')\n"
+               "            result['qemu_running_at_end'] = vm.poll() is None\n")
           assert s.count(old)==1;s=s.replace(old,new,1);Path('web114lean/fallback_bench.py').write_text(s)
           PY
           python3 -m py_compile web114lean/interactive_bench.py web114lean/fallback_bench.py
