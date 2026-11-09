@@ -1,0 +1,75 @@
+name: Preserve final Puppy50 direct-session comparison
+on:
+  push:
+    branches: [puppy50-v113-startup-research]
+    paths: [.github/workflows/puppy50-v113-direct-evidence-publish.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify completed test and published ISO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42537708256" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42537708256" --jq .head_sha)" = 'ce7c67822885693b5fc79de6bbf6a5a9ba0cc6d3'
+          digest=$(gh release view puppy50-v113-local-media-experimental --json assets --jq '.assets[] | select(.name=="Puppy50_v113_Local_Media_EXPERIMENTAL.iso") | .digest')
+          test "$digest" = 'sha256:4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v113-direct-session-evidence
+          run-id: 42537708256
+          github-token: ${{ github.token }}
+          path: evidence
+      - name: Verify timing, guest interaction and reviewed frames
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('evidence');r=json.loads((root/'reports/comparison.json').read_text())
+          assert r['mode']=='direct' and not r['physical_acer_tested']
+          assert abs(r['baseline_mean_first_home_seen_seconds']-15.08)<1e-6
+          assert abs(r['candidate_mean_first_home_seen_seconds']-15.07)<1e-6
+          assert abs(r['baseline_mean_early_js_response_seconds']-18.28)<1e-6
+          assert abs(r['candidate_mean_early_js_response_seconds']-18.27)<1e-6
+          for name in ('base1','cand1','cand2','base2'):
+              x=json.loads((root/name/'result.json').read_text())
+              assert x['early_js_response_seconds'] is not None and x['early_media_attached_before_navigation'] and x['early_media_attached_after_js_response']
+              assert x['staged_ram_ready_seconds'] is not None and x['media_ejected'] and x['input_sent_after_eject'] and x['qemu_running_at_end'] and not x['errors']
+          for name in ('cand1','cand2'):
+              serial=(root/name/'serial.log').read_text(errors='replace')
+              assert 'P50_V113_DIRECT_UI_OK' in serial and 'User=user' in serial and 'PAMName=login' in serial
+          frames={'cand1/early_responded.png':'e5b5e67adf52b130ac89639e714b9367ad2b76a2a0f88ac0e64d650743b4812e','cand1/external_https.png':'7126b9fcf2d75d95aaf519603b3e14de1a839292f092ee318e60c62a0f894c2e'}
+          for name,expected in frames.items():assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          print('Verified direct-session behavior; the 0.01-second difference is not a demonstrated speedup.')
+          PY
+      - name: Package and publish evidence without changing the ISO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v113_Direct_Session_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(Path('evidence').rglob('*')):
+                  if p.is_file() and not p.is_symlink():z.write(p,p.as_posix())
+              for name in ('RESEARCH_RESULTS.md','direct_session.py','test_direct_session.py'):
+                  p=Path('web113')/name;z.write(p,p.as_posix())
+              for name in ('puppy50-v113-direct-session.yml','puppy50-v113-direct-evidence-publish.yml'):
+                  p=Path('.github/workflows')/name;z.write(p,p.as_posix())
+          PY
+          tag='puppy50-v113-local-media-experimental'
+          asset='Puppy50_v113_Direct_Session_Test_Evidence.zip'
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fx "$asset"; then echo 'Asset exists; refusing to overwrite.' >&2; exit 1; fi
+          gh release upload "$tag" "dist/$asset"
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v113-direct-evidence.zip "https://github.com/74127418528426leo-del/Test/releases/download/$tag/$asset"
+          cmp "dist/$asset" /tmp/puppy50-v113-direct-evidence.zip
