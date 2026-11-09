@@ -45,6 +45,14 @@ class MicrocodeTests(unittest.TestCase):
         selected,_=select_intel_records(a+b,{0x20652,0x20655});self.assertEqual(selected,a+b)
         damaged=bytearray(a+b);damaged[2050]^=1
         with self.assertRaises(ValueError):select_intel_records(bytes(damaged),{0x20652,0x20655})
+    def test_accepts_checksummed_nonzero_header_metadata_used_by_newer_intel_updates(self):
+        a=bytearray(record(0x306a9));words=list(struct.unpack_from('<12I',a))
+        words[10]=0x100015b;words[4]=0
+        words[4]=(-sum(words)-sum(struct.unpack('<500I',a[48:])))&0xffffffff
+        a[:48]=struct.pack('<12I',*words)
+        b,c=record(0x20652),record(0x20655)
+        selected,_=select_intel_records(bytes(a)+b+c,{0x20652,0x20655})
+        self.assertEqual(selected,b+c)
     def test_replaces_exact_cpio_entry_without_changing_other_entries(self):
         old=cpio([('a',b'small'),('kernel/x86/microcode/GenuineIntel.bin',record(0x20652)+record(0x20655)),('z',b'end')])
         reduced=record(0x20655)
