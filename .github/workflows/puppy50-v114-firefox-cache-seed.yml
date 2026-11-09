@@ -54,7 +54,7 @@ jobs:
           head -c 36154880 out/original.initrd >out/early-prefix
           tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
           (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
-          sudo python3 web114firefox/cache_probe.py out/main
+          sudo python3 web114firefox/cache_service.py out/main
           sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
           sudo sh -n out/main/usr/lib/live/boot/9990-misc-helpers.sh
           sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
