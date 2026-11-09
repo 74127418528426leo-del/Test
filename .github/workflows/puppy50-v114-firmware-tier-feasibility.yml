@@ -1,0 +1,62 @@
+name: Puppy50 firmware layer feasibility and reconstruction audit
+on:
+  push:
+    branches: [puppy50-v114-network-tier-feasibility]
+    paths: [.github/workflows/puppy50-v114-firmware-tier-feasibility.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image inspection tools and test split safety
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync
+          mkdir -p input out/reports
+          python3 -m unittest discover -s web114lean -p 'test_*.py' -v
+      - name: Extract exact v113 compressed system
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/filesystem.squashfs input/base.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/full input/base.squashfs >out/reports/unsquash.log
+          sudo du -sBm out/full/usr/lib/firmware/* | sort -nr >out/reports/firmware-raw-directory-sizes.txt
+          sudo du -sBm out/full/usr/lib/firmware out/full/usr/lib/firefox-esr out/full/usr/lib/modules out/full/usr/share/doc out/full/usr/share/man >out/reports/core-raw-directory-sizes.txt
+          mkdir out/core
+          sudo rsync -aHAX --numeric-ids out/full/ out/core/
+      - name: Create and audit a fully recoverable firmware split
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import sys,json
+          from pathlib import Path
+          sys.path.insert(0,'web114lean')
+          from split_root import split_root
+          result=split_root(Path('out/core'),Path('out/firmware-layer'),('usr/lib/firmware',))
+          Path('out/reports/split.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+          sudo mksquashfs out/core out/core.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 262144 -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/core-compress.log 2>&1
+          sudo mksquashfs out/firmware-layer out/firmware.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 262144 -processors 3 -mem 1024M -noappend -no-progress -exit-on-error >out/reports/firmware-compress.log 2>&1
+          stat -c '%n %s' input/base.squashfs out/core.squashfs out/firmware.squashfs >out/reports/compressed-sizes.txt
+          sha256sum input/base.squashfs out/core.squashfs out/firmware.squashfs >out/reports/compressed-hashes.txt
+          sudo unsquashfs -d out/verify-core out/core.squashfs >out/reports/core-verify.log
+          sudo unsquashfs -d out/verify-firmware out/firmware.squashfs >out/reports/firmware-verify.log
+          sudo rsync -aHAX --numeric-ids out/verify-firmware/ out/verify-core/
+          sudo rsync -aHAXnci --numeric-ids --delete out/full/ out/verify-core/ >out/reports/reconstruct-forward.txt
+          sudo rsync -aHAXnci --numeric-ids --delete out/verify-core/ out/full/ >out/reports/reconstruct-reverse.txt
+          test ! -s out/reports/reconstruct-forward.txt
+          test ! -s out/reports/reconstruct-reverse.txt
+      - name: Preserve feasibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-firmware-tier-feasibility
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
