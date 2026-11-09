@@ -1,0 +1,125 @@
+name: Puppy50 v114 independent early-session repeat
+on:
+  push:
+    branches: [puppy50-v114-session-independent]
+    paths: [.github/workflows/puppy50-v114-early-session-repeat.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  repeat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install boot and verification tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          python3 web112/early_probe.py web109/boot_bench_staged.py web114_session/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web114_session/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          python3 -m py_compile web114_session/interactive_bench.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - name: Fetch exact previously tested session candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-early-session-test-only-iso
+          run-id: 42564037932
+          github-token: ${{ github.token }}
+          path: input/prior-candidate
+      - name: Pin candidate and original byte for byte
+        run: |
+          set -euo pipefail
+          mapfile -t candidates < <(find input/prior-candidate -type f -name candidate.iso)
+          test "${#candidates[@]}" -eq 1
+          cp "${candidates[0]}" input/candidate.iso
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          printf '%s  %s\n' '7139a2b5091621334fb222828c7d42b283a37db613d4565b361f8cd905a367c1' input/candidate.iso | sha256sum -c -
+          sha256sum input/*.iso >out/reports/iso-hashes.txt
+      - name: Start local browser fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Eight alternating interactive BIOS boots with matched 3 GiB and USB cap
+        timeout-minutes: 22
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for name in base1 cand1 cand2 base2 base3 cand3 cand4 base4; do
+            if [[ "$name" == base* ]]; then iso=input/v113.iso; else iso=input/candidate.iso; fi
+            python3 -u web114_session/interactive_bench.py --iso "$iso" --out "out/$name" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 8
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 8
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2,base3,cand3,cand4,base4}/qemu.log; then exit 1; fi
+          for name in cand1 cand2 cand3 cand4; do
+            tr -d '\r' <"out/$name/serial.log" >"out/reports/$name-serial-clean.log"
+            for marker in P50_V113_DIRECT_UI_OK P50_V113_DIRECT_PROFILE_BEGIN P50_V113_DIRECT_PROFILE_END P50_V114_EARLY_ORDER_OK P50_V114_EARLY_PROFILE_BEGIN P50_V114_EARLY_PROFILE_END; do grep -F "$marker" "out/reports/$name-serial-clean.log"; done
+            if grep -Eq 'P50_V113_DIRECT_UI_MISSING|P50_V114_EARLY_ORDER_MISSING' "out/reports/$name-serial-clean.log"; then exit 1; fi
+          done
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          names=('base1','cand1','cand2','base2','base3','cand3','cand4','base4')
+          keys=('first_home_seen_seconds','early_navigation_start_seconds','early_page_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')
+          r={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,x in r.items():
+              assert all(x.get(k) is not None for k in keys),(n,x)
+              assert x['early_navigation_start_seconds']>=x['first_home_seen_seconds']
+              assert x['early_js_response_seconds']>=x['early_page_seen_seconds']>=x['early_navigation_start_seconds']
+              assert x['early_media_attached_before_navigation'] and x['early_media_attached_after_js_response']
+              assert x['media_ejected'] and x['input_sent_after_eject'] and x['qemu_running_at_end'] and not x['errors'],n
+          d={'measurement':'Host monotonic clock from QEMU launch; ABBA ABBA; 2 vCPU, 3 GiB, BIOS, 30 MiB/s virtual USB. 0.2 s frame polling plus capture overhead.','physical_acer_tested':False,'results':{n:{k:r[n][k] for k in keys} for n in names}}
+          for label,subset in [('baseline',[n for n in names if n.startswith('base')]),('candidate',[n for n in names if n.startswith('cand')])]:
+              for k in keys:
+                  d[label+'_mean_'+k]=statistics.mean(r[n][k] for n in subset)
+                  d[label+'_median_'+k]=statistics.median(r[n][k] for n in subset)
+          for k in keys:d['mean_gain_'+k]=d['baseline_mean_'+k]-d['candidate_mean_'+k]
+          Path('out/reports/comparison-repeat.json').write_text(json.dumps(d,indent=2)+'\n');print(json.dumps(d,indent=2))
+          PY
+      - name: Test candidate with virtual UEFI firmware at 3 GiB
+        timeout-minutes: 7
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web114_session/interactive_bench.py --iso input/candidate.iso --out out/uefi --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --firmware uefi --media usb --bandwidth 31457280
+      - name: Test candidate 2 GiB guard without assuming success
+        timeout-minutes: 7
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set +e
+          python3 -u web114_session/interactive_bench.py --iso input/candidate.iso --out out/lowmem --mode online --allow-no-startup-probe --wait-ram-ready --ram 2048 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          echo "$?" >out/reports/lowmem-exit-code.txt
+          exit 0
+      - name: Preserve repeat evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-early-session-independent-evidence
+          path: |
+            out/reports/
+            out/base*/
+            out/cand*/
+            out/uefi/
+            out/lowmem/
+          if-no-files-found: warn
+          retention-days: 30
