@@ -1,0 +1,146 @@
+name: Puppy50 dual-layer real suspend-recovery fault injection
+on:
+  push:
+    branches: [puppy50-v115-dual-real-recovery-audit]
+    paths: [.github/workflows/puppy50-v115-dual-real-recovery.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools and validate diagnostic patch
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil gcc libc6-dev
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p out/{main,reports,tree,rechecked,inject} fixture
+          python3 -m unittest discover -s web115recovery -p 'test_*.py' -v
+          python3 -m unittest discover -s web115dual -p 'test_dual_patch.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web115recovery/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web115recovery/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1)
+          old="""if state == 'failed':
+                                      raise RuntimeError('Guest reported that migration failed; media remains attached')"""
+          new="""if state == 'failed':
+                                      before=str(qmp(monitor,'human-monitor-command',{'command-line':'info qtree'}))
+                                      result['media_attached_at_failure']='id \\\"bootusb\\\"' in before
+                                      time.sleep(2)
+                                      capture(monitor,out,'failure_status.png')
+                                      result['screenshots'].append('failure_status.png')
+                                      navigate(monitor,'file:///usr/lib/firmware/netronome/')
+                                      time.sleep(8)
+                                      capture(monitor,out,'firmware_after_recovery.png')
+                                      result['screenshots'].append('firmware_after_recovery.png')
+                                      after=str(qmp(monitor,'human-monitor-command',{'command-line':'info qtree'}))
+                                      result['media_attached_after_recovery']='id \\\"bootusb\\\"' in after
+                                      raise RuntimeError('Guest reported that migration failed; media remains attached')"""
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          python3 -m py_compile web115recovery/interactive_bench.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-dual-stage-test-only-iso
+          run-id: 42648899810
+          github-token: ${{ github.token }}
+          path: input
+      - name: Instrument only the tested dual-layer fast initramfs
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'e6c98b3059365a6a0c77e92e58046999646aaf239c33f626148c0f9a68bc1d9d' input/candidate.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/candidate.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/core.squashfs -extract /live/extras.squashfs out/extras.squashfs >out/reports/extract.log 2>&1
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          cp web115dual/p50-switch-extra.c out/inject/p50-switch-extra.c
+          sudo python3 web115recovery/fault_patch.py out/inject/p50-switch-extra.c out/main/usr/lib/p50-stage/p50-migrate.sh
+          gcc -static -O2 -Wall -Wextra -Werror -o out/p50-switch-extra out/inject/p50-switch-extra.c
+          sudo install -o root -g root -m 0755 out/p50-switch-extra out/main/usr/lib/p50-stage/p50-switch-extra
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+      - name: Rebuild isolated diagnostic ISO and verify every checksum
+        run: |
+          set -euo pipefail
+          xorriso -indev input/candidate.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve();lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in seen;seen.add(name)
+              p=(root/name).resolve(strict=True);p.relative_to(root);assert p.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(1048576),b''):h.update(b)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==296
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/diagnostic.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/diagnostic.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/core.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/extras.squashfs out/rechecked/live/extras.squashfs
+          cmp out/original-full.initrd out/rechecked/live/initrd-full.img
+          cmp out/candidate.initrd out/rechecked/live/initrd.img
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          test "$(wc -l <out/reports/media-checksums.txt)" -eq 296
+          sha256sum input/candidate.iso out/diagnostic.iso >out/reports/iso-hashes.txt
+      - name: Start local browser fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time;time.sleep(2);[socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Suspend the real mapper and test failed-resume recovery
+        timeout-minutes: 8
+        run: |
+          set -uo pipefail
+          python3 -u web115recovery/interactive_bench.py --iso out/diagnostic.iso --out out/qemu --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 160 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280 >out/reports/qemu-console.log 2>&1
+          rc=$?
+          set -e
+          printf '%s\n' "$rc" >out/reports/qemu-exit.txt
+          test "$rc" -ne 0
+          tr -d '\r' <out/qemu/serial.log >out/reports/serial-clean.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('out');r=json.loads((root/'qemu/result.json').read_text());serial=(root/'reports/serial-clean.log').read_text().splitlines()
+          assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None,r
+          assert not r['media_ejected'] and r['staged_ram_ready_seconds'] is None,r
+          assert r['media_attached_at_failure'] and r['media_attached_after_recovery'],r
+          for marker in ('P50_DUAL_EXTRA_COPY_VERIFIED','P50_STAGE_COPY_VERIFIED','P50_DUAL_ROOT_SWITCHED','P50_TEST_REAL_RECOVERY_RETURNED_ZERO','P50_TEST_EXTRA_TABLE_RESTORED','P50_STAGE_FAILED: injected post-suspend failure','P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH','P50_DUAL_RETAINED_LOOPS_AND_COPIES','P50_STAGE_NOT_READY'):
+              assert marker in serial,marker
+          assert 'P50_STAGE_READY' not in serial
+          assert serial.index('P50_DUAL_ROOT_SWITCHED')<serial.index('P50_TEST_REAL_RECOVERY_RETURNED_ZERO')<serial.index('P50_TEST_EXTRA_TABLE_RESTORED')<serial.index('P50_STAGE_NOT_READY')
+          assert (root/'qemu/failure_status.png').stat().st_size>0 and (root/'qemu/firmware_after_recovery.png').stat().st_size>0
+          print('Real extra-mapper suspend and recovery ioctls returned success; restored table, retained backing files, attached media and no READY were observed.')
+          PY
+      - name: Preserve logs and screenshots even if the test fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-dual-real-recovery-evidence
+          path: |
+            out/reports/
+            out/qemu/
+            out/inject/p50-switch-extra.c
+          if-no-files-found: warn
+          retention-days: 30
