@@ -19,6 +19,8 @@ function [ { if test "$#" -eq 3 && test "$1" = "-b" && test "$2" = "/dev/mapper/
         r=self.run_hook();self.assertEqual(r.returncode,0,r.stderr)
         unit=self.root/'etc/systemd/system/p50-open-trace.service';link=self.root/'etc/systemd/system/sysinit.target.wants/p50-open-trace.service'
         self.assertTrue(unit.is_file());self.assertTrue(link.is_symlink());self.assertEqual(os.readlink(link),'../p50-open-trace.service')
+        self.assertIn('--noproxy * ',unit.read_text())
+        self.assertNotIn('--noproxy=*',unit.read_text())
     def test_full_ram_fallback_is_untouched(self):
         r=self.run_hook(toram='1');self.assertEqual(r.returncode,0,r.stderr)
         self.assertFalse((self.root/'etc').exists())
