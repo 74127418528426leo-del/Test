@@ -1,0 +1,133 @@
+name: Publish audited Puppy50 v114 fast-verification experiment
+on:
+  push:
+    branches: [puppy50-v114-release]
+    paths: [.github/workflows/puppy50-v114-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v114-fast-verification-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require completed build, fault tests, and independent audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42599688500 42599245919 42600364151; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')
+            printf 'run %s %s\n' "$run" "$state"
+            test "$state" = 'completed:success'
+          done
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42599688500" --jq .head_sha)" = '62cf22a361c5ed39651d441f29b2b526a39a5a22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-test-only-iso
+          run-id: 42599688500
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-build-evidence
+          run-id: 42599688500
+          github-token: ${{ github.token }}
+          path: evidence/build
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v114-clean-hash-*-evidence
+          run-id: 42599688500
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v114hash-*-evidence
+          run-id: 42599245919
+          github-token: ${{ github.token }}
+          path: evidence/faults
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-independent-audit
+          run-id: 42600364151
+          github-token: ${{ github.token }}
+          path: evidence/audit
+      - name: Recheck exact image, functional evidence, and safety outcomes
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'bf19a63758fbb6ab9aad5cb3b04c9b0e97b32944ab30f304fa16a205c78096b9' iso/candidate.iso | sha256sum -c -
+          test "$(stat -c %s iso/candidate.iso)" -eq 906297344
+          test "$(wc -l <evidence/audit/media-checksums.txt)" -eq 293
+          test ! -s evidence/audit/main-forward.txt
+          test ! -s evidence/audit/main-reverse.txt
+          ! grep -q 'MEASUREMENT_PENDING' web114release/V114_RELEASE_NOTES.md
+          python3 -m unittest discover -s web114hash -p 'test_*.py' -q
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('evidence')
+          audit=json.loads((root/'audit/iso-byte-audit.json').read_text())
+          assert audit['iso_entry_count']==307
+          assert audit['different_entries']==['live/initrd.img','live/initrd.img-6.12.115+deb13.1-amd64','sha256sum.txt']
+          for trial,count in [('bios-compare-3072',4),('bios-2048',1),('uefi-3072',1),('bios-fullram-fallback',1)]:
+              d=root/'validation'/('Puppy50-v114-clean-hash-'+trial+'-evidence')
+              report=json.loads((d/'reports/result-summary.json').read_text());assert report['trial']==trial
+              assert all(x['media_ejected'] for x in report['results'].values())
+              local=(d/'reports/early-fixture.log').read_text();after=(d/'reports/after-fixture.log').read_text()
+              assert local.count('"GET /e HTTP/1.1" 200')>=count,(trial,local)
+              assert sum('GET /after.html?nonce=' in line and ' 200 ' in line for line in after.splitlines())>=count,(trial,after)
+          for mode in ('bad_checksum','all_hash_unavailable','missing_primary','normal'):
+              d=root/'faults'/('Puppy50-v114hash-'+mode+'-evidence')
+              result=json.loads((d/'reports/outcome.json').read_text());assert result['mode']==mode
+              if mode in ('bad_checksum','all_hash_unavailable'):
+                  assert result['exit_code']!=0 and result['ram_ready_seconds'] is None and not result['media_ejected'] and result['media_attached_at_failure']
+              else:
+                  assert result['exit_code']==0 and result['ram_ready_seconds'] is not None and result['media_ejected'] and not result['errors']
+          print('Validated exact media, independent audit, all post-ejection page requests, and failure behavior.')
+          PY
+      - name: Package source, evidence, checksums, and experimental image
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/candidate.iso dist/Puppy50_v114_Fast_Verification_EXPERIMENTAL.iso
+          cp web114release/V114_RELEASE_NOTES.md dist/README_V114_EXPERIMENTAL.md
+          (cd dist && sha256sum Puppy50_v114_Fast_Verification_EXPERIMENTAL.iso >SHA256SUMS)
+          git rev-parse HEAD >evidence/release-packaging-commit.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v114_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in map(Path,('evidence','web114hash','web114ram','web114release','web113','web112','web109','web103')):
+                  if root.exists():
+                      for p in sorted(root.rglob('*')):
+                          if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:
+                              z.write(p,p.as_posix())
+              for p in sorted(Path('.github/workflows').glob('puppy50-v114*.yml')):z.write(p,p.as_posix())
+          PY
+      - name: Publish a separate experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v114-fast-verification-experimental'
+          build_sha='62cf22a361c5ed39651d441f29b2b526a39a5a22'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release exists; refusing to overwrite.'; exit 19; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null
+          else
+            existing="${tag_ref%%$'\t'*}"
+            test "$existing" = "$build_sha"
+          fi
+          gh release create "$tag" dist/Puppy50_v114_Fast_Verification_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V114_EXPERIMENTAL.md dist/Puppy50_v114_Test_Evidence.zip --verify-tag --title 'Puppy50 v114 Fast Verification (EXPERIMENTAL)' --notes-file web114release/V114_RELEASE_NOTES.md --prerelease --latest=false
+          gh release view "$tag" --json url,tagName,isPrerelease,assets
+      - name: Verify publicly served ISO bytes
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v114-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v114_Fast_Verification_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'bf19a63758fbb6ab9aad5cb3b04c9b0e97b32944ab30f304fa16a205c78096b9' /tmp/puppy50-v114-release.iso | sha256sum -c -
