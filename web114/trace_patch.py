@@ -11,13 +11,13 @@ DIAGNOSTIC=r'''
   "$B" sleep 20
   {
     echo P50_V114_DIAG_BEGIN
-    ls -l /run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv /run/p50-stage/trace-response.txt
-    ls -l /etc/systemd/system/sysinit.target.wants/p50-open-trace.service
-    systemctl status p50-open-trace.service --no-pager -l
-    journalctl -b -u p50-open-trace.service -o short-monotonic --no-pager
+    ls -l /run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv /run/p50-stage/trace-response.txt /usr/bin/curl || :
+    ls -l /etc/systemd/system/sysinit.target.wants/p50-open-trace.service || :
+    systemctl status p50-open-trace.service --no-pager -l || :
+    journalctl -b -u p50-open-trace.service -o short-monotonic --no-pager || :
     if [ -f /run/p50-stage/open-trace.tsv ]; then
-      head -n 4 /run/p50-stage/open-trace.tsv
-      tail -n 4 /run/p50-stage/open-trace.tsv
+      head -n 4 /run/p50-stage/open-trace.tsv || :
+      tail -n 4 /run/p50-stage/open-trace.tsv || :
     fi
     echo P50_V114_DIAG_END
   } >/dev/ttyS0 2>&1
