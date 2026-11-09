@@ -1,0 +1,72 @@
+name: Puppy50 v114 module-archive compression study
+on:
+  push:
+    branches: [puppy50-v114-boot-pipeline]
+    paths: [.github/workflows/puppy50-v114-module-archive-study.yml]
+permissions:
+  contents: read
+jobs:
+  study:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install extraction tools and run transformation tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso cpio zstd time kmod
+          mkdir -p input out/{early,original,main,reports}
+          python3 -m unittest discover -s web114_pipeline -p 'test_*.py' -v
+          lscpu >out/reports/host-cpu.txt
+      - name: Extract and identify the exact v113 early archives
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/initrd.img out/original.initrd >out/reports/extract.log 2>&1
+          head -c 14922752 out/original.initrd >out/microcode.cpio
+          dd if=out/original.initrd of=out/early.cpio iflag=skip_bytes,count_bytes bs=1M skip=14922752 count=21232128 status=none
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          test "$(stat -c %s out/early.cpio)" -eq 21232128
+          (cd out/early && sudo cpio -idm --quiet --no-absolute-filenames <../early.cpio)
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp -a out/early/. out/original/
+          sha256sum out/microcode.cpio out/early.cpio out/main.cpio >out/reports/original-archive-hashes.txt
+          ls -l out/main/usr/sbin/modprobe out/main/usr/bin/kmod out/main/usr/lib/modules/*/modules.dep* >out/reports/module-index-inventory.txt 2>&1 || true
+      - name: Measure one-stream compression of unchanged XZ versus raw modules
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          sudo python3 web114_pipeline/module_unpack.py out/early out/reports/unpacked-modules.json
+          sudo python3 - <<'PY'
+          import hashlib,json,lzma
+          from pathlib import Path
+          report=json.loads(Path('out/reports/unpacked-modules.json').read_text())
+          for row in report['modules']:
+              old=Path('out/original')/row['source'];new=Path('out/early')/row['target']
+              raw=lzma.decompress(old.read_bytes())
+              assert raw==new.read_bytes()
+              assert hashlib.sha256(raw).hexdigest()==row['raw_sha256']
+          print('Every unpacked early module matches the original XZ content:',report['files'])
+          PY
+          (cd out/early && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/raw-modules.cpio
+          for level in 3 15 19; do
+            /usr/bin/time -p -o "out/reports/raw-$level-compress-time.txt" zstd -q -T2 -"$level" -o "out/raw-$level.zst" out/raw-modules.cpio
+            /usr/bin/time -p -o "out/reports/raw-$level-decompress-time.txt" zstd -q -d -c "out/raw-$level.zst" >/dev/null
+          done
+          for level in 3 19; do
+            /usr/bin/time -p -o "out/reports/xz-$level-compress-time.txt" zstd -q -T2 -"$level" -o "out/xz-$level.zst" out/early.cpio
+            /usr/bin/time -p -o "out/reports/xz-$level-decompress-time.txt" zstd -q -d -c "out/xz-$level.zst" >/dev/null
+          done
+          stat -c '%n %s' out/microcode.cpio out/early.cpio out/raw-modules.cpio out/raw-*.zst out/xz-*.zst >out/reports/sizes.txt
+          sha256sum out/microcode.cpio >out/reports/microcode-after.sha256
+          cat out/reports/sizes.txt
+      - name: Preserve size and integrity evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-module-archive-study
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
