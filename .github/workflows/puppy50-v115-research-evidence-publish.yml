@@ -1,0 +1,102 @@
+name: Preserve Puppy50 dual-layer and Acer research evidence
+on:
+  push:
+    branches: [puppy50-v114-release]
+    paths: [.github/workflows/puppy50-v115-research-evidence-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: puppy50-v115-research-evidence
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check research runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42648354411 42648805115 42648899810 42648293500; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-NO-FIRMWARE-split-evidence
+          run-id: 42648354411
+          github-token: ${{ github.token }}
+          path: evidence/no-firmware
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-acer-microcode-independent-evidence
+          run-id: 42648805115
+          github-token: ${{ github.token }}
+          path: evidence/acer-microcode
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v115-dual-stage-*-evidence
+          run-id: 42648899810
+          github-token: ${{ github.token }}
+          path: evidence/dual
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-dual-prerequisite-evidence
+          run-id: 42648899810
+          github-token: ${{ github.token }}
+          path: evidence/dual-build
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-pexels-video-inspection-retry
+          run-id: 42648293500
+          github-token: ${{ github.token }}
+          path: evidence/pexels-retry
+      - name: Verify the recorded outcomes and package evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('evidence')
+          nofw=json.loads((root/'no-firmware/reports/comparison.json').read_text())
+          assert round(nofw['candidate_mean_first_home_seen_seconds'],2)==15.59 or round(nofw['candidate_mean_first_home_seen_seconds'],2)==15.60
+          fallback=json.loads((root/'no-firmware/fallback/result.json').read_text())
+          assert fallback['fullram_fallback_selected'] and fallback['media_ejected'] and not fallback['errors']
+          acer=json.loads((root/'acer-microcode/reports/comparison-repeat.json').read_text())
+          assert len(acer['results'])==8 and abs(acer['mean_gain_first_home_seen_seconds']-.44)<.01
+          for mode in ('normal','bad_extra_hash','partial_failure'):
+              d=root/'dual'/('Puppy50-v115-dual-stage-'+mode+'-evidence')
+              result=json.loads((d/'reports/comparison.json').read_text());assert result['mode']==mode
+              if mode=='normal':assert all(x['media_ejected'] for x in result['results'].values())
+              else:assert not result['results']['cand1']['media_ejected'] and result['results']['cand1']['staged_ram_ready_seconds'] is None
+          p=json.loads((root/'pexels-retry/qemu/result.json').read_text())
+          assert all(not c['verified_js_result'] for c in p['video_console_commands'])
+          PY
+          mkdir dist
+          cp web114release/V115_ARCHITECTURE_RESEARCH.md dist/Puppy50_v115_Architecture_Research.md
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v115_Architecture_Research_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web114release')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:
+                          z.write(p,p.as_posix())
+              z.write('.github/workflows/puppy50-v115-research-evidence-publish.yml')
+          PY
+          (cd dist && sha256sum * >V115_Research_SHA256SUMS)
+      - name: Attach evidence without replacing any image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v114-fast-verification-experimental'
+          gh release view "$tag" --json isPrerelease --jq .isPrerelease | grep -Fx true
+          gh release view "$tag" --json assets --jq '.assets[].name' >existing-assets.txt
+          for f in dist/*; do
+            if grep -Fx "$(basename "$f")" existing-assets.txt; then echo 'Refusing to overwrite an existing asset' >&2; exit 1; fi
+          done
+          gh release upload "$tag" dist/*
