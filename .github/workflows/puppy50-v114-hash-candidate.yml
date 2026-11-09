@@ -1,0 +1,229 @@
+name: Puppy50 v114 clean accelerated hash candidate
+on:
+  push:
+    branches: [puppy50-v114-hash-candidate]
+    paths: [.github/workflows/puppy50-v114-hash-candidate.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      iso_sha: ${{ steps.hash.outputs.iso_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM and ISO tools; test patching and browser probes
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{main,reports,tree,rechecked} fixture
+          python3 -m unittest discover -s web114hash -p 'test_*.py' -v
+          python3 -m unittest discover -s web114ram -p 'test_*.py' -v
+          python3 -m unittest discover -s web112 -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web114ram/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web114ram/interactive_bench.py');s=p.read_text()
+          old="'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN']"
+          new="'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN', 'P50_V113_SETTLE_BEGIN', 'P50_V113_SETTLE_END', 'P50_V113_ROOT_HOOK', 'P50_V113_PREFLIGHT_BEGIN', 'P50_V113_PREFLIGHT_END']"
+          assert s.count(old)==1;s=s.replace(old,new,1)
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          python3 -m py_compile web114ram/interactive_bench.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - name: Fetch pinned v112 and patch only its fast initramfs
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/base.squashfs >out/reports/extract.log 2>&1
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main/usr/lib/p50-stage/p50-migrate.sh out/original-migrate.sh
+          sudo python3 web114hash/clean_patch.py out/main
+          sudo python3 - <<'PY2'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,'web114hash')
+          from clean_patch import patch_source
+          before=Path('out/original-migrate.sh').read_text()
+          after=Path('out/main/usr/lib/p50-stage/p50-migrate.sh').read_text()
+          assert patch_source(before)==after
+          PY2
+          sudo diff -u out/original-migrate.sh out/main/usr/lib/p50-stage/p50-migrate.sh >out/reports/migrate-diff.txt || test "$?" -eq 1
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/main/usr/lib/live/boot/9990-misc-helpers.sh
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+      - name: Create test-only ISO and verify boot and media integrity
+        run: |
+          set -euo pipefail
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+          stat -c '%n %s' out/original.initrd out/candidate.initrd out/base.squashfs >out/reports/component-sizes.txt
+          xorriso -indev input/v113.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve();lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in seen;seen.add(name)
+              p=(root/name).resolve(strict=True);p.relative_to(root);assert p.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for block in iter(lambda:f.read(1048576),b''):h.update(block)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==293
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/base.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/candidate.initrd out/rechecked/live/initrd.img
+          cmp out/candidate.initrd out/rechecked/live/initrd.img-6.12.115+deb13.1-amd64
+          cmp out/original-full.initrd out/rechecked/live/initrd-full.img
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          test "$(wc -l <out/reports/media-checksums.txt)" -eq 293
+          sha256sum input/v113.iso out/candidate.iso >out/reports/iso-hashes.txt
+          stat -c '%n %s' input/v113.iso out/candidate.iso >out/reports/iso-sizes.txt
+      - name: Record exact clean candidate hash
+        id: hash
+        run: |
+          set -euo pipefail
+          sha=$(sha256sum out/candidate.iso | cut -d' ' -f1)
+          printf 'iso_sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+          cp out/reports/iso-hashes.txt out/reports/clean-hash-audit.txt
+      - name: Keep candidate temporarily for validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/clean-hash-audit.txt
+            out/reports/migrate-diff.txt
+          compression-level: 0
+          retention-days: 3
+      - name: Preserve build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-build-evidence
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
+  validate:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-compare-3072, bios-2048, uefi-3072, bios-fullram-fallback]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/reports fixture
+          python3 web112/early_probe.py web109/boot_bench_staged.py web114hash/interactive_bench.py
+          python3 - <<'PY2'
+          from pathlib import Path
+          p=Path('web114hash/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY2
+          lscpu >evidence/reports/host-cpu.txt
+          free -h >evidence/reports/host-memory.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-test-only-iso
+          path: input
+      - name: Verify exact candidate and prepare local pages
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+          EXPECTED_SHA: ${{ needs.build.outputs.iso_sha }}
+          TRIAL: ${{ matrix.trial }}
+        run: |
+          set -euo pipefail
+          test "${#EXPECTED_SHA}" -eq 64
+          printf '%s  %s\n' "$EXPECTED_SHA" input/candidate.iso | sha256sum -c -
+          if [ "$TRIAL" = bios-compare-3072 ]; then
+            curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+            printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          fi
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >evidence/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Boot candidate with attached media and check interactive behavior
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bench() { python3 -u web114hash/interactive_bench.py --out "$1" --iso "$2" --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --allow-no-startup-probe --mode online --media usb --bandwidth 31457280 "${@:3}"; }
+          case "$TRIAL" in
+            bios-compare-3072)
+              bench evidence/base1 input/v113.iso --wait-ram-ready --ram 3072
+              bench evidence/cand1 input/candidate.iso --wait-ram-ready --ram 3072
+              bench evidence/cand2 input/candidate.iso --wait-ram-ready --ram 3072
+              bench evidence/base2 input/v113.iso --wait-ram-ready --ram 3072
+              ;;
+            bios-2048)
+              bench evidence/cand1 input/candidate.iso --wait-ram-ready --ram 2048
+              ;;
+            uefi-3072)
+              bench evidence/cand1 input/candidate.iso --wait-ram-ready --ram 3072 --firmware uefi
+              ;;
+            bios-fullram-fallback)
+              bench evidence/cand1 input/candidate.iso --select-fullram-fallback --ram 3072
+              test -s evidence/cand1/fallback-menu-selected.png
+              ;;
+            *) exit 1 ;;
+          esac
+          python3 - <<'PY2'
+          from pathlib import Path
+          import json,os,statistics
+          t=os.environ['TRIAL'];root=Path('evidence');names=['base1','cand1','cand2','base2'] if t=='bios-compare-3072' else ['cand1']
+          results={n:json.loads((root/n/'result.json').read_text()) for n in names}
+          for n,r in results.items():
+              assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None,(n,r)
+              assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response'],n
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
+              serial=(root/n/'serial.log').read_text().splitlines()
+              if t=='bios-fullram-fallback':
+                  assert 'P50_STAGE_READY' not in serial
+              else:
+                  assert r['staged_ram_ready_seconds'] is not None and 'P50_STAGE_COPY_VERIFIED' in serial and 'P50_STAGE_READY' in serial,n
+                  assert any(x.startswith('P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs') for x in serial),n
+          d={'trial':t,'physical_acer_tested':False,'measurement':'Host clock from QEMU launch with virtual Westmere CPU, USB 30 MiB/s cap; not physical Acer timings.','results':{n:{k:results[n].get(k) for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds','media_ejected')} for n in names}}
+          if t=='bios-compare-3072':
+              for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds'):
+                  d['baseline_mean_'+k]=statistics.mean(results[n][k] for n in ('base1','base2'))
+                  d['candidate_mean_'+k]=statistics.mean(results[n][k] for n in ('cand1','cand2'))
+          (root/'reports/result-summary.json').write_text(json.dumps(d,indent=2)+'\n');print(json.dumps(d,indent=2))
+          PY2
+      - name: Preserve results and screenshots even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-${{ matrix.trial }}-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
