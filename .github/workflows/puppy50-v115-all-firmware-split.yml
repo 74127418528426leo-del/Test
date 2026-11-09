@@ -1,0 +1,198 @@
+name: Puppy50 v115 no-firmware fast-path size experiment
+on:
+  push:
+    branches: [puppy50-v115-all-firmware-research]
+    paths: [.github/workflows/puppy50-v115-all-firmware-split.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and VM tools and test split safety
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio rsync qemu-system-x86 python3-pil time
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{main,reports,tree,rechecked} fixture
+          python3 -m unittest discover -s web115lean -p 'test_*.py' -v
+          python3 -m unittest discover -s web112 -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web115lean/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web115lean/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          p=Path('web109/boot_bench_staged.py');s=p.read_text()
+          old="            result['qemu_running_at_end'] = vm.poll() is None\n"
+          new=("            if args.select_fullram_fallback:\n"
+               "                navigate(monitor, 'file:///usr/lib/firmware/netronome/')\n"
+               "                time.sleep(5)\n"
+               "                capture(monitor, out, 'fallback_extra_directory.png')\n"
+               "                result['screenshots'].append('fallback_extra_directory.png')\n"
+               "            result['qemu_running_at_end'] = vm.poll() is None\n")
+          assert s.count(old)==1;s=s.replace(old,new,1);Path('web115lean/fallback_bench.py').write_text(s)
+          PY
+          python3 -m py_compile web115lean/interactive_bench.py web115lean/fallback_bench.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+          df -h . >out/reports/host-disk.txt
+      - name: Fetch exact v113 and extract root and boot files
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/filesystem.squashfs input/base.squashfs -extract /live/initrd.img input/base.initrd -extract /live/initrd-full.img input/full.initrd -extract /isolinux/live.cfg out/bios.cfg -extract /boot/grub/grub.cfg out/grub.cfg >out/reports/extract.log 2>&1
+          unsquashfs -s input/base.squashfs >out/reports/base-format.txt
+          sudo unsquashfs -d out/original input/base.squashfs >out/reports/unsquash.log
+          mkdir out/core
+          sudo rsync -aHAX --numeric-ids out/original/ out/core/
+          sudo python3 web115lean/split_root.py out/core out/extras out/reports/split.json
+          python3 web115lean/menus.py out/bios.cfg out/grub.cfg
+          printf '%s\n' filesystem.squashfs >out/filesystem.module
+          printf '%s\n' filesystem.squashfs extras.squashfs >out/full.module
+          head -c 36154880 input/base.initrd >out/early-prefix
+          tail -c +36154881 input/base.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo python3 web115lean/layer_probe.py out/main
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 input/base.initrd out/candidate.initrd
+      - name: Create both compressed layers and verify the reconstructed full root
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          /usr/bin/time -p -o out/reports/core-compress-time.txt sudo mksquashfs out/core out/core.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 262144 -processors 3 -mem 2048M -noappend -no-progress -exit-on-error >out/reports/core-compress.log 2>&1
+          /usr/bin/time -p -o out/reports/extras-compress-time.txt sudo mksquashfs out/extras out/extras.squashfs -one-file-system -comp zstd -Xcompression-level 15 -b 262144 -processors 3 -mem 1024M -noappend -no-progress -exit-on-error >out/reports/extras-compress.log 2>&1
+          unsquashfs -s out/core.squashfs >out/reports/core-format.txt
+          unsquashfs -s out/extras.squashfs >out/reports/extras-format.txt
+          sudo unsquashfs -d out/verified-core out/core.squashfs >out/reports/core-verify.log
+          sudo unsquashfs -d out/verified-extras out/extras.squashfs >out/reports/extras-verify.log
+          sudo rsync -aHAX --numeric-ids out/verified-extras/ out/verified-core/
+          sudo rsync -aHAXnci --numeric-ids --delete out/original/ out/verified-core/ >out/reports/reconstruct-forward.txt
+          sudo rsync -aHAXnci --numeric-ids --delete out/verified-core/ out/original/ >out/reports/reconstruct-reverse.txt
+          test ! -s out/reports/reconstruct-forward.txt
+          test ! -s out/reports/reconstruct-reverse.txt
+          stat -c '%n %s' input/base.squashfs out/core.squashfs out/extras.squashfs >out/reports/root-sizes.txt
+          sha256sum input/base.squashfs out/core.squashfs out/extras.squashfs >out/reports/root-hashes.txt
+          sudo rm -rf -- out/original out/core out/extras out/verified-core out/verified-extras
+      - name: Build the local-media-only test ISO and verify checksums
+        run: |
+          set -euo pipefail
+          xorriso -indev input/v113.iso -outdev out/stage.iso -map out/core.squashfs /live/filesystem.squashfs -map out/extras.squashfs /live/extras.squashfs -map out/filesystem.module /live/filesystem.module -map out/full.module /live/full.module -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -map out/bios.cfg /isolinux/live.cfg -map out/grub.cfg /boot/grub/grub.cfg -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve();names=[];separators={}
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in separators;names.append(name);separators[name]=m.group(2)
+          assert len(names)==293
+          for name in ('./live/extras.squashfs','./live/filesystem.module','./live/full.module'):
+              assert name not in separators;names.append(name);separators[name]='  '
+          lines=[]
+          for name in names:
+              p=(root/name).resolve(strict=True);p.relative_to(root);assert p.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for block in iter(lambda:f.read(1048576),b''):h.update(block)
+              lines.append(h.hexdigest()+separators[name]+name)
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/core.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/extras.squashfs out/rechecked/live/extras.squashfs
+          cmp out/candidate.initrd out/rechecked/live/initrd.img
+          cmp input/full.initrd out/rechecked/live/initrd-full.img
+          cmp out/bios.cfg out/rechecked/isolinux/live.cfg
+          cmp out/grub.cfg out/rechecked/boot/grub/grub.cfg
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          test "$(wc -l <out/reports/media-checksums.txt)" -eq 296
+          sha256sum input/v113.iso out/candidate.iso >out/reports/iso-hashes.txt
+          stat -c '%n %s' input/v113.iso out/candidate.iso >out/reports/iso-sizes.txt
+      - name: Prepare local browser fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Compare four alternating interactive 3 GiB boots
+        timeout-minutes: 20
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for run in base1 cand1 cand2 base2; do
+            if [[ "$run" == base* ]]; then iso=input/v113.iso; else iso=out/candidate.iso; fi
+            python3 -u web115lean/interactive_bench.py --iso "$iso" --out "out/$run" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 4
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 4
+          for run in cand1 cand2; do
+            tr -d '\r' <"out/$run/serial.log" >"out/reports/$run-serial-clean.log"
+            sed -n '/P50_V114_LAYER_PROBE_BEGIN/,/P50_V114_LAYER_PROBE_END/p' "out/reports/$run-serial-clean.log" >"out/reports/$run-layers.txt"
+            grep -F 'P50_V114_LAYER_PROBE_BEGIN' "out/reports/$run-layers.txt"
+            grep -F 'P50_V114_LAYER_PROBE_END' "out/reports/$run-layers.txt"
+            grep -F 'filesystem.squashfs' "out/reports/$run-layers.txt"
+            if grep -F 'extras.squashfs' "out/reports/$run-layers.txt"; then echo 'Fast path incorrectly mounted the optional layer' >&2; exit 1; fi
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics
+          keys=('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')
+          names=('base1','cand1','cand2','base2');results={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in results.items():
+              assert all(r.get(k) is not None for k in keys),(n,r)
+              assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response'] and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],n
+          d={'measurement':'Host QEMU launch clock, 2 vCPU, 3 GiB, BIOS, 30 MiB/s virtual USB, 0.2s polling plus capture overhead.','physical_acer_tested':False,'results':{n:{k:r[k] for k in keys} for n,r in results.items()}}
+          for label,pair in [('baseline',('base1','base2')),('candidate',('cand1','cand2'))]:
+              for k in keys:d[label+'_mean_'+k]=statistics.mean(results[n][k] for n in pair)
+          d['home_gain_seconds']=d['baseline_mean_first_home_seen_seconds']-d['candidate_mean_first_home_seen_seconds']
+          d['js_gain_seconds']=d['baseline_mean_early_js_response_seconds']-d['candidate_mean_early_js_response_seconds']
+          Path('out/reports/comparison.json').write_text(json.dumps(d,indent=2)+'\n');print(json.dumps(d,indent=2))
+          PY
+      - name: Boot the original full-RAM fallback and inspect its extra directory
+        timeout-minutes: 8
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -u web115lean/fallback_bench.py --iso out/candidate.iso --out out/fallback --mode online --allow-no-startup-probe --select-fullram-fallback --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          test -s out/fallback/fallback-menu-selected.png
+          test -s out/fallback/fallback_extra_directory.png
+          grep -F "GET /after.html?nonce=$P50_NONCE" out/reports/after-fixture.log | grep -F ' 200 '
+      - name: Preserve all evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-NO-FIRMWARE-split-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/fallback/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep the exact test ISO temporarily after all checks
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-NO-FIRMWARE-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-hashes.txt
+          compression-level: 0
+          retention-days: 3
