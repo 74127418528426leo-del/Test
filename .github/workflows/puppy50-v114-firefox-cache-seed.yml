@@ -38,7 +38,7 @@ jobs:
           from pathlib import Path
           p=Path('web113/interactive_bench.py');s=p.read_text()
           marker="                result['screenshots'].append('after_input.png')\n"
-          assert s.count(marker)==1;s=s.replace(marker,marker+'                time.sleep(25)  # Allow the isolated UI cache to be written and exported.\n',1);p.write_text(s)
+          assert s.count(marker)==1;s=s.replace(marker,marker+'                time.sleep(125)  # Allow Firefox idle-cache write and capture.\n',1);p.write_text(s)
           PY
           python3 -m py_compile web113/interactive_bench.py
           lscpu >out/reports/host-cpu.txt
