@@ -41,7 +41,7 @@ jobs:
           tail -c +14922753 out/original.initrd >out/remaining.img
           (cd out/intel && sudo cpio -idm --quiet --no-absolute-filenames <../intel.cpio)
           sha256sum out/amd.cpio out/intel.cpio out/remaining.img >out/reports/original-archive-hashes.txt
-      - name: Inspect exact Intel microcode header and build candidate
+      - name: Validate Intel microcode records and build CPU-specific candidate
         run: |
           set -euo pipefail
           python3 web114micro/microcode.py out/intel.cpio out/intel/kernel/x86/microcode/GenuineIntel.bin out/intel-selected.cpio out/reports/microcode-selection.json
