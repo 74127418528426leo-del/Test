@@ -23,7 +23,7 @@ printf '%s\n' P50_V114_XSESSION_HOOK_RAN > /tmp/p50-v114-xsession-hook
 P50_V114_XSESSION_PROBE
 '''.replace('\\t','\t')
 REPORT=r'''(
-    "$B" sleep 30
+    "$B" sleep 12
     if [ -s /tmp/p50-v114-xsession-hook ]; then
         echo P50_V114_XSESSION_HOOK_OK >/dev/ttyS0
     else
