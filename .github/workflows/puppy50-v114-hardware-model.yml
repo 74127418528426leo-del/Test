@@ -1,0 +1,91 @@
+name: Puppy50 v114 simulated hardware sensitivity
+on:
+  push:
+    branches: [puppy50-v114-hardware-model]
+    paths: [.github/workflows/puppy50-v114-hardware-model.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 26
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [cpu, ehci]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools and prepare unchanged-image probes
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          python3 -m unittest discover -s web114hw -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web114hw/bench-template.py
+          python3 web114hw/variants.py web114hw/bench-template.py web114hw/control.py control
+          python3 web114hw/variants.py web114hw/bench-template.py web114hw/candidate.py "${{ matrix.mode }}"
+          python3 -m py_compile web114hw/control.py web114hw/candidate.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+          qemu-system-x86_64 -device usb-ehci,help >out/reports/ehci-device.txt
+      - name: Download and hash-check the exact v113 image
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          sha256sum input/v113.iso >out/reports/iso.sha256
+      - name: Start interaction fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Run four same-image alternating VM trials
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+          MODEL_MODE: ${{ matrix.mode }}
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          for name in base1 cand1 cand2 base2; do
+            if [[ "$name" == base* ]]; then bench=web114hw/control.py; else bench=web114hw/candidate.py; fi
+            python3 -u "$bench" --iso input/v113.iso --out "out/$name" --mode online --allow-no-startup-probe --wait-ram-ready --ram 4096 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 4
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 4
+          if grep -Ei 'warning.*(unsupported|not support|requested feature)' out/{base1,cand1,cand2,base2}/qemu.log; then exit 1; fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, statistics
+          names=('base1','cand1','cand2','base2')
+          keys=('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')
+          data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in data.items():
+              assert all(r.get(k) is not None for k in keys),(n,r)
+              assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response']
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],n
+          mode=os.environ['MODEL_MODE']
+          report={'comparison':mode,'measurement':'Same unchanged v113 ISO and host; QEMU launch clock, 4096 MiB RAM, 30 MiB/s cap, virtual BIOS, 0.2s frame polling plus screenshot overhead.','control':'2 vCPU, virtual xHCI','candidate':('4 vCPU, virtual 2-core/2-thread topology and xHCI' if mode=='cpu' else '2 vCPU, virtual EHCI'),'physical_acer_tested':False,'same_iso_in_all_trials':True,'results':{n:{k:data[n][k] for k in keys} for n in names}}
+          for label,pair in [('control',('base1','base2')),('candidate',('cand1','cand2'))]:
+              for key in keys:report[label+'_mean_'+key]=statistics.mean(data[n][key] for n in pair)
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve logs and screenshots even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-hardware-${{ matrix.mode }}-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
