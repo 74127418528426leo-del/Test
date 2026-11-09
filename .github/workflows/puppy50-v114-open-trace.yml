@@ -88,7 +88,7 @@ jobs:
           nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
           nohup python3 -u web114/trace_receiver.py --output out/reports/open-trace.tsv --port 8767 >out/reports/trace-receiver.log 2>&1 </dev/null &
           python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766,8767)]'
-      - name: Inspect the trace service before migration completion
+      - name: Capture and verify startup file-open trace
         timeout-minutes: 17
         env:
           P50_NONCE: P50-${{ github.run_id }}
@@ -117,10 +117,7 @@ jobs:
               assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None,n
               assert r['early_media_attached_before_navigation'] and r['early_media_attached_after_js_response']
               assert r['staged_ram_ready_seconds'] is not None and r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],n
-          report={'measurement':'v113 baseline / diagnostic / v113 baseline on same host; 2 vCPU, 3 GiB, BIOS, 30 MiB/s virtual USB, 0.2 s frame-poll sleep plus screenshot overhead. Diagnostic file opens, not physical disk reads.','physical_acer_tested':False,'events':int(end[1]),'results':{n:{k:data[n][k] for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')} for n in names}}
-          for key in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds'):
-              report['baseline_mean_'+key]=data['trace1'][key]
-              report['trace_'+key]=data['trace1'][key]
+          report={'measurement':'Diagnostic trace only; 2 vCPU, 3 GiB, BIOS, 30 MiB/s virtual USB, 0.2 s frame-poll sleep plus screenshot overhead. Diagnostic file opens, not physical disk reads.','physical_acer_tested':False,'events':int(end[1]),'results':{n:{k:data[n][k] for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')} for n in names}}
           Path('out/reports/trace-summary.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
           PY
       - name: Preserve diagnostic logs and screenshots on any result
