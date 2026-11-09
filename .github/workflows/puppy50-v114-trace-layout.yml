@@ -133,7 +133,7 @@ jobs:
             test "$(wc -l <"out/reports/$variant-media-checksums.txt")" -eq 293
             sha256sum "out/$variant/candidate.iso" >>out/reports/iso-hashes.txt
             stat -c '%n %s' "out/$variant/candidate.iso" >>out/reports/iso-sizes.txt
-            rm -rf -- out/stage.iso out/tree out/rechecked
+            sudo rm -rf -- out/stage.iso out/tree out/rechecked
           done
           sha256sum input/v113.iso >>out/reports/iso-hashes.txt
           stat -c '%n %s' input/v113.iso >>out/reports/iso-sizes.txt
