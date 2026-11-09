@@ -24,6 +24,10 @@ jobs:
           python3 web112/early_probe.py web109/boot_bench_staged.py web115lean/interactive_bench.py
           python3 - <<'PY'
           from pathlib import Path
+          p=Path('web105/menu_selection.py');s=p.read_text()
+          assert s.count('getpixel((500,')==4
+          s=s.replace('getpixel((500,','getpixel((96,')
+          p.write_text(s)
           p=Path('web115lean/interactive_bench.py');s=p.read_text()
           old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
           new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
