@@ -1,4 +1,4 @@
-name: Puppy50 v114 Pexels browser video inspection
+name: Puppy50 v114 Pexels video inspection independent retry
 on:
   push:
     branches: [puppy50-v114-requested-sites]
@@ -65,7 +65,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Puppy50-v114-pexels-video-inspection
+          name: Puppy50-v114-pexels-video-inspection-retry
           path: out/
           if-no-files-found: warn
           retention-days: 30
