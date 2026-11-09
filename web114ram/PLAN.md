@@ -1,0 +1,9 @@
+# Puppy50 v114: RAM staging investigation
+
+Goal: find whether the destination copy or SHA-256 gate is responsible for the long time to safe virtual USB removal and whether preserving the exact memory reserve while retrying can avoid transient 2 GiB failures.
+
+Baseline: v113 ISO SHA-256 `4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1`. The 696,545,280-byte root alone takes at least 22.14 s to read at the QEMU 30 MiB/s rate cap, ignoring all other reads or processing. The separate first-Firefox-frame goal and verified RAM-ready goal must not be conflated; physical hardware and its USB speed are not measured.
+
+Build isolated, test-only initramfs variants for measured stage timestamps, alternate installed SHA-256 implementations, and at most ten memory samples two seconds apart using the identical root size plus 393,216 KiB reserve. Every candidate must hash the complete destination and match the existing SHA-256 manifest, verify the switched device mapping, detach the old loop, and emit READY only after all checks. Failed memory, hash, copy or mapping checks must leave media attached. Keep the full-RAM fallback, kernel, firmware, drivers, Firefox, the live root, and v113 public release unchanged.
+
+Run unit tests for real digest success and mismatched destination, duplicate patch refusal, bounded retry, and failed/invalid memory samples; then compare actual 3 GiB guest browser first frame, early JavaScript response, destination hash duration, RAM ready, fresh local page after USB removal, and public HTTPS on the same host. Test 2 GiB reliability separately, not as a proven minimum. Run an independent repeat and failure-path tests before recommending a change. VM evidence is not physical Acer or Wi-Fi evidence, and a timing change does not prove the eight-second target.
