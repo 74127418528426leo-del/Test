@@ -48,6 +48,22 @@ case "$extra_expected" in *[!0-9a-f]*) fail 'invalid extra checksum';; esac
 extra_size=$("$B" stat -c %s "$EXTRA_SRC")
 case "$extra_size" in ''|*[!0-9]*) fail 'invalid extra source size';; esac
 '''
+EXTRA_FAILURE_EVIDENCE=r'''
+        p50_dual_backing_is() {
+            [ -n "$1" ] && [ -n "$2" ] || return 1
+            p50_dual_value=$("$B" cat "/sys/block/${1##*/}/loop/backing_file") || return 1
+            case "$p50_dual_value" in "$2"|"${2#/}") return 0;; *) return 1;; esac
+        }
+        if [ -f "$COPY" ] && [ -f "$EXTRA_COPY" ] && \
+           p50_dual_backing_is "$OLD_LOOP" "$SRC" && \
+           p50_dual_backing_is "$EXTRA_OLD_LOOP" "$EXTRA_SRC" && \
+           p50_dual_backing_is "$NEW_LOOP" "$COPY" && \
+           p50_dual_backing_is "$EXTRA_NEW_LOOP" "$EXTRA_COPY"; then
+            emit P50_DUAL_RETAINED_LOOPS_AND_COPIES
+        else
+            emit P50_DUAL_RETENTION_EVIDENCE_INCOMPLETE
+        fi
+'''
 EXTRA_OLD=r'''
 extra_old_table=$("$DM" table p50-staged-extra) || fail 'cannot inspect original extra table'
 set -- $extra_old_table
@@ -95,6 +111,7 @@ def patch_migration(text):
  if 'P50_DUAL_EXTRA_COPY_VERIFIED' in text:raise ValueError('Already patched')
  text=replace_once(text,"NEW_LOOP=''\n",EXTRA_META+"NEW_LOOP=''\n")
  text=replace_once(text,'        if [ "$TABLE_LOADED" = 1 ]; then', '        if [ "$EXTRA_TABLE_LOADED" = 1 ]; then "$DM" clear p50-staged-extra || true; fi\n        if [ -n "$EXTRA_NEW_LOOP" ]; then "$B" losetup -d "$EXTRA_NEW_LOOP" || true; fi\n        "$B" rm -f "$EXTRA_COPY" || true\n        if [ "$TABLE_LOADED" = 1 ]; then')
+ text=replace_once(text,'        emit P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH\n','        emit P50_STAGE_SWITCH_UNCERTAIN_KEEP_BOTH\n'+EXTRA_FAILURE_EVIDENCE)
  text=replace_once(text,'need_k=$(( (size + 1023) / 1024 ))',EXTRA_PREP+'need_k=$(( (size + extra_size + 1023) / 1024 ))')
  text=replace_once(text,'emit P50_STAGE_COPYING\n',EXTRA_OLD+'emit P50_STAGE_COPYING\n')
  text=replace_once(text,'emit P50_STAGE_COPY_VERIFIED\n',EXTRA_COPY_VERIFY+'emit P50_STAGE_COPY_VERIFIED\n')
