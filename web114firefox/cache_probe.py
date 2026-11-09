@@ -4,9 +4,21 @@ import argparse
 from pathlib import Path
 MARKER='"$B" sleep 8\nemit P50_STAGE_START\n'
 REPORT=r'''(
-    "$B" sleep 44
+    # Firefox writes the cache on an idle timer (historically about 60 s), so
+    # wait for its completed file instead of assuming it exists at startup.
+    "$B" sleep 25
     {
         printf '\nP50_V114_FIREFOX_CACHE_PROBE_BEGIN\n'
+        p50_wait=0
+        while [ "$p50_wait" -lt 140 ]; do
+            p50_count="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null | wc -l)"
+            if [ "$p50_count" = 1 ]; then
+                p50_cache="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null)"
+                if [ -s "$p50_cache" ]; then "$B" sleep 3; break; fi
+            fi
+            "$B" sleep 5
+            p50_wait=$((p50_wait + 5))
+        done
         printf '%s\n' 'Firefox local profile cache candidates:'
         find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null || true
         p50_count="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null | wc -l)"
