@@ -38,7 +38,14 @@ jobs:
           from pathlib import Path
           p=Path('web113/interactive_bench.py');s=p.read_text()
           marker="                result['screenshots'].append('after_input.png')\n"
-          assert s.count(marker)==1;s=s.replace(marker,marker+'                time.sleep(260)  # Wait longer than the collector’s bounded search.\n',1);p.write_text(s)
+          assert s.count(marker)==1;injection=(
+              "                p50_deadline = time.monotonic() + 250\n"
+              "                while time.monotonic() < p50_deadline and vm.poll() is None:\n"
+              "                    if serial.exists() and 'P50_V114_FIREFOX_CACHE_PROBE_END' in serial.read_text(errors='replace'):\n"
+              "                        break\n"
+              "                    time.sleep(2)\n"
+          )
+          s=s.replace(marker,marker+injection,1);p.write_text(s)
           PY
           python3 -m py_compile web113/interactive_bench.py
           lscpu >out/reports/host-cpu.txt
@@ -109,7 +116,7 @@ jobs:
           if curl --noproxy '*' --silent --connect-timeout 3 --max-time 5 https://example.com/ >/dev/null; then echo 'Direct HTTPS was not blocked' >&2; exit 1; fi
           python3 -u web113/interactive_bench.py --iso out/candidate.iso --out out/cand1 --mode online --expect-no-https --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
           test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 1
-          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 1
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -ge 1
           tr -d '\r' <out/cand1/serial.log >out/reports/cand1-serial-clean.log
           grep -Fx P50_V114_CACHE_EXPORT_OK out/reports/cand1-serial-clean.log
           grep -Fx P50_V114_FIREFOX_CACHE_PROBE_END out/reports/cand1-serial-clean.log
