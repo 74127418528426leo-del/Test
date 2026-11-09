@@ -1,0 +1,38 @@
+name: Puppy50 v114 independent Acer microcode selection audit
+on:
+  push:
+    branches: [puppy50-v114-acer-microcode-test]
+    paths: [.github/workflows/puppy50-v114-microcode-audit.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install archive tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso cpio
+          mkdir -p input out/intel out/reports
+          python3 -m unittest discover -s web114micro -p 'test_*.py' -v
+      - name: Select and independently check the exact Intel patches
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/initrd.img out/original.initrd >out/reports/extract.log 2>&1
+          dd if=out/original.initrd of=out/intel.cpio iflag=skip_bytes,count_bytes bs=1M skip=148480 count=14774272 status=none
+          (cd out/intel && sudo cpio -idm --quiet --no-absolute-filenames <../intel.cpio)
+          python3 web114micro/microcode.py out/intel.cpio out/intel/kernel/x86/microcode/GenuineIntel.bin out/intel-selected.cpio out/reports/microcode-selection.json
+          stat -c '%n %s' out/intel.cpio out/intel-selected.cpio out/original.initrd >out/reports/component-sizes.txt
+      - name: Preserve selection and source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-acer-microcode-inventory
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
