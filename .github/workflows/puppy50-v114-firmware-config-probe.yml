@@ -1,0 +1,54 @@
+name: Puppy50 actual kernel firmware-loading probe
+on:
+  push:
+    branches: [puppy50-v114-network-tier-feasibility]
+    paths: [.github/workflows/puppy50-v114-firmware-config-probe.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install read-only inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools kmod xz-utils
+          mkdir -p input out/reports
+      - name: Read exact image kernel config and driver declarations
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' input/v113.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v113.iso -extract /live/filesystem.squashfs input/base.squashfs >out/reports/extract.log 2>&1
+          unsquashfs -d out/inspect input/base.squashfs \
+            boot/config-6.12.115+deb13.1-amd64 \
+            usr/lib/modules/6.12.115+deb13.1-amd64/modules.builtin.modinfo \
+            usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko.xz \
+            usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/wireless/ath/ath9k/ath9k.ko.xz \
+            usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/wireless/intel/iwlwifi/iwlwifi.ko.xz \
+            usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/wireless/mediatek/mt76/mt76.ko.xz \
+            usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/wireless/realtek/rtl8xxxu/rtl8xxxu.ko.xz \
+            usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/net/wireless/realtek/rtw88/rtw88_8822bu.ko.xz >out/reports/unsquash.log
+          grep -E '^(CONFIG_FW_LOADER|CONFIG_EXTRA_FIRMWARE|CONFIG_UEVENT_HELPER_PATH)|^# CONFIG_FW_LOADER' out/inspect/boot/config-6.12.115+deb13.1-amd64 >out/reports/firmware-kernel-config.txt
+          find out/inspect/usr/lib/modules -name '*.ko.xz' -print | sort | while read -r f; do
+            name="$(basename "$f" .ko.xz)"
+            modinfo -F firmware "$f" | sort -u >"out/reports/$name-firmware.txt"
+            printf '%s %s\n' "$name" "$(wc -l <"out/reports/$name-firmware.txt")" >>out/reports/declared-firmware-counts.txt
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          source=next(Path('out/inspect/usr/lib/modules').glob('*/modules.builtin.modinfo'))
+          entries=[x for x in source.read_bytes().split(b'\0') if b'.firmware=' in x]
+          Path('out/reports/builtin-firmware-declarations.txt').write_bytes(b'\n'.join(entries)+b'\n')
+          print('built-in firmware declarations',len(entries))
+          PY
+      - name: Preserve configuration and declarations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-firmware-config-probe
+          path: out/reports/
+          if-no-files-found: warn
+          retention-days: 30
