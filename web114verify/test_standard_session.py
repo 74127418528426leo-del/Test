@@ -44,6 +44,8 @@ function [ { if test "$#" -eq 3 && test "$1" = "-b" && test "$2" = "/dev/mapper/
         marker='"$B" sleep 8\nemit P50_STAGE_START\n'
         result=patch_migration('#!/bin/sh\n'+marker)
         self.assertIn('P50_V114_XSESSION_HOOK_OK',result)
+        self.assertIn('"$B" sleep 12',result)
+        self.assertNotIn('"$B" sleep 30',result)
         self.assertIn(marker,result)
         self.assertEqual(subprocess.run(['sh','-n'],input=result,text=True).returncode,0)
 
