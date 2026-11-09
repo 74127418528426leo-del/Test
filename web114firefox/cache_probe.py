@@ -10,20 +10,24 @@ REPORT=r'''(
     {
         printf '\nP50_V114_FIREFOX_CACHE_PROBE_BEGIN\n'
         p50_wait=0
-        while [ "$p50_wait" -lt 140 ]; do
-            p50_count="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null | wc -l)"
+        while [ "$p50_wait" -lt 220 ]; do
+            if [ $((p50_wait % 20)) -eq 0 ]; then
+                printf "P50_V114_CACHE_ELAPSED=%s\n" "$p50_wait"
+                find /home/user -iname '*startup*cache*' -print 2>/dev/null | head -40 || true
+            fi
+            p50_count="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox /home/user/.mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null | wc -l)"
             if [ "$p50_count" = 1 ]; then
-                p50_cache="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null)"
+                p50_cache="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox /home/user/.mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null)"
                 if [ -s "$p50_cache" ]; then "$B" sleep 3; break; fi
             fi
             "$B" sleep 5
             p50_wait=$((p50_wait + 5))
         done
         printf '%s\n' 'Firefox local profile cache candidates:'
-        find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null || true
-        p50_count="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null | wc -l)"
+        find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox /home/user/.mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null || true
+        p50_count="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox /home/user/.mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null | wc -l)"
         if [ "$p50_count" = 1 ]; then
-            p50_cache="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null)"
+            p50_cache="$(find /home/user/.cache/mozilla/firefox /home/user/.config/mozilla/firefox /home/user/.mozilla/firefox -type f -name 'startupCache.8.little' -print 2>/dev/null)"
             if cp "$p50_cache" /run/p50-stage/v114-startupcache.bin && [ -s /run/p50-stage/v114-startupcache.bin ]; then
                 stat -c 'P50_V114_CACHE_BYTES=%s' /run/p50-stage/v114-startupcache.bin
                 sha256sum /run/p50-stage/v114-startupcache.bin | sed 's/^/P50_V114_CACHE_SHA256=/'
