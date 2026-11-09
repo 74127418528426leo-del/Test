@@ -42,7 +42,7 @@ Before=sysinit.target lightdm.service
 Type=notify
 NotifyAccess=main
 ExecStart=/run/p50-stage/tools/p50-open-trace /run/p50-stage/open-trace.tsv 15 /
-ExecStopPost=-/usr/bin/curl --fail --connect-timeout 5 --max-time 15 --noproxy=* --data-binary=@/run/p50-stage/open-trace.tsv http://10.0.2.2:8767/trace --output /run/p50-stage/trace-response.txt
+ExecStopPost=-/usr/bin/curl --fail --connect-timeout 5 --max-time 15 --noproxy * --data-binary @/run/p50-stage/open-trace.tsv http://10.0.2.2:8767/trace --output /run/p50-stage/trace-response.txt
 Nice=10
 TimeoutStartSec=10
 [Install]
