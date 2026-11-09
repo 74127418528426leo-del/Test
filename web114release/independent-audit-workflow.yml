@@ -1,0 +1,99 @@
+name: Independent byte audit of Puppy50 v114 hash candidate
+on:
+  push:
+    branches: [puppy50-v114-hash-independent-audit]
+    paths: [.github/workflows/puppy50-v114-hash-independent-audit.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install independent inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio rsync
+          mkdir -p audit/{old,new,old-main,new-main,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-test-only-iso
+          run-id: 42599688500
+          github-token: ${{ github.token }}
+          path: audit/input
+      - name: Fetch and pin both complete images
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o audit/v113.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v113-local-media-experimental/Puppy50_v113_Local_Media_EXPERIMENTAL.iso'
+          printf '%s  %s\n' '4e6dc9b9d1f8f416b47ea046ffcfc5f1c6a7a732dc9ac0e67ff49bd53d271ea1' audit/v113.iso | sha256sum -c -
+          printf '%s  %s\n' 'bf19a63758fbb6ab9aad5cb3b04c9b0e97b32944ab30f304fa16a205c78096b9' audit/input/candidate.iso | sha256sum -c -
+          xorriso -osirrox on -indev audit/v113.iso -extract / audit/old >audit/reports/old-extract.log 2>&1
+          xorriso -osirrox on -indev audit/input/candidate.iso -extract / audit/new >audit/reports/new-extract.log 2>&1
+          xorriso -indev audit/v113.iso -report_el_torito plain -report_system_area plain >audit/reports/old-boot-layout.txt 2>&1
+          xorriso -indev audit/input/candidate.iso -report_el_torito plain -report_system_area plain >audit/reports/new-boot-layout.txt 2>&1
+      - name: Verify every extracted ISO entry and boot checksum manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os
+          roots=[Path('audit/old'),Path('audit/new')]
+          def inventory(root):
+              found={}
+              for p in sorted(root.rglob('*')):
+                  key=p.relative_to(root).as_posix()
+                  if p.is_symlink():found[key]=('link',os.readlink(p))
+                  elif p.is_file():
+                      h=hashlib.sha256()
+                      with p.open('rb') as f:
+                          for b in iter(lambda:f.read(1048576),b''):h.update(b)
+                      found[key]=('file',h.hexdigest())
+                  elif p.is_dir():found[key]=('dir',None)
+                  else:raise RuntimeError('Unexpected ISO entry '+key)
+              return found
+          a,b=map(inventory,roots); assert a.keys()==b.keys(),(a.keys()-b.keys(),b.keys()-a.keys())
+          different=sorted(k for k in a if a[k]!=b[k])
+          expected=['live/initrd.img','live/initrd.img-6.12.115+deb13.1-amd64','sha256sum.txt']
+          assert different==expected,different
+          out={'iso_entry_count':len(a),'different_entries':different,'root_squashfs_sha256':a['live/filesystem.squashfs'][1],'fullram_initrd_sha256':a['live/initrd-full.img'][1]}
+          Path('audit/reports/iso-byte-audit.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
+          PY
+          (cd audit/new && sha256sum -c sha256sum.txt) >audit/reports/media-checksums.txt
+          test "$(wc -l <audit/reports/media-checksums.txt)" -eq 293
+      - name: Compare extracted early boot archives and exact script modification
+        run: |
+          set -euo pipefail
+          head -c 36154880 audit/old/live/initrd.img >audit/old-prefix
+          head -c 36154880 audit/new/live/initrd.img >audit/new-prefix
+          cmp audit/old-prefix audit/new-prefix
+          tail -c +36154881 audit/old/live/initrd.img | zstd -q -dc >audit/old-main.cpio
+          tail -c +36154881 audit/new/live/initrd.img | zstd -q -dc >audit/new-main.cpio
+          (cd audit/old-main && sudo cpio -idm --quiet --no-absolute-filenames <../old-main.cpio)
+          (cd audit/new-main && sudo cpio -idm --quiet --no-absolute-filenames <../new-main.cpio)
+          sudo rsync -aHAXnciO --delete --exclude='/usr/lib/p50-stage/p50-migrate.sh' audit/old-main/ audit/new-main/ >audit/reports/main-forward.txt
+          sudo rsync -aHAXnciO --delete --exclude='/usr/lib/p50-stage/p50-migrate.sh' audit/new-main/ audit/old-main/ >audit/reports/main-reverse.txt
+          test ! -s audit/reports/main-forward.txt
+          test ! -s audit/reports/main-reverse.txt
+          sudo python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,'web114hash')
+          from clean_patch import patch_source
+          old=Path('audit/old-main/usr/lib/p50-stage/p50-migrate.sh')
+          new=Path('audit/new-main/usr/lib/p50-stage/p50-migrate.sh')
+          assert patch_source(old.read_text())==new.read_text()
+          a,b=old.stat(),new.stat();assert (a.st_mode,a.st_uid,a.st_gid)==(b.st_mode,b.st_uid,b.st_gid)
+          print('Only the expected fast hash with BusyBox fallback changed.')
+          PY
+          sudo diff -u audit/old-main/usr/lib/p50-stage/p50-migrate.sh audit/new-main/usr/lib/p50-stage/p50-migrate.sh >audit/reports/migrate-diff.txt || test "$?" -eq 1
+      - name: Preserve byte-audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v114-clean-hash-independent-audit
+          path: audit/reports/
+          if-no-files-found: warn
+          retention-days: 30
