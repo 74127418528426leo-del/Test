@@ -1,0 +1,140 @@
+name: Independent exact-image and font-cache audit for Puppy50 v115
+on:
+  push:
+    branches: [puppy50-v115-font-independent-audit]
+    paths: [.github/workflows/puppy50-v115-font-independent-audit.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inspection tools and verify build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42748059555" --jq .head_sha)" = 'f1e0f1347d2d5b6b97eb61639b82c7fb4e3df06c'
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio rsync squashfs-tools
+          mkdir -p audit/{old,new,old-main,new-main,reports}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-test-only-iso
+          run-id: 42748059555
+          github-token: ${{ github.token }}
+          path: audit/input
+      - name: Verify the exact build artifact and published v114 image
+        run: |
+          set -euo pipefail
+          sha=$(awk '$2=="out/candidate.iso" {print $1}' audit/input/reports/iso-hashes.txt)
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$sha" audit/input/candidate.iso | sha256sum -c -
+          sha256sum audit/input/candidate.iso >audit/reports/candidate-sha256.txt
+          curl --fail --location --retry 3 --silent --show-error -o audit/v114.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v114_Fast_Verification_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'bf19a63758fbb6ab9aad5cb3b04c9b0e97b32944ab30f304fa16a205c78096b9' audit/v114.iso | sha256sum -c -
+          xorriso -osirrox on -indev audit/v114.iso -extract / audit/old >audit/reports/old-extract.log 2>&1
+          xorriso -osirrox on -indev audit/input/candidate.iso -extract / audit/new >audit/reports/new-extract.log 2>&1
+          xorriso -indev audit/v114.iso -report_el_torito plain -report_system_area plain >audit/reports/old-boot-layout.txt 2>&1
+          xorriso -indev audit/input/candidate.iso -report_el_torito plain -report_system_area plain >audit/reports/new-boot-layout.txt 2>&1
+      - name: Compare every extracted ISO entry and candidate checksums
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os
+          def inventory(root):
+              found={}
+              for p in sorted(root.rglob('*')):
+                  key=p.relative_to(root).as_posix()
+                  if p.is_symlink():found[key]=('link',os.readlink(p))
+                  elif p.is_file():
+                      h=hashlib.sha256()
+                      with p.open('rb') as f:
+                          for b in iter(lambda:f.read(1048576),b''):h.update(b)
+                      found[key]=('file',h.hexdigest())
+                  elif p.is_dir():found[key]=('dir',None)
+                  else:raise RuntimeError('Unexpected ISO entry '+key)
+              return found
+          a,b=map(inventory,(Path('audit/old'),Path('audit/new')))
+          assert a.keys()==b.keys(),(a.keys()-b.keys(),b.keys()-a.keys())
+          different=sorted(k for k in a if a[k]!=b[k])
+          assert different==['live/initrd.img','live/initrd.img-6.12.115+deb13.1-amd64','sha256sum.txt'],different
+          result={'iso_entry_count':len(a),'different_entries':different,'root_squashfs_sha256':a['live/filesystem.squashfs'][1],'fullram_initrd_sha256':a['live/initrd-full.img'][1]}
+          Path('audit/reports/iso-byte-audit.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
+          PY
+          (cd audit/new && sha256sum -c sha256sum.txt) >audit/reports/media-checksums.txt
+          test "$(wc -l <audit/reports/media-checksums.txt)" -eq 293
+      - name: Compare initramfs entries and exact cache manifest
+        run: |
+          set -euo pipefail
+          head -c 36154880 audit/old/live/initrd.img >audit/old-prefix
+          head -c 36154880 audit/new/live/initrd.img >audit/new-prefix
+          cmp audit/old-prefix audit/new-prefix
+          tail -c +36154881 audit/old/live/initrd.img | zstd -q -dc >audit/old-main.cpio
+          tail -c +36154881 audit/new/live/initrd.img | zstd -q -dc >audit/new-main.cpio
+          (cd audit/old-main && sudo cpio -idm --quiet --no-absolute-filenames <../old-main.cpio)
+          (cd audit/new-main && sudo cpio -idm --quiet --no-absolute-filenames <../new-main.cpio)
+          sudo rsync -aHAXnciO --delete --numeric-ids --exclude='/usr/lib/live/boot/9990-main.sh' --exclude='/usr/lib/p50-fontcache' audit/old-main/ audit/new-main/ >audit/reports/main-forward.txt
+          sudo rsync -aHAXnciO --delete --numeric-ids --exclude='/usr/lib/live/boot/9990-main.sh' --exclude='/usr/lib/p50-fontcache' audit/new-main/ audit/old-main/ >audit/reports/main-reverse.txt
+          test ! -s audit/reports/main-forward.txt
+          test ! -s audit/reports/main-reverse.txt
+          sudo python3 - <<'PY'
+          import hashlib,json,os,re,stat,sys
+          from pathlib import Path
+          sys.path.insert(0,'web115font')
+          from font_cache_clean import patch_main
+          old=Path('audit/old-main/usr/lib/live/boot/9990-main.sh')
+          new=Path('audit/new-main/usr/lib/live/boot/9990-main.sh')
+          assert patch_main(old.read_text())==new.read_text()
+          a,b=old.stat(),new.stat();assert (a.st_mode,a.st_uid,a.st_gid)==(b.st_mode,b.st_uid,b.st_gid)
+          folder=Path('audit/new-main/usr/lib/p50-fontcache')
+          assert folder.is_dir() and not folder.is_symlink()
+          expected={}
+          for line in Path('audit/input/reports/cache-sha256.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-f]{64})  ([a-f0-9]{32}-le64\.cache-9)',line);assert m,line
+              assert m.group(2) not in expected;expected[m.group(2)]=m.group(1)
+          assert len(expected)==20
+          assert set(p.name for p in folder.iterdir())==set(expected)
+          total=0
+          for name,digest in expected.items():
+              p=folder/name;st=p.lstat()
+              assert stat.S_ISREG(st.st_mode) and not p.is_symlink() and (st.st_mode&0o777)==0o644 and st.st_uid==0 and st.st_gid==0,name
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==digest,name
+              total+=st.st_size
+          out={'cache_file_count':len(expected),'cache_total_bytes':total,'expected_manifest_sha256':hashlib.sha256(Path('audit/input/reports/cache-sha256.txt').read_bytes()).hexdigest(),'boot_script_only_expected_hook':True}
+          Path('audit/reports/initramfs-audit.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
+          PY
+          sudo diff -u audit/old-main/usr/lib/live/boot/9990-main.sh audit/new-main/usr/lib/live/boot/9990-main.sh >audit/reports/boot-hook.diff || test "$?" -eq 1
+      - name: Independently check cache validity on a freshly extracted root
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -d audit/root audit/old/live/filesystem.squashfs >audit/reports/unsquash.log
+          test "$(find audit/root/var/cache/fontconfig -type f -name '*cache-*' | wc -l)" -eq 0
+          sudo cp -a audit/new-main/usr/lib/p50-fontcache/. audit/root/var/cache/fontconfig/
+          (cd audit/root/var/cache/fontconfig && sha256sum -c "$GITHUB_WORKSPACE/audit/input/reports/cache-sha256.txt") >audit/reports/cache-hash-before.txt
+          sudo env LC_ALL=C chroot audit/root /usr/bin/fc-cache -s -v >audit/reports/fc-cache-validation.txt 2>&1
+          if grep -F 'caching, new cache contents' audit/reports/fc-cache-validation.txt; then echo 'Cache regenerated rather than accepted' >&2; exit 1; fi
+          python3 - <<'PY'
+          from pathlib import Path
+          expected=Path('audit/input/reports/expected-directories.txt').read_text().splitlines()
+          text=Path('audit/reports/fc-cache-validation.txt').read_text()
+          assert len(expected)>=3
+          for path in expected:assert path+': skipping, existing cache is valid' in text,path
+          PY
+          (cd audit/root/var/cache/fontconfig && sha256sum -c "$GITHUB_WORKSPACE/audit/input/reports/cache-sha256.txt") >audit/reports/cache-hash-after.txt
+          sudo env LC_ALL=C chroot audit/root /usr/bin/fc-list --format '%{file}|%{family}|%{style}\n' | LC_ALL=C sort >audit/reports/fontlist.txt
+          expected=$(cut -d' ' -f1 audit/input/reports/fontlist.sha256)
+          printf '%s  %s\n' "$expected" audit/reports/fontlist.txt | sha256sum -c -
+      - name: Preserve independent audit evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-independent-audit
+          path: audit/reports/
+          if-no-files-found: warn
+          retention-days: 30
