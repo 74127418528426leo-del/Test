@@ -1,0 +1,112 @@
+name: Publish audited Puppy50 v115 font-cache experiment
+on:
+  push:
+    branches: [puppy50-v115-release]
+    paths: [.github/workflows/puppy50-v115-font-release.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require completed clean build and independent checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42748059555 42748435378 42748521543 42748642773; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+          done
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42748059555" --jq .head_sha)" = 'f1e0f1347d2d5b6b97eb61639b82c7fb4e3df06c'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-test-only-iso
+          run-id: 42748059555
+          github-token: ${{ github.token }}
+          path: iso
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-evidence
+          run-id: 42748059555
+          github-token: ${{ github.token }}
+          path: evidence/comparison
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Puppy50-v115-clean-font-*-evidence
+          run-id: 42748435378
+          github-token: ${{ github.token }}
+          path: evidence/validation
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-independent-audit
+          run-id: 42748521543
+          github-token: ${{ github.token }}
+          path: evidence/audit
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-font-prestartup-proof-evidence
+          run-id: 42748642773
+          github-token: ${{ github.token }}
+          path: evidence/proof
+      - name: Verify exact image and every recorded outcome
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a' iso/candidate.iso | sha256sum -c -
+          test "$(wc -l <evidence/audit/media-checksums.txt)" -eq 293
+          test ! -s evidence/audit/main-forward.txt
+          test ! -s evidence/audit/main-reverse.txt
+          python3 -m unittest discover -s web115font -p 'test_font_cache_clean.py' -q
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('evidence')
+          a=json.loads((root/'audit/iso-byte-audit.json').read_text()); assert a['iso_entry_count']==307
+          assert a['different_entries']==['live/initrd.img','live/initrd.img-6.12.115+deb13.1-amd64','sha256sum.txt']
+          b=json.loads((root/'audit/initramfs-audit.json').read_text()); assert b['cache_file_count']==20 and b['cache_total_bytes']==193800 and b['boot_script_only_expected_hook']
+          p=json.loads((root/'proof/reports/proof-summary.json').read_text()); assert p['expected_cache_files']==20 and p['expected_directories']==20 and p['firefox_cache_opens']>0 and p['firefox_open_seen_seconds']<p['first_home_seconds']
+          c=json.loads((root/'comparison/reports/comparison.json').read_text()); assert abs(c['baseline_mean_first_home_seen_seconds']-14.97)<.001 and abs(c['candidate_mean_first_home_seen_seconds']-14.225)<.001
+          for name in ('base1','cand1','cand2','base2'):
+              r=json.loads((root/'comparison'/name/'result.json').read_text());assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors']
+          assert sum('GET /after.html?nonce=' in s and ' 200 ' in s for s in (root/'comparison/reports/after-fixture.log').read_text().splitlines())>=4
+          for trial in ('bios-2048','uefi-3072','bios-fullram-fallback'):
+              p=root/'validation'/('Puppy50-v115-clean-font-'+trial+'-evidence')
+              r=json.loads((p/'cand1/result.json').read_text());assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors']
+              assert any('GET /after.html?nonce=' in s and ' 200 ' in s for s in (p/'reports/after-fixture.log').read_text().splitlines())
+          PY
+      - name: Package verified image, notes, and evidence
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp iso/candidate.iso dist/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso
+          cp web115release/V115_RELEASE_NOTES.md dist/README_V115_EXPERIMENTAL.md
+          (cd dist && sha256sum Puppy50_v115_Font_Cache_EXPERIMENTAL.iso >SHA256SUMS)
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v115_Test_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in map(Path,('evidence','web115font','web115release','web114hash','web114ram','web113','web112','web109','web103')):
+                  if root.exists():
+                      for p in sorted(root.rglob('*')):
+                          if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:z.write(p,p.as_posix())
+              for p in sorted(Path('.github/workflows').glob('puppy50-v115*.yml')):z.write(p,p.as_posix())
+          PY
+      - name: Publish a separate experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v115-font-cache-experimental'
+          build_sha='f1e0f1347d2d5b6b97eb61639b82c7fb4e3df06c'
+          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release already exists; refusing overwrite.' >&2; exit 1; fi
+          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -z "$tag_ref" ]; then gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null; else test "${tag_ref%%$'\t'*}" = "$build_sha"; fi
+          gh release create "$tag" dist/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V115_EXPERIMENTAL.md dist/Puppy50_v115_Test_Evidence.zip --verify-tag --title 'Puppy50 v115 Font Cache (EXPERIMENTAL)' --notes-file web115release/V115_RELEASE_NOTES.md --prerelease --latest=false
+      - name: Verify published ISO bytes
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v115-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v115-font-cache-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a' /tmp/puppy50-v115-release.iso | sha256sum -c -
