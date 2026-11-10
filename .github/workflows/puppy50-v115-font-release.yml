@@ -83,7 +83,7 @@ jobs:
           mkdir dist
           cp iso/candidate.iso dist/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso
           cp web115release/V115_RELEASE_NOTES.md dist/README_V115_EXPERIMENTAL.md
-          (cd dist && sha256sum Puppy50_v115_Font_Cache_EXPERIMENTAL.iso >SHA256SUMS)
+          (cd dist && sha256sum Puppy50_v115_Font_Cache_EXPERIMENTAL.iso >SHA256SUMS_V115)
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile,ZIP_DEFLATED
