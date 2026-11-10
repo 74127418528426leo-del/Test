@@ -1,0 +1,79 @@
+name: Preserve Puppy50 font-cache and prefetch research
+on:
+  push:
+    branches: [puppy50-v114-release]
+    paths: [.github/workflows/puppy50-v115-font-prefetch-evidence.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify completed experiment runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '74127418528426leo-del/Test'
+          for run in 42695302850 42696896129 42695335382 42696016668; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "null")')" = 'completed:success'
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-fontcache-evidence
+          run-id: 42695302850
+          github-token: ${{ github.token }}
+          path: evidence/font-initial
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v114-fontcache-independent-evidence
+          run-id: 42696896129
+          github-token: ${{ github.token }}
+          path: evidence/font-repeat
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-hotpages-probe-evidence
+          run-id: 42695335382
+          github-token: ${{ github.token }}
+          path: evidence/page-probe
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-hotpages-comparison-evidence
+          run-id: 42696016668
+          github-token: ${{ github.token }}
+          path: evidence/page-comparison
+      - name: Validate recorded results and package evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('evidence')
+          f=json.loads((root/'font-repeat/reports/comparison-repeat.json').read_text());assert len(f['results'])==8
+          assert abs(f['mean_gain_first_home_seen_seconds']-.4375)<.001
+          q=json.loads((root/'page-comparison/reports/comparison.json').read_text());assert q['home_gain_seconds']<-.7
+          p=json.loads((root/'page-probe/reports/page-summary.json').read_text())
+          assert sum(x['cached'] for x in p['files'].values())==164093952
+          PY
+          mkdir dist
+          cp web114release/V115_FONTS_PREFETCH_RESEARCH.md dist/Puppy50_v115_Fonts_Prefetch_Research.md
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          with ZipFile('dist/Puppy50_v115_Fonts_Prefetch_Evidence.zip','w',compression=ZIP_DEFLATED,compresslevel=6) as z:
+              for root in (Path('evidence'),Path('web114release')):
+                  for p in sorted(root.rglob('*')):
+                      if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:z.write(p,p.as_posix())
+          PY
+      - name: Add evidence without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='puppy50-v114-fast-verification-experimental'
+          gh release view "$tag" --json assets --jq '.assets[].name' >existing-assets.txt
+          for f in dist/*; do if grep -Fx "$(basename "$f")" existing-assets.txt; then exit 1; fi; done
+          gh release upload "$tag" dist/*
