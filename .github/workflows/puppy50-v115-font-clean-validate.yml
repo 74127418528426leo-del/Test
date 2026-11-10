@@ -1,0 +1,91 @@
+name: Puppy50 v115 clean font candidate UEFI and recovery validation
+on:
+  push:
+    branches: [puppy50-v115-font-clean]
+    paths: [.github/workflows/puppy50-v115-font-clean-validate.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [bios-2048, uefi-3072, bios-fullram-fallback]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools and verify harness
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input evidence/reports fixture
+          python3 web112/early_probe.py web109/boot_bench_staged.py web115font/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web115font/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          python3 -m py_compile web115font/interactive_bench.py
+          lscpu >evidence/reports/host-cpu.txt
+          free -h >evidence/reports/host-memory.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-test-only-iso
+          run-id: 42748059555
+          github-token: ${{ github.token }}
+          path: input
+      - name: Verify exact candidate and start local fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sha=$(awk '$2=="out/candidate.iso" {print $1}' input/reports/iso-hashes.txt)
+          test "${#sha}" -eq 64
+          printf '%s  %s\n' "$sha" input/candidate.iso | tee evidence/reports/iso-sha.txt | sha256sum -c -
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >evidence/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >evidence/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Exercise selected firmware and recovery path
+        env:
+          TRIAL: ${{ matrix.trial }}
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          args=(--iso input/candidate.iso --out evidence/cand1 --mode online --allow-no-startup-probe --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280)
+          case "$TRIAL" in
+            bios-2048) args+=(--wait-ram-ready --ram 2048);;
+            uefi-3072) args+=(--wait-ram-ready --ram 3072 --firmware uefi);;
+            bios-fullram-fallback) args+=(--select-fullram-fallback --ram 3072);;
+            *) exit 1;;
+          esac
+          python3 -u web115font/interactive_bench.py "${args[@]}"
+          grep -F '"GET /e HTTP/1.1" 200' evidence/reports/early-fixture.log
+          grep -F "GET /after.html?nonce=$P50_NONCE" evidence/reports/after-fixture.log | grep -F ' 200 '
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('evidence/cand1');r=json.loads((p/'result.json').read_text());t=os.environ['TRIAL']
+          assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None
+          assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors']
+          serial=(p/'serial.log').read_text().replace('\r','')
+          if t=='bios-fullram-fallback':
+              assert r['fullram_fallback_selected'] and 'P50_STAGE_READY' not in serial and (p/'fallback-menu-selected.png').is_file()
+          else:assert r['staged_ram_ready_seconds'] is not None and 'P50_STAGE_COPY_VERIFIED' in serial and 'P50_STAGE_READY' in serial
+          out={'trial':t,'physical_acer_tested':False,'results':{k:r.get(k) for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds','media_ejected')}}
+          Path('evidence/reports/summary.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
+          PY
+      - name: Preserve validation evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-${{ matrix.trial }}-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
