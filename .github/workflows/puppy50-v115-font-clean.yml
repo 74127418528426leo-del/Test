@@ -1,0 +1,166 @@
+name: Puppy50 v115 clean optional font cache candidate
+on:
+  push:
+    branches: [puppy50-v115-font-clean]
+    paths: [.github/workflows/puppy50-v115-font-clean.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM and filesystem tools and verify patch
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/{main,reports,tree,rechecked} fixture
+          python3 -m unittest discover -s web115font -p 'test_*.py' -v
+          python3 web112/early_probe.py web109/boot_bench_staged.py web115font/interactive_bench.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web115font/interactive_bench.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          new="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .2)"
+          assert s.count(old)==1;s=s.replace(old,new,1);p.write_text(s)
+          PY
+          python3 -m py_compile web115font/interactive_bench.py
+          lscpu >out/reports/host-cpu.txt
+          free -h >out/reports/host-memory.txt
+      - name: Fetch exact v114 and generate system font caches in its own filesystem
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error -o input/v114.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v114_Fast_Verification_EXPERIMENTAL.iso'
+          printf '%s  %s\n' 'bf19a63758fbb6ab9aad5cb3b04c9b0e97b32944ab30f304fa16a205c78096b9' input/v114.iso | sha256sum -c -
+          xorriso -osirrox on -indev input/v114.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/base.squashfs >out/reports/extract.log 2>&1
+          sudo unsquashfs -d out/root out/base.squashfs >out/reports/unsquash.log
+          find out/root/var/cache/fontconfig -type f -name '*cache-*' -print >out/reports/original-cache-files.txt
+          test ! -s out/reports/original-cache-files.txt
+          sudo env LC_ALL=C chroot out/root /usr/bin/fc-list --format '%{file}|%{family}|%{style}\n' | LC_ALL=C sort >out/reports/fontlist-before.txt
+          test "$(wc -l <out/reports/fontlist-before.txt)" -gt 30
+          sudo env LC_ALL=C chroot out/root /usr/bin/fc-cache -s -f -v >out/reports/fontcache-build.txt 2>&1
+          sudo env LC_ALL=C chroot out/root /usr/bin/fc-list --format '%{file}|%{family}|%{style}\n' | LC_ALL=C sort >out/reports/fontlist-after.txt
+          cmp out/reports/fontlist-before.txt out/reports/fontlist-after.txt
+          sha256sum out/reports/fontlist-after.txt >out/reports/fontlist.sha256
+          find out/root/var/cache/fontconfig -type f -name '*cache-*' -printf '%f %s\n' | sort >out/reports/prebuilt-caches.txt
+          test "$(wc -l <out/reports/prebuilt-caches.txt)" -eq 20
+          test "$(find out/root/var/cache/fontconfig -type f -name '*-le64.cache-9' | wc -l)" -eq 20
+          (cd out/root/var/cache/fontconfig && LC_ALL=C sha256sum *-le64.cache-9) >out/reports/cache-sha256.txt
+          sudo env LC_ALL=C chroot out/root /usr/bin/fc-cache -s -v >out/reports/prebuilt-validity.txt 2>&1
+          python3 - <<'PY2'
+          from pathlib import Path
+          s=Path('out/reports/prebuilt-validity.txt').read_text()
+          dirs=sorted({line.split(': skipping, existing cache is valid',1)[0] for line in s.splitlines() if ': skipping, existing cache is valid' in line})
+          assert len(dirs)>=3 and 'caching, new cache contents' not in s,dirs
+          Path('out/reports/expected-directories.txt').write_text('\n'.join(dirs)+'\n')
+          PY2
+          du -sb out/root/var/cache/fontconfig >out/reports/cache-size.txt
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo mkdir -p out/main/usr/lib/p50-fontcache
+          sudo cp -a out/root/var/cache/fontconfig/*cache-* out/main/usr/lib/p50-fontcache/
+          sudo cp out/main/usr/lib/live/boot/9990-main.sh out/original-main.sh
+          sudo cp out/main/usr/lib/p50-stage/p50-migrate.sh out/original-migrate.sh
+          sudo python3 web115font/font_cache_clean.py out/main
+          sudo cmp out/original-migrate.sh out/main/usr/lib/p50-stage/p50-migrate.sh
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+          sudo rm -rf -- out/root
+      - name: Build isolated test image and verify unmodified root and fallback
+        run: |
+          set -euo pipefail
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+          stat -c '%n %s' out/original.initrd out/candidate.initrd out/base.squashfs >out/reports/component-sizes.txt
+          xorriso -indev input/v114.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          xorriso -osirrox on -indev out/stage.iso -extract / out/tree >out/reports/tree.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          root=Path('out/tree').resolve();lines=[];seen=set()
+          for line in (root/'sha256sum.txt').read_text().splitlines():
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name.startswith('./') and name not in seen;seen.add(name)
+              p=(root/name).resolve(strict=True);p.relative_to(root);assert p.is_file() and name!='./sha256sum.txt'
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for block in iter(lambda:f.read(1048576),b''):h.update(block)
+              lines.append(h.hexdigest()+m.group(2)+name)
+          assert len(lines)==293
+          Path('out/sha256sum.txt').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/rechecked >out/reports/recheck.log 2>&1
+          cmp out/base.squashfs out/rechecked/live/filesystem.squashfs
+          cmp out/candidate.initrd out/rechecked/live/initrd.img
+          cmp out/original-full.initrd out/rechecked/live/initrd-full.img
+          (cd out/rechecked && sha256sum -c sha256sum.txt) >out/reports/media-checksums.txt
+          test "$(wc -l <out/reports/media-checksums.txt)" -eq 293
+          sha256sum input/v114.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Keep exact clean candidate for independent validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-test-only-iso
+          path: |
+            out/candidate.iso
+            out/reports/iso-hashes.txt
+            out/reports/cache-sha256.txt
+            out/reports/expected-directories.txt
+            out/reports/fontlist.sha256
+          compression-level: 0
+          retention-days: 3
+      - name: Start independent browser fixtures
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          nohup python3 -u web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/after-fixture.log 2>&1 </dev/null &
+          nohup python3 -u web112/early_fixture.py --port 8766 >out/reports/early-fixture.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Compare four alternating interactive boots
+        timeout-minutes: 20
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for run in base1 cand1 cand2 base2; do
+            if [[ "$run" == base* ]]; then iso=input/v114.iso; else iso=out/candidate.iso; fi
+            python3 -u web115font/interactive_bench.py --iso "$iso" --out "out/$run" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 210 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          done
+          test "$(grep -c '"GET /e HTTP/1.1" 200' out/reports/early-fixture.log)" -eq 4
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/after-fixture.log)" -eq 4
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics
+          keys=('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds')
+          names=('base1','cand1','cand2','base2');r={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,x in r.items():
+              assert all(x.get(k) is not None for k in keys),(n,x)
+              assert x['early_media_attached_before_navigation'] and x['early_media_attached_after_js_response'] and x['media_ejected'] and x['input_sent_after_eject'] and x['qemu_running_at_end'] and not x['errors'],n
+          result={'measurement':'A-B-B-A same host, 2 virtual CPUs, 3 GiB, BIOS, virtual USB capped 30 MiB/s; first frame polling .2 s plus capture overhead.','physical_acer_tested':False,'results':{n:{k:r[n][k] for k in keys} for n in names}}
+          for label,pair in [('baseline',('base1','base2')),('candidate',('cand1','cand2'))]:
+              for k in keys:result[label+'_mean_'+k]=statistics.mean(r[n][k] for n in pair)
+          result['home_difference_seconds']=result['baseline_mean_first_home_seen_seconds']-result['candidate_mean_first_home_seen_seconds']
+          result['response_difference_seconds']=result['baseline_mean_early_js_response_seconds']-result['candidate_mean_early_js_response_seconds']
+          Path('out/reports/comparison.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
+          PY
+      - name: Preserve evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puppy50-v115-clean-font-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          if-no-files-found: warn
+          retention-days: 30
