@@ -94,19 +94,18 @@ jobs:
                           if p.is_file() and not p.is_symlink() and p.suffix!='.pyc' and p.stat().st_size<20000000:z.write(p,p.as_posix())
               for p in sorted(Path('.github/workflows').glob('puppy50-v115*.yml')):z.write(p,p.as_posix())
           PY
-      - name: Publish a separate experimental prerelease
+      - name: Attach experimental v115 to existing prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag='puppy50-v115-font-cache-experimental'
-          build_sha='f1e0f1347d2d5b6b97eb61639b82c7fb4e3df06c'
-          if gh release view "$tag" >/dev/null 2>&1; then echo 'Release already exists; refusing overwrite.' >&2; exit 1; fi
-          tag_ref="$(git ls-remote --tags origin "refs/tags/$tag")"
-          if [ -z "$tag_ref" ]; then gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$build_sha" >/dev/null; else test "${tag_ref%%$'\t'*}" = "$build_sha"; fi
-          gh release create "$tag" dist/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso dist/SHA256SUMS dist/README_V115_EXPERIMENTAL.md dist/Puppy50_v115_Test_Evidence.zip --verify-tag --title 'Puppy50 v115 Font Cache (EXPERIMENTAL)' --notes-file web115release/V115_RELEASE_NOTES.md --prerelease --latest=false
+          tag='puppy50-v114-fast-verification-experimental'
+          gh release view "$tag" --json isPrerelease --jq .isPrerelease | grep -Fx true
+          gh release view "$tag" --json assets --jq '.assets[].name' >existing-assets.txt
+          for f in dist/*; do if grep -Fx "$(basename "$f")" existing-assets.txt; then echo 'Refusing to overwrite an existing asset' >&2; exit 1; fi; done
+          gh release upload "$tag" dist/*
       - name: Verify published ISO bytes
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v115-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v115-font-cache-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso'
+          curl --fail --location --retry 3 --silent --show-error -o /tmp/puppy50-v115-release.iso 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso'
           printf '%s  %s\n' 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a' /tmp/puppy50-v115-release.iso | sha256sum -c -
