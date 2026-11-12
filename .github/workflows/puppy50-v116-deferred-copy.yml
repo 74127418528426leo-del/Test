@@ -83,7 +83,7 @@ jobs:
           xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
           xorriso -osirrox on -indev out/candidate.iso -extract /live/initrd.img out/recheck/initrd -extract /live/initrd-full.img out/recheck/fallback -extract /live/filesystem.squashfs out/recheck/root -extract /sha256sum.txt out/recheck/sha256sum.txt >out/reports/recheck.log 2>&1
           cmp out/candidate.initrd out/recheck/initrd
-          cmp out/original.full.initrd out/recheck/fallback
+          cmp out/original-full.initrd out/recheck/fallback
           cmp out/original.squashfs out/recheck/root
           cmp out/sha256sum.txt out/recheck/sha256sum.txt
           sha256sum input/base.iso out/candidate.iso >out/reports/iso-hashes.txt
