@@ -10,7 +10,13 @@ jobs:
   compare:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
       - name: Install isolated VM and ISO tools
         run: |
           set -euo pipefail
@@ -18,7 +24,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
-          mkdir -p input out/main out/recheck out/reports
+          mkdir -p input fixture out/main out/recheck out/reports
       - name: Download and authenticate exact v115 ISO and evidence source
         run: |
           set -euo pipefail
@@ -28,13 +34,9 @@ jobs:
           echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/base.iso' | sha256sum -c -
           echo '7825360436f14213ae8415e1505a11868f48826a9f4d48f8eb02f1354842ad6b  input/source.zip' | sha256sum -c -
           python3 - <<'PY'
-          from pathlib import Path
           import zipfile
           with zipfile.ZipFile('input/source.zip') as z:
               assert z.testzip() is None
-              for key in ['web109/boot_bench_staged.py','web103/fixture_server.py','web112/early_fixture.py']:
-                  assert key in z.namelist(), key
-                  p=Path('input/source')/key;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(z.read(key))
           PY
           python3 input/source/web109/boot_bench_staged.py --help | tail -n 12
       - name: Change only the background RAM copy start from 8 to 20 seconds
