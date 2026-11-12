@@ -35,7 +35,7 @@ jobs:
                       if rx.search(line):
                           matches.append({'file':m.filename,'line':n,'text':line[:240]})
                           if len(matches)>=400:break
-                  if len(matches)>=400:break
+                  if len(matches)>=400:continue
           pathlib.Path('inventory.json').write_text(json.dumps(inventory,indent=2))
           pathlib.Path('matched-lines.json').write_text(json.dumps(matches,indent=2))
           lines=['# Puppy50 v115 evidence audit','','ZIP SHA-256 verified and CRC checked; no archived files executed.','','## Files']
@@ -48,6 +48,12 @@ jobs:
           print(f'Evidence verified: {len(inventory)} files and {len(matches)} matching lines')
           print('INVENTORY_START')
           for x in inventory: print(x['path'], x['size'])
+          print('SELECTED_EVIDENCE_START')
+          with zipfile.ZipFile('evidence.zip') as evidence:
+              for key in ('evidence/audit/boot-hook.diff','evidence/audit/initramfs-audit.json','evidence/audit/iso-byte-audit.json','evidence/audit/new-boot-layout.txt','evidence/comparison/base1/result.json','evidence/comparison/base2/result.json','evidence/comparison/cand1/result.json','evidence/comparison/cand2/result.json'):
+                  if key in evidence.namelist():
+                      print('FILE',key)
+                      print(evidence.read(key).decode('utf8','replace')[:5500])
           print('TOP_MATCHES_START')
           for x in matches[:40]: print(f"{x['file']}:{x['line']}: {x['text']}")
           PY
