@@ -37,3 +37,20 @@ A matched same-ISO storage-bandwidth A/B has been scheduled separately to test w
 https://github.com/74127418528426leo-del/Test/actions/runs/43235887141
 
 This document is not evidence of an 8-second release, and no replacement ISO should be published without a reproducible win and functional tests.
+
+## Significant new result — virtual boot-media bandwidth (unchanged v115 ISO)
+
+A four-boot A–B–B–A comparison used the **identical verified v115 ISO** and switched only the QEMU virtual USB read cap from 30 MiB/s to uncapped. Both conditions used 2 virtual CPUs, 3 GiB RAM, BIOS, and the same host. All four trials saw the actual Firefox home frame, completed RAM-copy verification, removed virtual boot media and interacted with the browser afterward.
+
+| Virtual media condition | First Firefox frame mean | Verified RAM-ready mean |
+| --- | ---: | ---: |
+| 30 MiB/s capped USB | 14.57 s | 35.205 s |
+| Uncapped USB | **10.65 s** | **19.28 s** |
+
+**Observed first-frame difference: 3.92 seconds.** This is a genuine same-host experiment, but **uncapped virtual USB is not a measured SSD or physical USB device**. The result does not prove eight seconds or predict exact Acer X3950 performance. Source: https://github.com/74127418528426leo-del/Test/actions/runs/43235887141
+
+## Instrumented v115 startup milestones
+
+An independently booted diagnostic v115 copy emitted guest uptime markers: initial live-root hook at **1.99 s**, LightDM login preflight at **5.09 s**, and Firefox execution command at **6.88 s**. Its first visible frame occurred at **14.69 s on the separate host/QEMU launch clock**. These numbers must not be naively subtracted because the clock origins differ; the record places a substantial portion of startup after kernel/live-root setup and during browser initialization. The diagnostic VM safely removed its boot media after verified RAM readiness. Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43236803856
+
+Next separate comparisons: 2 versus 4 virtual logical CPUs and uncapped XHCI versus emulated SATA/AHCI. Both are deployment/runtime tests of the unchanged ISO and will not be represented as improved ISO bytes.
