@@ -1,0 +1,75 @@
+name: Puppy50 v116 - storage bandwidth bottleneck A/B
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-storage-bandwidth.yml']
+permissions: {contents: read}
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install KVM and authenticate v115 release
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/verified-v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/verified-v115.iso' | sha256sum -c -
+          lscpu >out/reports/host-cpu.txt
+      - name: Serve isolated local test pages
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Four matched boots, same bytes, only storage cap changes
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          for trial in cap1 fast1 fast2 cap2; do
+            if [[ "$trial" == cap* ]]; then bandwidth=31457280; else bandwidth=0; fi
+            python3 -u input/source/web109/boot_bench_staged.py --iso input/verified-v115.iso --out "out/$trial" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth "$bandwidth"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import statistics,json
+          names=['cap1','fast1','fast2','cap2']
+          d={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in d.items():
+              assert r.get('first_home_seen_seconds') is not None,(n,r)
+              assert r.get('staged_ram_ready_seconds') is not None,(n,r)
+              assert r.get('media_ejected') and r.get('input_sent_after_eject') and not r.get('errors'),(n,r)
+          o={'iso_sha256':'d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a',
+              'design':'A-B-B-A, exact same ISO, BIOS 3GiB, 2 vCPU, virtual USB, cap 30MiB/s versus uncapped; host startup clock includes virtual BIOS and menu',
+              'not_physical_acer':True,
+              'trials':{n:{k:d[n].get(k) for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected','input_sent_after_eject')} for n in names}}
+          for label,pair in [('cap',('cap1','cap2')),('uncapped',('fast1','fast2'))]:
+              for key in ('first_home_seen_seconds','staged_ram_ready_seconds'):
+                  o[label+'_mean_'+key]=statistics.mean(d[n][key] for n in pair)
+          o['first_frame_gain_seconds']=o['cap_mean_first_home_seen_seconds']-o['uncapped_mean_first_home_seen_seconds']
+          Path('out/reports/storage_ab.json').write_text(json.dumps(o,indent=2)+'\n')
+          print('P50_STORAGE_AB',json.dumps(o,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v116-storage-bandwidth-evidence
+          path: |
+            out/reports/
+            out/cap1/
+            out/cap2/
+            out/fast1/
+            out/fast2/
+          retention-days: 14
+          if-no-files-found: warn
