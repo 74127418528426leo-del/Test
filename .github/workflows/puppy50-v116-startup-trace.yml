@@ -1,0 +1,125 @@
+name: Puppy50 v116 - v115 boot critical-path timing trace
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-startup-trace.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-v116-evidence-audit
+          path: input/patch
+      - name: Install isolated VM and ISO tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input fixture out/main out/recheck out/reports
+      - name: Download and authenticate exact v115 ISO and evidence source
+        run: |
+          set -euo pipefail
+          base='https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental'
+          curl -fL --retry 3 --silent --show-error "$base/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso" -o input/base.iso
+          curl -fL --retry 3 --silent --show-error "$base/Puppy50_v115_Test_Evidence.zip" -o input/source.zip
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/base.iso' | sha256sum -c -
+          echo '7825360436f14213ae8415e1505a11868f48826a9f4d48f8eb02f1354842ad6b  input/source.zip' | sha256sum -c -
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('input/source.zip') as z:
+              assert z.testzip() is None
+          PY
+          python3 input/source/web109/boot_bench_staged.py --help | tail -n 12
+      - name: Patch only staged boot to prioritize Firefox
+        run: |
+          set -euo pipefail
+          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/original.squashfs -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          # Exact two-part initrd layout from the original v115 build evidence.
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main/usr/lib/live/boot/9990-main.sh out/main-original.sh
+          sudo python3 input/source/web113/boot_experiments.py out/main profile
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/main/usr/lib/live/boot/9990-misc-helpers.sh
+          sudo sh -n out/main/usr/lib/p50-stage/p50-migrate.sh
+          sudo diff -u out/main-original.sh out/main/usr/lib/live/boot/9990-main.sh >out/reports/ONLY_BOOT_HOOK_CHANGE.diff || test "$?" -eq 1
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+          xorriso -indev input/base.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          entries=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(entries)==293
+          digest=hashlib.sha256(Path('out/candidate.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          new=[];seen=set()
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              new.append((digest if name in changed else m.group(1))+m.group(2)+name)
+          assert changed.issubset(seen),changed-seen
+          Path('out/sha256sum.txt').write_text('\n'.join(new)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract /live/initrd.img out/recheck/initrd -extract /live/initrd-full.img out/recheck/fallback -extract /live/filesystem.squashfs out/recheck/root -extract /sha256sum.txt out/recheck/sha256sum.txt >out/reports/recheck.log 2>&1
+          cmp out/candidate.initrd out/recheck/initrd
+          cmp out/original-full.initrd out/recheck/fallback
+          cmp out/original.squashfs out/recheck/root
+          cmp out/sha256sum.txt out/recheck/sha256sum.txt
+          sha256sum input/base.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Start local offline/online browser fixture
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Boot instrumented v115 and print timestamped startup evidence
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python3 -u input/source/web109/boot_bench_staged.py --iso out/candidate.iso --out out/cand1 --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 31457280
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          r=json.loads(Path('out/cand1/result.json').read_text())
+          print('P50_SINGLE_TRACE_METRICS',json.dumps({k:r.get(k) for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected','input_sent_after_eject','errors')},indent=2))
+          assert r.get('first_home_seen_seconds') is not None
+          assert r.get('staged_ram_ready_seconds') is not None and r.get('media_ejected')
+          lines=Path('out/cand1/serial.log').read_text(errors='replace').splitlines()
+          report=[line for line in lines if ('P50_V113_' in line or 'P50_STAGE_' in line or 'lightdm' in line.lower() or 'firefox' in line.lower() or 'critical-chain' in line)]
+          print('P50_DIAGNOSTIC_MARKERS_BEGIN')
+          print('\n'.join(report[:140])[:18000])
+          print('P50_DIAGNOSTIC_MARKERS_END')
+          Path('out/reports/critical_path.txt').write_text('\n'.join(report)+'\n')
+          PY
+      - name: Preserve measurements and diff whether or not tests passed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v116-startup-trace-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          retention-days: 14
+          if-no-files-found: warn
