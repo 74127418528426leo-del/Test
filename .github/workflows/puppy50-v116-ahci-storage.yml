@@ -32,7 +32,7 @@ jobs:
           p=Path('input/source/web109/boot_bench_staged.py')
           s=p.read_text()
           old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
-          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-hd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
           assert s.count(old)==1, 'Cannot identify exact QEMU boot-device code'
           Path('input/source/web109/boot_bench_ahci.py').write_text(s.replace(old,new,1))
           PY
