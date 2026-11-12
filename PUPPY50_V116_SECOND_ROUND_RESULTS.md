@@ -54,3 +54,11 @@ A four-boot A–B–B–A comparison used the **identical verified v115 ISO** an
 An independently booted diagnostic v115 copy emitted guest uptime markers: initial live-root hook at **1.99 s**, LightDM login preflight at **5.09 s**, and Firefox execution command at **6.88 s**. Its first visible frame occurred at **14.69 s on the separate host/QEMU launch clock**. These numbers must not be naively subtracted because the clock origins differ; the record places a substantial portion of startup after kernel/live-root setup and during browser initialization. The diagnostic VM safely removed its boot media after verified RAM readiness. Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43236803856
 
 Next separate comparisons: 2 versus 4 virtual logical CPUs and uncapped XHCI versus emulated SATA/AHCI. Both are deployment/runtime tests of the unchanged ISO and will not be represented as improved ISO bytes.
+
+## Follow-up CPU scaling (unchanged v115 ISO, uncapped virtual USB)
+
+Four A–B–B–A boot-and-ejection runs with identical v115 bytes and 3 GiB guest RAM tested two versus four virtual logical CPUs. First Firefox screen averaged **11.420 s at 2 vCPUs** and **11.425 s at 4 vCPUs**. Both completed RAM verification and virtual-media removal, but the **0.005 s** difference is entirely uninformative as an improvement. Reject adding virtual CPUs purely to improve this startup metric. Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43237354016
+
+## SATA/CD-ROM correctness
+
+The initial test treating the read-only ISO as an `ide-hd` failed QEMU launch (`Block node is read-only`). Reattaching it as `ide-cd` enabled a Firefox frame at **8.14 s** in one diagnostic run and completed its RAM-copy checksum at **15.26 s**, but the old USB `device_del` harness failed (`Bus 'ahci.0' does not support hotplugging`). **That result is incomplete and not a passing boot-and-ejection trial.** The test was corrected to use QMP/HMP CD *medium eject* instead of removing the AHCI device, and separate A–B–B–A runs are needed before any SATA benefit claim. Sources: https://github.com/74127418528426leo-del/Test/actions/runs/43238758836 and https://github.com/74127418528426leo-del/Test/actions/runs/43239297667
