@@ -70,6 +70,12 @@ jobs:
           Path('out/reports/ahci_ab.json').write_text(json.dumps(o,indent=2)+'\n')
           print('P50_AHCI_AB',json.dumps(o,indent=2))
           PY
+      - name: Print VM error logs on failed storage experiment
+        if: failure()
+        run: |
+          for p in out/usb1/qemu.log out/ahci1/qemu.log out/ahci1/serial.log; do
+            if test -f "$p"; then echo "DIAG_FILE $p"; head -n 80 "$p"; fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
