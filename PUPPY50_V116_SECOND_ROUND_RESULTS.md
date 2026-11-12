@@ -77,3 +77,27 @@ These mean values come from **two trials per variant**, each in A–B–B–A or
 Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43239297667 and https://github.com/74127418528426leo-del/Test/actions/runs/43239306226
 
 **Important:** There is no code-level ISO optimization here. The same exact v115 ISO (SHA-256 `d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a`) booted from different emulated controllers. These VM results neither certify real SATA SSD speeds nor confirm safe physical-media removal on the user's Acer. 
+
+## High-resolution SATA/CD-ROM A–B–B–A, definitive v116 virtual result
+
+The final four-run comparison used the **unchanged exact v115 ISO**, 2 virtual CPUs, 3 GiB guest RAM, virtual BIOS, uncapped backing storage, the same GitHub Actions host, and **0.2-second** first-frame polling plus screenshot overhead. The only tested difference was QEMU XHCI USB versus AHCI/SATA CD-ROM drive. The SATA VM's read-only boot medium was ejected with QMP/HMP `eject -f livecd` after the checksum-verified RAM migration, and the workflow then required the local HTTP fixture server to record **four post-ejection successful responses**, in addition to the benchmark's first-frame, RAM-ready, QMP ejection and browser input checks.
+
+| Trial | First Firefox frame | Verified RAM ready | Safe virtual-media eject and interaction |
+| --- | ---: | ---: | :---: |
+| USB1 | 10.55 s | 18.22 s | pass |
+| SATA1 | **8.91 s** | 16.08 s | pass |
+| SATA2 | **8.97 s** | 16.13 s | pass |
+| USB2 | 10.31 s | 17.95 s | pass |
+| **USB mean** | **10.430 s** | **18.085 s** | pass |
+| **SATA mean** | **8.940 s** | **16.105 s** | pass |
+
+The SATA configuration improved this same-host mean by **1.49 seconds**, with a verified post-ejection local page response. No trial met the **≤8-second** first-frame threshold. Even the best observed fine-polling SATA first-frame time was **8.91 s**. The additional earlier SATA boot's 8.14 s was only a single measurement from another run using less precise 0.8-s polling and failed its outdated USB hotplug test; it should NOT be used as proof of threshold success.
+
+Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43239548225
+
+### Final engineering decision for v116 research
+
+- **No superior ISO bytes have been created.** The fastest credible path is **run the same v115 image from suitably fast SATA-backed storage**, not an unsupported change to Firefox security, a fake boot splash, a discarded profile workaround, or an unsafe RAM-copy shortcut.
+- **Do not publish a new 8-second v116 ISO**. The verified threshold is still unmet on the virtual machine, and the physical Acer X3950 and actual SSD, Wi-Fi, dual monitors and 4K web video remain untested.
+- **384 MiB RAM-only Firefox is unmet**: this build's compressed root alone occupies >664 MiB and does not fit in 384 MiB by design.
+- Preserve the original recovery and RAM-ready gates. Any further future optimization should profile Firefox's startup after the guest Live root/LightDM preflight; it must produce matched multi-run ≤8-s results and independent functional tests before release.
