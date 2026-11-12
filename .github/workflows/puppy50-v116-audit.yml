@@ -1,0 +1,57 @@
+name: Puppy50 v116 - inspect v115 evidence (read-only)
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-audit.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download published evidence ZIP
+        env:
+          URL: https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Test_Evidence.zip
+        run: |
+          curl -fL --retry 3 --silent --show-error "$URL" -o evidence.zip
+          echo "7825360436f14213ae8415e1505a11868f48826a9f4d48f8eb02f1354842ad6b  evidence.zip" | sha256sum -c -
+      - name: Inventory archive and surface timing evidence (do not execute archive)
+        run: |
+          python3 - <<'PY'
+          import html,json,os,pathlib,re,zipfile
+          rx=re.compile(r'(?i)(firefox|browser|first.frame|javascript|ram.ready|prefetch|font.cache|boot|squashfs|hash|verified|elapsed|seconds|timing|memory)')
+          inventory=[];matches=[];total_read=0
+          with zipfile.ZipFile('evidence.zip') as z:
+              assert z.testzip() is None, 'ZIP CRC failed'
+              for m in sorted(z.infolist(),key=lambda x:x.filename):
+                  if m.is_dir():continue
+                  inventory.append({'path':m.filename,'size':m.file_size})
+                  if (pathlib.Path(m.filename).suffix.lower() not in ('.txt','.log','.md','.json','.csv','.sh','.py','.yml','.yaml','.cfg','.conf','.html') or m.file_size>200000 or total_read+m.file_size>12000000): continue
+                  raw=z.read(m);total_read+=len(raw)
+                  if b'\0' in raw[:1024]:continue
+                  for n,line in enumerate(raw.decode('utf8','replace').splitlines(),1):
+                      if rx.search(line):
+                          matches.append({'file':m.filename,'line':n,'text':line[:240]})
+                          if len(matches)>=400:break
+                  if len(matches)>=400:break
+          pathlib.Path('inventory.json').write_text(json.dumps(inventory,indent=2))
+          pathlib.Path('matched-lines.json').write_text(json.dumps(matches,indent=2))
+          lines=['# Puppy50 v115 evidence audit','','ZIP SHA-256 verified and CRC checked; no archived files executed.','','## Files']
+          lines += [f'- {html.escape(x["path"])} ({x["size"]:,} bytes)' for x in inventory]
+          lines += ['','## Candidate timing and boot evidence (reported, not independently reproduced)']
+          lines += [f'- {html.escape(x["file"])}:{x["line"]}: {html.escape(x["text"])}' for x in matches]
+          pathlib.Path('AUDIT.md').write_text('\n'.join(lines)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write(f'v115 release ZIP digest and CRC verified. {len(inventory)} files; {len(matches)} candidate lines.\n')
+          print(f'Evidence verified: {len(inventory)} files and {len(matches)} matching lines')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v115-audit-report
+          path: |
+            AUDIT.md
+            inventory.json
+            matched-lines.json
+          retention-days: 14
