@@ -60,6 +60,12 @@ jobs:
                   if key in evidence.namelist():
                       print('DOC',key)
                       print(evidence.read(key).decode('utf8','replace')[:12500])
+          print('BUILD_RECIPE_START')
+          with zipfile.ZipFile('evidence.zip') as evidence:
+              for key in ('.github/workflows/puppy50-v115-font-clean.yml','web109/p50-migrate.sh','web109/stage_boot_patch.py'):
+                  if key in evidence.namelist():
+                      print('DOC',key)
+                      print(evidence.read(key).decode('utf8','replace')[:14000])
           print('TOP_MATCHES_START')
           for x in matches[:40]: print(f"{x['file']}:{x['line']}: {x['text']}")
           PY
