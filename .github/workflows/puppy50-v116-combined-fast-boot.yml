@@ -38,6 +38,11 @@ jobs:
           oldcpu="'-smp', '2'"
           assert s.count(oldcpu)==1, 'Cannot find exact guest CPU topology'
           s=s.replace(oldcpu,"'-smp', '4'",1)
+          eject_old="if args.media == 'optical':"
+          assert s.count(eject_old)==1, 'Expected one benchmark media-eject decision'
+          # This experimental SATA device is a CD-ROM; remove medium with QMP 'eject',
+          # NOT device_del: AHCI buses intentionally do not support hot-unplug.
+          s=s.replace(eject_old,"if True:  # AHCI CD medium ejection",1)
           Path('input/source/web109/boot_bench_combo.py').write_text(s)
           PY
       - name: Serve isolated local test pages
