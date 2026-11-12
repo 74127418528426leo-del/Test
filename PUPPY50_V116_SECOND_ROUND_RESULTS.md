@@ -62,3 +62,18 @@ Four A–B–B–A boot-and-ejection runs with identical v115 bytes and 3 GiB gu
 ## SATA/CD-ROM correctness
 
 The initial test treating the read-only ISO as an `ide-hd` failed QEMU launch (`Block node is read-only`). Reattaching it as `ide-cd` enabled a Firefox frame at **8.14 s** in one diagnostic run and completed its RAM-copy checksum at **15.26 s**, but the old USB `device_del` harness failed (`Bus 'ahci.0' does not support hotplugging`). **That result is incomplete and not a passing boot-and-ejection trial.** The test was corrected to use QMP/HMP CD *medium eject* instead of removing the AHCI device, and separate A–B–B–A runs are needed before any SATA benefit claim. Sources: https://github.com/74127418528426leo-del/Test/actions/runs/43238758836 and https://github.com/74127418528426leo-del/Test/actions/runs/43239297667
+
+## Verified virtual SATA/CD-ROM media ejection and post-ejection browser use
+
+The SATA benchmark harness now sends QMP/HMP `eject -f livecd` and verifies the **medium is no longer inserted**, rather than attempting unsupported AHCI device hotplug. All four comparable VMs booted, rendered Firefox, signaled verified RAM migration, ejected their boot medium, and exercised the browser afterward.
+
+| Separate same-host experiment | Baseline mean first Firefox frame | Candidate mean first Firefox frame | RAM ready baseline → candidate |
+| --- | ---: | ---: | ---: |
+| **2 vCPU**: uncapped XHCI USB vs uncapped SATA/AHCI CD | 11.445 s | **10.255 s SATA** | 19.375 → 17.680 s |
+| **2 vCPU USB vs 4 vCPU SATA** (two simultaneous variables) | 9.745 s | **8.970 s combined** | 17.380 → 15.615 s |
+
+These mean values come from **two trials per variant**, each in A–B–B–A order on one GitHub Actions host. The two experiments used different hosts and therefore their absolute times must not be compared as proof of a CPU gain; the independent 2-vs-4-vCPU test showed no speedup. These are 0.8-s polling measurements with capture overhead, not physical Acer power-on timings. The separate fine-polling study is needed for an exact <=8s threshold.
+
+Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43239297667 and https://github.com/74127418528426leo-del/Test/actions/runs/43239306226
+
+**Important:** There is no code-level ISO optimization here. The same exact v115 ISO (SHA-256 `d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a`) booted from different emulated controllers. These VM results neither certify real SATA SSD speeds nor confirm safe physical-media removal on the user's Acer. 
