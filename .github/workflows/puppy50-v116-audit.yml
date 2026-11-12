@@ -66,6 +66,14 @@ jobs:
                   if key in evidence.namelist():
                       print('DOC',key)
                       print(evidence.read(key).decode('utf8','replace')[:14000])
+          print('BENCH_FLAGS_START')
+          with zipfile.ZipFile('evidence.zip') as evidence:
+              for key in ('web109/boot_bench_staged.py','web109/boot_bench_sites.py'):
+                  if key in evidence.namelist():
+                      print('BENCH',key)
+                      for n,l in enumerate(evidence.read(key).decode('utf8','replace').splitlines(),1):
+                          if any(x in l for x in ('add_argument(', 'parse_args(', 'first_home_seen_seconds','staged_ram_ready_seconds','early_js_response_seconds','def main', 'time.sleep(')):
+                              print(f'{n}: {l[:210]}')
           print('TOP_MATCHES_START')
           for x in matches[:40]: print(f"{x['file']}:{x['line']}: {x['text']}")
           PY
