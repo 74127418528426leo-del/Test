@@ -46,6 +46,10 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
               f.write(f'v115 release ZIP digest and CRC verified. {len(inventory)} files; {len(matches)} candidate lines.\n')
           print(f'Evidence verified: {len(inventory)} files and {len(matches)} matching lines')
+          print('INVENTORY_START')
+          for x in inventory: print(x['path'], x['size'])
+          print('TOP_MATCHES_START')
+          for x in matches[:40]: print(f"{x['file']}:{x['line']}: {x['text']}")
           PY
       - uses: actions/upload-artifact@v4
         with:
