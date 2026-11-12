@@ -24,8 +24,8 @@ jobs:
       - name: Inspect bootloader configuration without booting or altering ISO
         run: |
           mkdir -p iso-config
-          xorriso -indev v115.iso -ls_r / > iso-config/iso-tree.txt 2>&1
-          xorriso -osirrox on -indev v115.iso -extract /isolinux iso-config/isolinux -extract /boot/grub iso-config/grub > iso-config/extract.log 2>&1
+          xorriso -indev v115.iso -ls_r / > iso-config/iso-tree.txt 2>&1 || { cat iso-config/iso-tree.txt; exit 1; }
+          xorriso -osirrox on -indev v115.iso -extract /isolinux iso-config/isolinux -extract /boot/grub iso-config/grub > iso-config/extract.log 2>&1 || { cat iso-config/extract.log; exit 1; }
           echo 'BOOT_CONFIG_START'
           find iso-config -type f \( -name '*.cfg' -o -name '*.conf' -o -name '*.txt' \) -size -100k | sort | while read -r f; do
             case "$f" in *iso-tree.txt) continue;; esac
