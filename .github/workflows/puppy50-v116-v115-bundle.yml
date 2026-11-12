@@ -1,0 +1,129 @@
+name: Puppy50 v115 - publish verified ISO + evidence ZIP bundle (not v116)
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-v115-bundle.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download exact released v115 input and prove integrity
+        run: |
+          set -euo pipefail
+          mkdir -p package/Puppy50_v115_Fast_SATA_VM
+          d=package/Puppy50_v115_Fast_SATA_VM
+          base=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental
+          curl -fLsS --retry 3 "$base/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso" -o "$d/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso"
+          curl -fLsS --retry 3 "$base/Puppy50_v115_Test_Evidence.zip" -o "$d/Puppy50_v115_Test_Evidence.zip"
+          cat > "$d/SHA256SUMS" <<'HASHES'
+          d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  Puppy50_v115_Font_Cache_EXPERIMENTAL.iso
+          7825360436f14213ae8415e1505a11868f48826a9f4d48f8eb02f1354842ad6b  Puppy50_v115_Test_Evidence.zip
+          HASHES
+          (cd "$d" && sha256sum -c SHA256SUMS)
+      - name: Bundle honest boot and safety instructions
+        run: |
+          set -euo pipefail
+          d=package/Puppy50_v115_Fast_SATA_VM
+          cat > "$d/README.txt" <<'README'
+          PUPPY50 v115 VERIFIED ISO + EVIDENCE BUNDLE
+          ===========================================
+          EXPERIMENTAL Debian Live browser OS, not an official Puppy Linux release.
+          THIS ZIP DOES NOT CONTAIN A NEW V116 OS OR A VERIFIED EIGHT-SECOND RELEASE.
+
+          Exact files:
+          - Puppy50_v115_Font_Cache_EXPERIMENTAL.iso (906,297,344 bytes)
+          - Puppy50_v115_Test_Evidence.zip (3,516,606 bytes)
+          Both must pass SHA256SUMS.
+
+          Latest virtual-machine proof:
+          - 30 MiB/s virtual USB: first Firefox frame mean 14.57 seconds.
+          - Same-ISO uncapped virtual USB: 10.65 seconds.
+          - In a separate 4-run same-host fine-polling A/B, uncapped USB 10.43
+            seconds versus SATA/AHCI CD-ROM 8.94 seconds to the first Firefox frame.
+          - SATA mean verified RAM READY: 16.105 seconds.
+          - All four fine-polling trials completed the RAM checksum migration,
+            virtual-media ejection, and a new local HTTP webpage after ejection.
+          - Test 43239548225: https://github.com/74127418528426leo-del/Test/actions/runs/43239548225
+
+          NOTE: QEMU CPU and disk speed do not reproduce an actual Acer i3-540.
+          The <=8-second first-frame goal is NOT achieved or guaranteed.
+          No real Acer SATA SSD, USB, i915 GPU, Wi-Fi or dual-monitor test has been done.
+          No 384 MiB RAM-only Firefox support exists with this 664MiB compressed root.
+
+          IF TESTING FROM PHYSICAL USB:
+          - Keep USB plugged in until the green RAM READY notice.
+          - Red/error notice means DO NOT remove the USB.
+          - Select Full RAM first fallback if staged boot fails.
+          - Writing the ISO onto a selected disk normally destroys that disk's contents.
+          - Live changes are lost at shutdown.
+
+          IF TESTING IN A QEMU/KVM VM:
+          - On a *separate adequately provisioned Linux host* with >=6GiB RAM,
+            run ./run-fast-sata-vm.sh. The VM defaults to 3072MiB guest RAM.
+          - On the user's Acer with only 4GiB host RAM this VM configuration
+            can starve the host, and the script refuses unsafe available RAM.
+          - Keep the virtual ISO attached until guest shows green RAM READY.
+            Do not force-remove a backing medium earlier.
+          - This uses a virtual SATA/AHCI CD-ROM for the exact original ISO;
+            it does not modify the filesystem, install Puppy50 or alter another disk.
+
+          Development notes (v116 research, no new ISO):
+          https://github.com/74127418528426leo-del/Test/pull/1
+          README
+          cat > "$d/run-fast-sata-vm.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "${BASH_SOURCE[0]}")"
+          if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+              echo "Install qemu-system-x86 and qemu-system-gui before running." >&2; exit 1
+          fi
+          if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+              echo "KVM device unavailable or permissions missing; cannot claim fast VM boot." >&2; exit 1
+          fi
+          RAM_MIB=${P50_VM_RAM_MIB:-3072}
+          if ! [[ "$RAM_MIB" =~ ^[0-9]+$ ]] || (( RAM_MIB < 3072 )); then
+              echo "Requires >=3072 MiB guest for tested RAM transition (other sizes unverified)." >&2; exit 1
+          fi
+          memavail="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          required_kib=$(( RAM_MIB*1024 + 1024*1024 ))
+          if (( memavail < required_kib )); then
+              echo "Insufficient free host RAM for a safe guest: need $required_kib KiB available." >&2
+              echo "Do not use 3GiB QEMU on a 4GiB Acer host without first increasing RAM." >&2; exit 1
+          fi
+          sha256sum -c SHA256SUMS
+          exec qemu-system-x86_64 \
+              -machine pc,accel=kvm -cpu host -m "$RAM_MIB" -smp 2 \
+              -drive file=Puppy50_v115_Font_Cache_EXPERIMENTAL.iso,if=none,id=livecd,format=raw,readonly=on \
+              -device ich9-ahci,id=ahci \
+              -device ide-cd,drive=livecd,bus=ahci.0,id=bootcd,bootindex=1 \
+              -boot order=c -vga std -nic user,model=e1000 -no-reboot
+          SH
+          chmod 0755 "$d/run-fast-sata-vm.sh"
+          grep -Fq 'SATA/AHCI CD-ROM 8.94 seconds' "$d/README.txt"
+      - name: Create reproducible single ZIP of existing ISO plus evidence
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zip
+          cd package
+          zip -q -0 -r Puppy50_v115_Verified_Fast_SATA_VM_Package.zip Puppy50_v115_Fast_SATA_VM
+          test "$(stat -c %s Puppy50_v115_Verified_Fast_SATA_VM_Package.zip)" -gt 906297344
+          unzip -tqq Puppy50_v115_Verified_Fast_SATA_VM_Package.zip
+          sha256sum Puppy50_v115_Verified_Fast_SATA_VM_Package.zip
+      - name: Publish as additional asset on existing experimental v115-containing release
+        run: |
+          set -euo pipefail
+          asset=Puppy50_v115_Verified_Fast_SATA_VM_Package.zip
+          tag=puppy50-v114-fast-verification-experimental
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
+              echo "Bundle already published; leaving existing release asset unchanged."
+          else
+              gh release upload "$tag" "package/$asset" --repo "$GITHUB_REPOSITORY"
+              echo "Published new optional v115 ZIP bundle, original ISO untouched."
+          fi

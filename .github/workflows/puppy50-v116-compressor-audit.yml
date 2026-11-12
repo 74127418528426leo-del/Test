@@ -1,0 +1,25 @@
+name: Puppy50 v116 - SquashFS compressor and hot-file audit
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-compressor-audit.yml']
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Read real v115 root SquashFS metadata and hot-file compression
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  v115.iso' | sha256sum -c -
+          xorriso -osirrox on -indev v115.iso -extract /live/filesystem.squashfs root.squashfs >/dev/null 2>&1
+          echo 'SQUASHFS_SUPERBLOCK_BEGIN'
+          unsquashfs -s root.squashfs
+          echo 'SQUASHFS_SUPERBLOCK_END'
+          echo 'FIREFOX_HOT_FILE_METADATA'
+          unsquashfs -ll root.squashfs usr/lib/firefox-esr/libxul.so usr/lib/firefox-esr/omni.ja usr/lib/firefox-esr/browser/omni.ja
+          echo 'ISO_SIZE'; stat -c %s v115.iso

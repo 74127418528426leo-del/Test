@@ -1,0 +1,95 @@
+name: Puppy50 v116 - fast USB versus SATA AHCI A/B
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-ahci-storage.yml']
+permissions: {contents: read}
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install KVM and authenticate v115 release
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/verified-v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/verified-v115.iso' | sha256sum -c -
+          lscpu >out/reports/host-cpu.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1, 'Cannot identify exact QEMU boot-device code'
+          eject_old="if args.media == 'optical':"
+          assert s.count(eject_old)==1, 'Expected one benchmark media-eject decision'
+          # This experimental SATA device is a CD-ROM; remove medium with QMP 'eject',
+          # NOT device_del: AHCI buses intentionally do not support hot-unplug.
+          s=s.replace(eject_old,"if True:  # AHCI CD medium ejection",1)
+          Path('input/source/web109/boot_bench_ahci.py').write_text(s.replace(old,new,1))
+          PY
+      - name: Serve isolated local test pages
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Four matched boots, same ISO and uncapped storage, XHCI versus AHCI
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          for trial in usb1 ahci1 ahci2 usb2; do
+            if [[ "$trial" == usb* ]]; then bench=input/source/web109/boot_bench_staged.py; else bench=input/source/web109/boot_bench_ahci.py; fi
+            python3 -u "$bench" --iso input/verified-v115.iso --out "out/$trial" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import statistics,json
+          names=['usb1','ahci1','ahci2','usb2']
+          d={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in d.items():
+              assert r.get('first_home_seen_seconds') is not None,(n,r)
+              assert r.get('staged_ram_ready_seconds') is not None,(n,r)
+              assert r.get('media_ejected') and r.get('input_sent_after_eject') and not r.get('errors'),(n,r)
+          o={'iso_sha256':'d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a',
+              'design':'A-B-B-A, exact same ISO BIOS 3GiB 2 vCPU, virtual USB/XHCI vs SATA/AHCI both uncapped; host launch clock',
+              'not_physical_acer':True,
+              'trials':{n:{k:d[n].get(k) for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected','input_sent_after_eject')} for n in names}}
+          for label,pair in [('usb',('usb1','usb2')),('ahci',('ahci1','ahci2'))]:
+              for key in ('first_home_seen_seconds','staged_ram_ready_seconds'):
+                  o[label+'_mean_'+key]=statistics.mean(d[n][key] for n in pair)
+          o['first_frame_gain_seconds']=o['usb_mean_first_home_seen_seconds']-o['ahci_mean_first_home_seen_seconds']
+          Path('out/reports/ahci_ab.json').write_text(json.dumps(o,indent=2)+'\n')
+          print('P50_AHCI_AB',json.dumps(o,indent=2))
+          PY
+      - name: Print VM error logs on failed storage experiment
+        if: failure()
+        run: |
+          for p in out/usb1/qemu.log out/ahci1/qemu.log out/ahci1/serial.log; do
+            if test -f "$p"; then echo "DIAG_FILE $p"; head -n 80 "$p"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v116-ahci-storage-evidence
+          path: |
+            out/reports/
+            out/usb1/
+            out/usb2/
+            out/ahci1/
+            out/ahci2/
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,0 +1,40 @@
+name: Puppy50 v116 - inspect ISO boot path (read-only)
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-iso-audit.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  boot-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install ISO inspection tool
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+      - name: Retrieve exact v115 ISO and verify its integrity
+        env:
+          URL: https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso
+        run: |
+          curl -fL --retry 3 --silent --show-error "$URL" -o v115.iso
+          echo "d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  v115.iso" | sha256sum -c -
+      - name: Inspect bootloader configuration without booting or altering ISO
+        run: |
+          mkdir -p iso-config
+          xorriso -indev v115.iso -ls / > iso-config/iso-tree.txt 2>&1 || { cat iso-config/iso-tree.txt; exit 1; }
+          xorriso -osirrox on -indev v115.iso -extract /isolinux iso-config/isolinux -extract /boot/grub iso-config/grub > iso-config/extract.log 2>&1 || { cat iso-config/extract.log; exit 1; }
+          echo 'BOOT_CONFIG_START'
+          find iso-config -type f \( -name '*.cfg' -o -name '*.conf' -o -name '*.txt' \) -size -100k | sort | while read -r f; do
+            case "$f" in *iso-tree.txt) continue;; esac
+            echo "FILE $f"
+            head -n 100 "$f"
+          done
+          echo 'BOOT_CONFIG_END'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v115-boot-config
+          path: iso-config/
+          retention-days: 14

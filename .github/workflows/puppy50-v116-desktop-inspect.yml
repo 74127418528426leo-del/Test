@@ -1,0 +1,38 @@
+name: Puppy50 v116 - inspect actual desktop critical path
+on:
+  push:
+    branches: [puppy50-v116-evidence-audit]
+    paths: ['.github/workflows/puppy50-v116-desktop-inspect.yml']
+  workflow_dispatch: {}
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install squashfs reader
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools
+      - name: Download verified v115 and inspect desktop runtime
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  v115.iso' | sha256sum -c -
+          mkdir -p rootview
+          xorriso -osirrox on -indev v115.iso -extract /live/filesystem.squashfs root.squashfs >/dev/null 2>&1
+          sudo unsquashfs -d rootview root.squashfs >/dev/null
+          echo 'P50_INSPECT_BEGIN'
+          for f in             usr/local/sbin/puppy50-prepare-session             etc/skel/.config/openbox/autostart             etc/lightdm/lightdm.conf             usr/lib/systemd/system/lightdm.service             usr/lib/systemd/system/live-config.service             usr/share/puppy50web/index.html             etc/X11/xorg.conf             etc/default/keyboard             etc/xdg/autostart/nm-applet.desktop; do
+            if test -f "rootview/$f"; then
+              echo "P50_FILE $f"
+              case "$f" in *index.html) head -c 1200 "rootview/$f"; echo;; *) head -c 13000 "rootview/$f"; echo;; esac
+            fi
+          done
+          echo 'P50_ETC_SKEL'
+          find rootview/etc/skel -maxdepth 6 -type f | sort | head -100
+          echo 'P50_INIT_UNITS'
+          find rootview/etc/systemd/system -maxdepth 4 -type l -o -type f | sort | head -120
+          echo 'P50_FIREFOX_PACKAGE'
+          ls -la rootview/usr/lib/firefox-esr | head -65
+          echo 'P50_INSPECT_END'
