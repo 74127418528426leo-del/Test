@@ -54,6 +54,12 @@ jobs:
                   if key in evidence.namelist():
                       print('FILE',key)
                       print(evidence.read(key).decode('utf8','replace')[:5500])
+          print('TECHNICAL_NOTES_START')
+          with zipfile.ZipFile('evidence.zip') as evidence:
+              for key in ('web113/RESEARCH_RESULTS.md','web113/boot_experiments.py','web109/boot_menus.py','web115release/V115_RELEASE_NOTES.md','web113/V113_FOLLOWUP.md'):
+                  if key in evidence.namelist():
+                      print('DOC',key)
+                      print(evidence.read(key).decode('utf8','replace')[:12500])
           print('TOP_MATCHES_START')
           for x in matches[:40]: print(f"{x['file']}:{x['line']}: {x['text']}")
           PY
