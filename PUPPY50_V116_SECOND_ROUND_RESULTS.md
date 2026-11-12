@@ -101,3 +101,13 @@ Evidence: https://github.com/74127418528426leo-del/Test/actions/runs/43239548225
 - **Do not publish a new 8-second v116 ISO**. The verified threshold is still unmet on the virtual machine, and the physical Acer X3950 and actual SSD, Wi-Fi, dual monitors and 4K web video remain untested.
 - **384 MiB RAM-only Firefox is unmet**: this build's compressed root alone occupies >664 MiB and does not fit in 384 MiB by design.
 - Preserve the original recovery and RAM-ready gates. Any further future optimization should profile Firefox's startup after the guest Live root/LightDM preflight; it must produce matched multi-run ≤8-s results and independent functional tests before release.
+
+## Final usable downloadable ZIP (existing v115 image, not v116 ISO)
+
+An integrity-checked **909,818,975-byte ZIP** of the exact current v115 ISO, its original 3,516,606-byte evidence ZIP, SHA256SUMS, detailed limitations/usage README, and cautious QEMU SATA VM launcher was published **without replacing the original ISO**:
+
+https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Verified_Fast_SATA_VM_Package.zip
+
+Package SHA-256 (GitHub release metadata): `5ee7efe41cd6edbb233ad744045fdeb77e414c75f47feb61f7b2d48c72f9a3ef`. The bundle was built by GitHub Actions with both source files verified against their original SHA-256 digests, and the produced ZIP passed CRC inspection. Package publishing workflow passed: https://github.com/74127418528426leo-del/Test/actions/runs/43241207587
+
+The included VM launcher requires KVM, refuses insufficient host memory, defaults to 3072 MiB guest RAM, boots with the tested AHCI virtual CD device, and never writes to a user's disk. **It is not a verified real Acer installed or 8-second OS**, and the supplied ISO bytes remain v115.
