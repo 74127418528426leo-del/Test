@@ -23,14 +23,7 @@ jobs:
           xorriso -osirrox on -indev v115.iso -extract /live/filesystem.squashfs root.squashfs >/dev/null 2>&1
           sudo unsquashfs -d rootview root.squashfs >/dev/null
           echo 'P50_INSPECT_BEGIN'
-          for f in             usr/local/sbin/puppy50-prepare-session             etc/skel/.config/openbox/autostart             etc/lightdm/lightdm.conf             usr/lib/systemd/system/lightdm.service             usr/lib/systemd/system/live-config.service             usr/share/puppy50web/index.html
-            etc/systemd/system/puppy50-gui-diagnostics.service
-            etc/systemd/system/puppy50-memory-diagnostics.service
-            etc/systemd/system/puppy50-network-probe.service
-            etc/systemd/system/lightdm.service.d/10-puppy50-live-preflight.conf
-            usr/local/sbin/puppy50-gui-diagnostics
-            usr/local/sbin/puppy50-memory-diagnostics
-            etc/X11/xorg.conf             etc/default/keyboard             etc/xdg/autostart/nm-applet.desktop; do
+          for f in             usr/local/sbin/puppy50-prepare-session             etc/skel/.config/openbox/autostart             etc/lightdm/lightdm.conf             usr/lib/systemd/system/lightdm.service             usr/lib/systemd/system/live-config.service             usr/share/puppy50web/index.html etc/systemd/system/puppy50-gui-diagnostics.service etc/systemd/system/puppy50-memory-diagnostics.service etc/systemd/system/puppy50-network-probe.service etc/systemd/system/lightdm.service.d/10-puppy50-live-preflight.conf usr/local/sbin/puppy50-gui-diagnostics usr/local/sbin/puppy50-memory-diagnostics etc/X11/xorg.conf             etc/default/keyboard             etc/xdg/autostart/nm-applet.desktop; do
             if test -f "rootview/$f"; then
               echo "P50_FILE $f"
               case "$f" in *index.html) head -c 1200 "rootview/$f"; echo;; *) head -c 13000 "rootview/$f"; echo;; esac
