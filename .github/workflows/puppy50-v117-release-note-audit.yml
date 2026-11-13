@@ -1,0 +1,73 @@
+name: Puppy50 v117 - update published release disclosures
+on:
+  push:
+    branches: [puppy50-v117-fast-boot-engineering]
+    paths: ['.github/workflows/puppy50-v117-release-note-audit.yml']
+permissions: {contents: write}
+jobs:
+  disclose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Update experimental release with both verified comparisons
+        run: |
+          set -euo pipefail
+          tag=puppy50-v117-instant-bios-experimental
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
+          cat > release-notes.md <<'NOTES'
+          # Puppy50 v117 — faster BIOS Firefox startup (EXPERIMENTAL)
+
+          Published ISO SHA-256:
+          a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83
+
+          ## Real independent BIOS/SATA virtual machine startup comparisons
+
+          Both were matched A-B-B-A tests of genuine rendered Firefox first
+          frame, 2 virtual CPUs, 3 GiB guest RAM, uncapped virtual AHCI CD,
+          measured from before QEMU launch at 0.2-second polling resolution.
+
+          | Test | Original v115 | v117 candidate | Improvement |
+          | --- | ---: | ---: | ---: |
+          | [Initial four-VM test](https://github.com/74127418528426leo-del/Test/actions/runs/43433005041) | 8.230 s | **7.155 s** | 1.075 s |
+          | [Exact released-ISO build test](https://github.com/74127418528426leo-del/Test/actions/runs/43436287638) | 9.275 s | **8.360 s** | 0.915 s |
+
+          **The eight-second threshold was achieved on the initial virtual
+          host but not the later release runner. It is not guaranteed.**
+          This is not physical computer power-on timing.
+
+          Each v117 BIOS run completed checksum-verified RAM migration,
+          safely ejected the virtual medium, and visited a fresh local
+          webpage afterward. The exact release ISO also passed UEFI boot,
+          verified RAM READY and post-ejection browsing, with a UEFI
+          first Firefox frame of **11.60 seconds**.
+
+          ## Safety and unverified requirements
+
+          - The only content change is BIOS Syslinux MENU SHIFTKEY,
+            bypassing the normal one-second menu unless Shift is held.
+            Kernel, Firefox, compressed root, full-RAM fallback initrd,
+            network stack and UEFI boot config are preserved.
+          - **Shift-held access to the built-in recovery menu was NOT
+            independently verified in QEMU. Do not rely on it.** Keep
+            the original tested v115 ISO on a separate bootable recovery
+            drive: https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental
+          - Never unplug physical media until the green RAM READY notice.
+            If readiness fails, keep the medium attached.
+          - The physical Acer i3-540, USB/SATA speeds, Intel i915, Wi-Fi,
+            two monitors and 4K video have not been newly tested.
+          - 384 MiB full RAM Firefox is NOT supported: compressed root
+            alone is approximately 664 MiB.
+          - This is an experimental Debian Live-based system, NOT an
+            official Puppy Linux release, production OS, or installer.
+
+          Read the ZIP's README and verify SHA256SUMS before testing.
+          Full v117 engineering report:
+          https://github.com/74127418528426leo-del/Test/blob/puppy50-v117-fast-boot-engineering/PUPPY50_V117_VERIFIED_RESULTS.md
+          NOTES
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' >after.txt
+          grep -Fq '8.360 s' after.txt
+          grep -Fq 'Shift-held access' after.txt
+          echo 'P50_V117_RELEASE_NOTES_CORRECTED_AND_VERIFIED'
