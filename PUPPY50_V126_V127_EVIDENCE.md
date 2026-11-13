@@ -29,3 +29,19 @@ The [v127/parallel_firefox.py](./v127/parallel_firefox.py) variant starts the **
 A [four matched A–B–B–A CI experiment](https://github.com/74127418528426leo-del/Test/actions/workflows/puppy50-v127-parallel-firefox-ab.yml) builds both ISOs from identical verified source and compares real frame timings on the SAME runner. It requires every boot to retain the early authenticated Xorg after switch-root, preserve X0 socket, verify full RAM migration, safely eject virtual media and make a new authenticated server HTTP 200 request. Any failure or a non-Firefox splash frame is not an accepted result.
 
 **Release gate remains strict: no under-three-second ISO without repeated true cold Firefox frames under 3 s, all functional/safety gates, and real-hardware validation. The latest downloadable experimental media remain the published v122 release.**
+## v127 completed matched four-boot results — 2026-11-13
+
+[Completed v127 A–B–B–A authenticated Firefox test](https://github.com/74127418528426leo-del/Test/actions/runs/43505491538) succeeded. On ONE shared KVM runner, both images were rebuilt from the exact original v117 ISO with identical kernel, Zstd root SquashFS, unchanged full-RAM recovery initrd, early graphics module, authenticated Xorg, non-root Firefox and volatile X11 socket continuity. The only functional change in v127 was to launch the original Firefox ESR concurrently with Openbox and comment out its duplicate Openbox autostart command in the volatile live account.
+
+| Matched trial | Real Firefox first frame | Verified RAM READY |
+|---|---:|---:|
+| v126 Openbox autostart #1 | 9.03 s | 15.74 s |
+| v127 parallel Firefox #1 | **8.61 s** | 15.83 s |
+| v127 parallel Firefox #2 | **8.42 s** | 15.63 s |
+| v126 Openbox autostart #2 | 8.63 s | 15.30 s |
+| **v126 mean** | **8.830 s** | **15.520 s** |
+| **v127 mean** | **8.515 s** | **15.730 s** |
+
+**First-frame gain: 0.315 seconds.** Complete RAM READY slowed 0.210 seconds in this same-runner experiment. All four VMs had a genuine user-visible Firefox home frame and passed checksum-verified RAM migration, media ejection after READY, a new server-received HTTP 200 from the running Firefox browser, and proof of authenticated pre-systemd Xorg still running with /tmp/.X11-unix/X0 present after switch-root. The v127 candidate had serial markers proving the normal Openbox Firefox autostart was relocated and the unprivileged direct launcher executed. No late LightDM fallback was accepted. No Firefox sandbox, Xauth, CA store, original root or recovery image was weakened.
+
+**Neither candidate was anywhere near 3 seconds.** The two v127 first frames were 8.61 and 8.42 seconds and the 8.515s candidate mean is not directly comparable with v122's 6.755s mean measured on a different KVM host. This result shows that parallel Firefox startup alone does not close the multi-second gap. Do not publish a new v127 ISO as a 3-second OS. The best published, fully verified experimental download is still [v122](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v122-direct-fast-codec-experimental). The physical Acer i3-540, real i915, Wi-Fi and 384MiB full-RAM target remain unproven. Keep separate v115 recovery media.
