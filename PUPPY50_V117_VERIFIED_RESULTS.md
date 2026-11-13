@@ -40,3 +40,21 @@ A safer follow-up additionally changes BIOS `timeout 10` (one second) to `timeou
 - Original v115 ISO remains available as the current separately tested recovery baseline.
 
 **Next:** show reliable Shift-held full-RAM recovery, verify repeated <=8-second candidate boots, and publish a separately labeled experimental v117 ISO and ZIP with exact checksums. Do not claim physical-hardware performance.
+
+## Published experimental v117 ISO — independent end-to-end release run
+
+On 2026-11-13 the release pipeline rebuilt a BIOS-only menu-patched ISO from the exact v115 release, compared 4 BIOS/SATA VMs in A–B–B–A order, booted **the exact same candidate ISO via UEFI**, checked checksum-verified RAM migration, ejected the QEMU SATA medium and verified new local HTTP requests, then packaged and published the precise ISO bytes. [Publishing workflow](https://github.com/74127418528426leo-del/Test/actions/runs/43436287638) finished **successfully**.
+
+The second same-host comparison measured original v115 **9.275 s mean** Firefox first frame and v117 **8.360 s mean** (two v117 samples: 8.26 and 8.46 seconds). Mean difference **0.915 s**. The first independent same-host trial of the same boot approach measured **8.230 s original vs 7.155 s v117** (two candidate samples: 7.16 and 7.15 s). Absolute startup varies between runners, and not every candidate run achieves <=8 s. The release's UEFI VM first frame was **11.60 s** and confirmed the normal verified RAM-ready gate at **19.75 s**; UEFI is not a sub-8-second configuration.
+
+### Published artifact download URLs
+
+- [Puppy50 v117 instant BIOS experimental ISO](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso), **906,297,344 bytes**, SHA-256 `a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83`.
+- [Puppy50 v117 single-file ZIP](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.zip), **906,300,828 bytes**, SHA-256 `d37247fc745ec8bfd8bd1e73af76a5c79dfdc0bdd2bb8fd3f8293a6d6c6ba834`.
+- [Published experimental release page](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v117-instant-bios-experimental).
+
+### Recovery and physical-device limits
+
+**The built-in Shift-held BIOS recovery shortcut was NOT verified in the tested QEMU keyboard environment**, even after attempts to hold Shift, Alt and Caps Lock at multiple boot times. The full-RAM fallback initrd and boot-menu entries were proven unchanged byte-for-byte, but the recovery menu might not be accessible on real devices. Keep the **unchanged original v115 ISO on separate recovery media**, and do not treat this experimental build as a replacement for the recovery baseline. Virtual-media ejection after VERIFIED RAM READY passed; do not eject physical media early.
+
+The exact published ISO has not been tested on the user's physical Acer X3950. Actual power-on POST, i915 graphics, real wireless networking and dual monitors are unverified. 384 MiB RAM-only Firefox remains impossible with this unchanged ~664 MiB compressed root alone. No OS-level optimization or measured certificate for these targets is claimed. The v117 engineering branch contains tests and research; the published tag is an experimental release, not a production installation or a universal 8-second guarantee.
