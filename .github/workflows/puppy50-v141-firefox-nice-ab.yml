@@ -386,7 +386,7 @@ jobs:
                   assert 'P50_V141_FIREFOX_EARLY_PRIORITY_CONFIGURED' in serial,(n,'Firefox priority patch not executed')
                   assert 'P50_V141_ACTUAL_NICE_VALUES' in serial,(n,'Actual process niceness not measured')
                   report_section=serial.split('P50_V141_ACTUAL_NICE_VALUES',1)[1].split('-- display and session processes --',1)[0]
-                  assert re.search(r'\b-5\s+user\s+firefox-esr\b',report_section),(n,'Firefox is not running at configured -5 nice',report_section[:500])
+                  assert re.search(r'-5\s+user\s+firefox-esr\b',report_section),(n,'Firefox is not running at configured -5 nice',report_section[:500])
               else:
                   assert 'P50_V141_FIREFOX_EARLY_PRIORITY_CONFIGURED' not in serial,(n,'Firefox priority baseline contaminated')
               crit=serial[serial.index('P50_V124_FORENSICS_START'):serial.index('P50_V124_FORENSICS_END')+len('P50_V124_FORENSICS_END')]
