@@ -122,17 +122,21 @@ jobs:
           assert s.count(old)==1,'Expected VM start'
           s=s.replace(old,new,1)
           old="                if serial.exists():"
-          new="""                if args.select_fullram_fallback and not held_shift and monitor.exists():
-                    from web103.site_test import send_key
-                    try:
-                        send_key(monitor, ['shift'], 8000)
-                        held_shift = True
-                    except (OSError, TimeoutError, RuntimeError):
-                        pass
-                if serial.exists():"""
+          new="\n".join([
+              "                if args.select_fullram_fallback and not held_shift and monitor.exists():",
+              "                    from web103.site_test import send_key",
+              "                    try:",
+              "                        send_key(monitor, ['shift'], 8000)",
+              "                        held_shift = True",
+              "                    except (OSError, TimeoutError, RuntimeError):",
+              "                        pass",
+              "                if serial.exists():"
+          ])
           assert s.count(old)==1
           s=s.replace(old,new,1)
           p.write_text(s)
+          import ast
+          ast.parse(s)
           PY
       - name: Serve isolated local test pages
         run: |
