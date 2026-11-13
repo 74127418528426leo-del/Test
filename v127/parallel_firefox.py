@@ -8,7 +8,7 @@ Firefox command in the volatile live account; keep all network applets/polkit.
 from pathlib import Path
 import argparse
 
-AUTO_MARKER='        chmod 0700 "$p50_start" || panic "v123: cannot secure launcher"'
+AUTO_MARKER='chmod 0700 "$p50_start" || panic "v123: cannot secure launcher"'
 OPENBOX_MARKER="printf 'P50_V123_OPENBOX_START %s\\n' \"$(cat /proc/uptime)\" > /dev/ttyS0"
 AUTO_HOOK=r'''
         # P50_V127_DIRECT_BROWSER: avoid starting two Firefox instances.
