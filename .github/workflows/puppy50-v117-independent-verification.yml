@@ -1,0 +1,108 @@
+name: Puppy50 v117 independent published ISO verification
+on:
+  push:
+    branches: [puppy50-v117-independent-verification-20261113]
+    paths: ['.github/workflows/puppy50-v117-independent-verification.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-INDEPENDENT-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install isolated VM dependencies and verify published ISO bytes
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil ovmf
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso' -o input/v117.iso
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/v117.iso' | sha256sum -c -
+          lscpu > out/reports/host-cpu.txt
+      - name: Prepare existing capture harness and JavaScript interaction probe
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from web112.early_probe import patch_harness
+          p = Path('input/source/web109/boot_bench_staged.py')
+          s = p.read_text()
+          pause = "time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(pause) == 1
+          s = s.replace(pause, pause.replace('else .8', 'else .2'), 1)
+          s = patch_harness(s)
+          Path('input/source/web109/boot_bench_usb_independent.py').write_text(s)
+          old = "cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new = "cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old) == 1 and s.count("if args.media == 'optical':") == 1
+          s = s.replace(old, new, 1).replace("if args.media == 'optical':", "if True:  # AHCI CD ejection", 1)
+          Path('input/source/web109/boot_bench_sata_independent.py').write_text(s)
+          import ast
+          ast.parse(s)
+          PY
+      - name: Start isolated interaction fixtures
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for port in (8765,8766):
+              for i in range(25):
+                  try:
+                      socket.create_connection(('127.0.0.1',port),timeout=1).close()
+                      break
+                  except OSError:
+                      time.sleep(.2)
+              else:
+                  raise RuntimeError(f'fixture {port} failed to start')
+          PY
+      - name: Run five BIOS SATA cold boots, UEFI, and throttled virtual USB
+        run: |
+          set -uo pipefail
+          failed=0
+          for trial in sata1 sata2 sata3 sata4 sata5 uefi usb30; do
+            script=input/source/web109/boot_bench_sata_independent.py
+            args=()
+            if [[ "$trial" == uefi ]]; then args+=(--firmware uefi); fi
+            if [[ "$trial" == usb30 ]]; then
+              script=input/source/web109/boot_bench_usb_independent.py
+              args+=(--bandwidth 31457280)
+            fi
+            python3 -u "$script" --iso input/v117.iso --out "out/$trial" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 200 --cpu-model i3-540-conservative --emulate-acer-id --media usb "${args[@]}" || failed=$((failed+1))
+          done
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          names=['sata1','sata2','sata3','sata4','sata5','uefi','usb30']
+          results={}
+          for name in names:
+              p=Path('out')/name/'result.json'
+              results[name]=json.loads(p.read_text()) if p.exists() else {'missing_result':True}
+          values=[results[n].get('first_home_seen_seconds') for n in names[:5]]
+          summary={'iso_sha256':'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83',
+                   'bios_sata_first_frame_samples_s':values,
+                   'bios_sata_median_s':statistics.median(values) if all(isinstance(x,(int,float)) for x in values) else None,
+                   'test_spec':'QEMU/KVM 2 vCPU, 3 GiB RAM; local frame sampled about every .2s, browser input and JS measured separately; no physical Acer',
+                   'trials':results}
+          Path('out/reports/summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          print('PUPPY50_INDEPENDENT_VERIFICATION',json.dumps(summary,indent=2))
+          PY
+          test "$failed" -eq 0
+      - name: Upload screenshots, timings, logs and host details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v117-published-iso-independent-verification
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
