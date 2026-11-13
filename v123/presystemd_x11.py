@@ -59,6 +59,16 @@ setpriv --reuid=user --regid=user --init-groups \
     XAUTHORITY=/home/user/.Xauthority XDG_RUNTIME_DIR=/run/user/1000 \
     /usr/bin/dbus-run-session -- /usr/bin/openbox-session \
     >/run/p50-v123-openbox.log 2>&1 &
+(
+    sleep 8
+    printf '\nP50_V123_EARLY_X11_FORENSICS_BEGIN\n'
+    printf 'UPTIME '; cat /proc/uptime
+    printf 'XORG_LOG\n'; tail -65 /run/p50-v123-xorg.log || true
+    printf 'OPENBOX_LOG\n'; tail -65 /run/p50-v123-openbox.log || true
+    printf 'GUI_PROCESSES\n'; ps -eo pid,ppid,user,comm,args | grep -E '[X]org|[o]penbox|[f]irefox|[d]bus-run-session' | head -25 || true
+    printf 'X_SOCKET\n'; ls -l /tmp/.X11-unix/X0 || true
+    printf 'P50_V123_EARLY_X11_FORENSICS_END\n'
+) >/dev/ttyS0 2>&1 &
 exit 0
 P50_V123_START_X
         chmod 0700 "$p50_start" || panic "v123: cannot secure launcher"
