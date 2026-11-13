@@ -1,0 +1,295 @@
+name: Puppy50 v117 - build test and publish experimental BIOS ISO
+on:
+  push:
+    branches: [puppy50-v117-fast-boot-engineering]
+    paths: ['.github/workflows/puppy50-v117-experimental-release.yml']
+permissions: {contents: write}
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      GH_TOKEN: ${{ github.token }}
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install KVM and authenticate v115 release
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil xorriso ovmf zip
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/verified-v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/verified-v115.iso' | sha256sum -c -
+          lscpu >out/reports/host-cpu.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          text=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert text.count(needle)==1, 'Unexpected frame-polling code'
+          p.write_text(text.replace(needle,needle.replace('else .8','else .2'),1))
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1, 'Cannot identify exact QEMU boot-device code'
+          eject_old="if args.media == 'optical':"
+          assert s.count(eject_old)==1, 'Expected one benchmark media-eject decision'
+          # This experimental SATA device is a CD-ROM; remove medium with QMP 'eject',
+          # NOT device_del: AHCI buses intentionally do not support hot-unplug.
+          s=s.replace(eject_old,"if True:  # AHCI CD medium ejection",1)
+          Path('input/source/web109/boot_bench_ahci.py').write_text(s.replace(old,new,1))
+          PY
+      - name: Build reversible shift-to-recovery BIOS candidate from exact original v115
+        run: |
+          set -euo pipefail
+          mkdir -p out/verify
+          xorriso -osirrox on -indev input/verified-v115.iso \
+            -extract /isolinux/menu.cfg out/menu-original.cfg \
+            -extract /isolinux/isolinux.cfg out/isolinux-original.cfg \
+            -extract /boot/grub/config.cfg out/uefi-original.cfg \
+            -extract /live/initrd.img out/initrd-original.img \
+            -extract /live/initrd-full.img out/full-original.img \
+            -extract /live/filesystem.squashfs out/root-original.squashfs \
+            -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/menu-original.cfg');src=p.read_text()
+          assert src.count('menu title Boot menu')==1 and 'menu shiftkey' not in src
+          p2=Path('out/menu-shift.cfg')
+          p2.write_text('menu shiftkey\n'+src)
+          # Preserve all original boot menu entries, timeout and full RAM fallback.
+          cfg=Path('out/isolinux-original.cfg').read_text()
+          assert 'timeout 10' in cfg and 'default vesamenu.c32' in cfg
+          assert 'set timeout=1' in Path('out/uefi-original.cfg').read_text()
+          PY
+          diff -u out/menu-original.cfg out/menu-shift.cfg >out/reports/only-menu.diff || test "$?" -eq 1
+          xorriso -indev input/verified-v115.iso -outdev out/stage.iso \
+            -map out/menu-shift.cfg /isolinux/menu.cfg \
+            -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          original=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(original)==293
+          target='./isolinux/menu.cfg'
+          replacements={target:hashlib.sha256(Path('out/menu-shift.cfg').read_bytes()).hexdigest()}
+          result=[];seen=set()
+          for line in original:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              result.append(replacements.get(name,m.group(1))+m.group(2)+name)
+          assert target in seen
+          Path('out/candidate.sha256sum.txt').write_text('\n'.join(result)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso \
+            -map out/candidate.sha256sum.txt /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso \
+            -extract /isolinux/menu.cfg out/verify/menu.cfg \
+            -extract /isolinux/isolinux.cfg out/verify/isolinux.cfg \
+            -extract /boot/grub/config.cfg out/verify/uefi.cfg \
+            -extract /live/initrd.img out/verify/initrd.img \
+            -extract /live/initrd-full.img out/verify/full.img \
+            -extract /live/filesystem.squashfs out/verify/root.squashfs \
+            -extract /sha256sum.txt out/verify/SHA256SUMS >out/reports/verify.log 2>&1
+          cmp out/menu-shift.cfg out/verify/menu.cfg
+          cmp out/isolinux-original.cfg out/verify/isolinux.cfg
+          cmp out/uefi-original.cfg out/verify/uefi.cfg
+          cmp out/initrd-original.img out/verify/initrd.img
+          cmp out/full-original.img out/verify/full.img
+          cmp out/root-original.squashfs out/verify/root.squashfs
+          cmp out/candidate.sha256sum.txt out/verify/SHA256SUMS
+          sha256sum input/verified-v115.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Serve isolated local test pages
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Four matched boots, same virtual SATA AHCI, original BIOS menu versus Shift-key fast default
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          for trial in base1 fast1 fast2 base2; do
+            if [[ "$trial" == base* ]]; then iso=input/verified-v115.iso; else iso=out/candidate.iso; fi
+            python3 -u input/source/web109/boot_bench_ahci.py --iso "$iso" --out "out/$trial" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 0
+          done
+          # Confirm all four VMs navigated to a *new* local network page after safe media removal.
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture-after.log)" -eq 4
+          python3 - <<'PY'
+          from pathlib import Path
+          import statistics,json
+          names=['base1','fast1','fast2','base2']
+          d={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in d.items():
+              assert r.get('first_home_seen_seconds') is not None,(n,r)
+              assert r.get('staged_ram_ready_seconds') is not None,(n,r)
+              assert r.get('media_ejected') and r.get('input_sent_after_eject') and not r.get('errors'),(n,r)
+          o={'iso_sha256':'d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a',
+              'design':'A-B-B-A, both AHCI CD uncapped, 2vCPU 3GiB BIOS, v115 vs v117 menu shiftkey only, 0.2s sampling, host clock',
+              'not_physical_acer':True,
+              'trials':{n:{k:d[n].get(k) for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected','input_sent_after_eject')} for n in names}}
+          for label,pair in [('baseline',('base1','base2')),('shiftkey',('fast1','fast2'))]:
+              for key in ('first_home_seen_seconds','staged_ram_ready_seconds'):
+                  o[label+'_mean_'+key]=statistics.mean(d[n][key] for n in pair)
+          o['first_frame_gain_seconds']=o['baseline_mean_first_home_seen_seconds']-o['shiftkey_mean_first_home_seen_seconds']
+          Path('out/reports/shiftkey_ab.json').write_text(json.dumps(o,indent=2)+'\n')
+          print('P50_V117_SHIFTKEY_AB',json.dumps(o,indent=2))
+          PY
+      - name: Recheck this exact candidate on UEFI and prove a fresh HTTP request after safe RAM transition
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 -u input/source/web109/boot_bench_ahci.py --iso out/candidate.iso --out out/uefi --mode online --allow-no-startup-probe --wait-ram-ready --firmware uefi --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 0
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture-after.log)" -eq 5
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/uefi/result.json').read_text())
+          assert r['virtual_firmware']=='uefi'
+          assert r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None
+          assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],r
+          print('P50_V117_UEFI_FINAL_PASS',json.dumps(r,indent=2))
+          PY
+      - name: Validate the improvement is real and prepare an exact-checksum ISO plus ZIP
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          r=json.loads(Path('out/reports/shiftkey_ab.json').read_text())
+          assert len(r['trials'])==4
+          assert r['first_frame_gain_seconds']>=0.5,('No reproducible improvement',r)
+          assert r['shiftkey_mean_first_home_seen_seconds']<11.0,('Unusually slow candidate boot',r)
+          for label in ['base1','base2','fast1','fast2']:
+              trial=json.loads((Path('out')/label/'result.json').read_text())
+              assert trial['media_ejected'] and trial['input_sent_after_eject']
+              assert trial['staged_ram_ready_seconds'] is not None and not trial['errors']
+          print('P50_V117_REAL_IMPROVEMENT_PASS',json.dumps(r,indent=2))
+          PY
+          mkdir -p release/v117
+          iso=release/v117/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso
+          cp out/candidate.iso "$iso"
+          cat > release/v117/README.txt <<'README'
+          PUPPY50 v117 - EXPERIMENTAL FASTER BIOS ISO
+          ===========================================
+          This is a Debian Live-based Firefox browser OS experiment.
+          Not an official Puppy Linux image, not an installation ISO,
+          and not a certification of operation on any physical Acer hardware.
+
+          BIOS/SATA VM performance on 2026-11-13:
+            Original v115 Firefox first-frame average: 8.230 seconds.
+            v117 Shift-key BIOS prototype average: 7.155 seconds.
+            Matched A-B-B-A KVM comparison: 2 virtual CPUs, 3 GiB RAM,
+            AHCI virtual CD-ROM and 0.2-second framebuffer sampling.
+            ALL four browsers rendered, RAM transitions verified and
+            post-media-removal browser networking continued.
+          This release process also repeats four BIOS boots and an UEFI
+          boot with exactly the ISO supplied here. See the published
+          GitHub Actions workflow evidence for actual numbers.
+
+          IMPORTANT LIMITATIONS:
+          - <8-second Firefox first frame has been observed in a VM.
+            It is NOT proven on the user's physical i3-540 Acer or from
+            physical power-on; UEFI and slower USB may take >8 seconds.
+          - The only fast-start edit is Syslinux BIOS menu SHIFTKEY behavior;
+            it omits the normal ~1s boot menu. The kernel, compressed root,
+            complete RAM-copy verification logic, and UEFI configuration
+            remain the exact originals from the released v115 image.
+          - The complete ~664MiB compressed root does not fit 384MiB RAM.
+          - Shift-held access to the embedded BIOS recovery menu has NOT
+            been independently proven in QEMU. DO NOT rely on it.
+          - KEEP THE ORIGINAL WORKING v115 ISO available on a separate
+            bootable USB or other recovery medium before experimenting.
+            Original v115 release:
+            https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental
+          - Never remove physical boot media before seeing the verified
+            green RAM READY indication. A red/failed state means keep
+            media connected. The original full-RAM recovery image is
+            still byte-for-byte present in this ISO.
+          - Local USB/Wi-Fi/network drivers, i915 graphics, sound, full
+            SSL/TLS browsing, 4K videos and dual monitors have NOT been
+            newly certified on a physical machine with this image.
+
+          VERIFY AND TEST:
+            sha256sum -c SHA256SUMS
+          You can try this ISO in a separate 3GiB QEMU/KVM VM using
+          the documented virtual SATA CD-ROM layout. This ISO does not
+          install to or overwrite an existing system by itself. Writing
+          it onto a USB drive will overwrite the target USB.
+          README
+          printf 'Puppy50 v117 test evidence: https://github.com/74127418528426leo-del/Test/actions/runs/%s\n' "$GITHUB_RUN_ID" >release/v117/TEST_RUN.txt
+          (cd release/v117 && sha256sum Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso >SHA256SUMS)
+          (cd release/v117 && sha256sum -c SHA256SUMS)
+          (cd release && zip -q -0 -r Puppy50_v117_Instant_BIOS_EXPERIMENTAL.zip v117)
+          unzip -tqq release/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.zip
+          sha256sum release/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.zip >out/reports/release-zip-sha256.txt
+          cp release/v117/SHA256SUMS out/reports/release-iso-sha256.txt
+          cat out/reports/release-iso-sha256.txt out/reports/release-zip-sha256.txt
+      - name: Publish separate prerelease with verified v117 ISO and ZIP (never alter original v115)
+        run: |
+          set -euo pipefail
+          tag=puppy50-v117-instant-bios-experimental
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "A v117 release already exists; refusing to overwrite any published artifacts." >&2
+              exit 1
+          fi
+          cat >release/NOTES.md <<'NOTE'
+          # Puppy50 v117 — BIOS faster startup experiment
+          This is a **prerelease experimental build**, not a production operating system.
+          The matched reference BIOS/SATA KVM benchmark demonstrated a **7.155-second mean
+          Firefox first frame**, versus 8.230 seconds for the original v115, with verified
+          RAM transfer and browser activity after virtual-media ejection:
+          https://github.com/74127418528426leo-del/Test/actions/runs/43433005041
+
+          This prerelease rebuilds and independently boots the exact shipped ISO on BIOS
+          and UEFI before publishing. See attached README and the GitHub Actions publishing
+          run for per-run results and SHA-256 digests.
+
+          **Real Acer boot and physical USB/Wi-Fi not tested**. The 8-second guarantee
+          does not extend to a physical PC, UEFI or limited USB speed. Original v115
+          is still the separately tested recovery baseline. Embedded Shift-key recovery
+          selection was not verified and must not be relied upon; keep separate v115
+          recovery boot media. 384 MiB Firefox remains unsupported.
+          NOTE
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'Puppy50 v117 — Instant BIOS Firefox (EXPERIMENTAL)' \
+            --notes-file release/NOTES.md \
+            --prerelease \
+            release/v117/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso \
+            release/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.zip \
+            release/v117/SHA256SUMS
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name) \(.size) bytes"'
+      - name: Print VM logs on failed benchmark or release gate
+        if: failure()
+        run: |
+          for p in out/base1/qemu.log out/fast1/qemu.log out/fast1/serial.log; do
+            if test -f "$p"; then echo "DIAG_FILE $p"; head -n 80 "$p"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v117-experimental-release-evidence
+          path: |
+            out/reports/
+            release/v117/README.txt
+            release/v117/SHA256SUMS
+            out/base1/
+            out/base2/
+            out/fast1/
+            out/fast2/
+          retention-days: 14
+          if-no-files-found: warn
