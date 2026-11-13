@@ -1,7 +1,7 @@
 name: Puppy50 v131 - test secure Firefox libxul page readahead parallel to DRM
 on:
   push:
-    branches: [puppy50-v131-short-DRM-critical-path]
+    branches: [puppy50-v131-libxul-readahead-test]
     paths: ['.github/workflows/puppy50-v131-libxul-readahead-ab.yml', 'v131/**']
   workflow_dispatch: {}
 permissions:
