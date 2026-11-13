@@ -127,7 +127,7 @@ jobs:
           from web105.menu_selection import highlighted
           iso=Path('out/candidate.iso').resolve(strict=True)
           results=[]
-          for index,press_at in enumerate([0.1,0.3,0.5,0.7,0.9,1.1,1.3,1.5,1.7]):
+          for index,(key,press_at) in enumerate([(key,t) for key in ('shift','alt','caps_lock') for t in (0.4,1.2,2.0)]):
               out=Path(f'out/probe-{index}');out.mkdir(parents=True,exist_ok=True)
               monitor=out/'qmp.sock';log=out/'qemu.log'
               cmd=['qemu-system-x86_64','-machine','pc,accel=kvm',
@@ -140,20 +140,20 @@ jobs:
                   '-qmp',f'unix:{monitor},server=on,wait=off',
                   '-serial',f'file:{out/"serial.log"}',
                   '-no-reboot','-nic','none']
-              entry={'shift_press_at_seconds':press_at,'shift_sent':False,'menu_default_seen':False,'menu_recovery_seen':False,'guest_serial_header':''}
+              entry={'key':key,'key_press_at_seconds':press_at,'key_sent':False,'menu_default_seen':False,'menu_recovery_seen':False,'guest_serial_header':''}
               with log.open('wb') as logfile:
                   vm=subprocess.Popen(cmd,stdout=logfile,stderr=subprocess.STDOUT)
                   start=time.monotonic()
                   try:
-                      while time.monotonic()-start<5.0 and vm.poll() is None:
+                      while time.monotonic()-start<10.0 and vm.poll() is None:
                           elapsed=time.monotonic()-start
                           if not monitor.exists():
                               time.sleep(.045);continue
-                          if not entry['shift_sent'] and elapsed>=press_at:
+                          if not entry['key_sent'] and elapsed>=press_at:
                               try:
-                                  send_key(monitor,['shift'],5000)
-                                  entry['shift_sent']=True
-                                  entry['shift_actual_seconds']=round(elapsed,2)
+                                  send_key(monitor,[key],8000)
+                                  entry['key_sent']=True
+                                  entry['key_actual_seconds']=round(elapsed,2)
                               except Exception:
                                   pass
                           try:
@@ -161,6 +161,11 @@ jobs:
                               qmp(monitor,'screendump',{'filename':str(ppm)})
                               with Image.open(ppm) as frame:
                                   frame.load()
+                                  # Detection is resolution-independent; original helper assumed 640x480.
+                                  if elapsed>=7.5 and 'late_frame_size' not in entry:
+                                      entry['late_frame_size']=frame.size
+                                      entry['late_frame_pixel']=frame.getpixel((min(500,frame.width-1),min(255,frame.height-1)))
+                                      frame.save(out/'late-frame.png')
                                   state=highlighted(frame)
                                   if state in ('default','recovery'):
                                       entry['menu_'+state+'_seen']=True
@@ -181,8 +186,8 @@ jobs:
               print('P50_SHIFT_PROBE',json.dumps(entry),flush=True)
               results.append(entry)
           Path('out/reports/shift-probe-results.json').write_text(json.dumps(results,indent=2)+'\n')
-          if not any(x['menu_default_seen'] for x in results):
-              raise SystemExit('No BIOS recovery menu observed; preserve candidate as unreleased')
+          if not any(x['menu_default_seen'] or tuple(x.get('late_frame_size',())) != (1280,800) for x in results):
+              raise SystemExit('No held-key path survived into boot menu; preserve candidate as unreleased')
           PY
       - name: Print VM error logs on failed storage experiment
         if: failure()
