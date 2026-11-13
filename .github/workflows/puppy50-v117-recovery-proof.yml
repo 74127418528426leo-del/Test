@@ -1,0 +1,178 @@
+name: Puppy50 v117 - verify Shift-held Full RAM recovery from fast BIOS
+on:
+  push:
+    branches: [puppy50-v117-fast-boot-engineering]
+    paths: ['.github/workflows/puppy50-v117-recovery-proof.yml']
+permissions: {contents: read}
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install KVM and authenticate v115 release
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil xorriso
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/verified-v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/verified-v115.iso' | sha256sum -c -
+          lscpu >out/reports/host-cpu.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          text=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert text.count(needle)==1, 'Unexpected frame-polling code'
+          p.write_text(text.replace(needle,needle.replace('else .8','else .2'),1))
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1, 'Cannot identify exact QEMU boot-device code'
+          eject_old="if args.media == 'optical':"
+          assert s.count(eject_old)==1, 'Expected one benchmark media-eject decision'
+          # This experimental SATA device is a CD-ROM; remove medium with QMP 'eject',
+          # NOT device_del: AHCI buses intentionally do not support hot-unplug.
+          s=s.replace(eject_old,"if True:  # AHCI CD medium ejection",1)
+          Path('input/source/web109/boot_bench_ahci.py').write_text(s.replace(old,new,1))
+          PY
+      - name: Build reversible shift-to-recovery BIOS candidate from exact original v115
+        run: |
+          set -euo pipefail
+          mkdir -p out/verify
+          xorriso -osirrox on -indev input/verified-v115.iso \
+            -extract /isolinux/menu.cfg out/menu-original.cfg \
+            -extract /isolinux/isolinux.cfg out/isolinux-original.cfg \
+            -extract /boot/grub/config.cfg out/uefi-original.cfg \
+            -extract /live/initrd.img out/initrd-original.img \
+            -extract /live/initrd-full.img out/full-original.img \
+            -extract /live/filesystem.squashfs out/root-original.squashfs \
+            -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/menu-original.cfg');src=p.read_text()
+          assert src.count('menu title Boot menu')==1 and 'menu shiftkey' not in src
+          p2=Path('out/menu-shift.cfg')
+          p2.write_text('menu shiftkey\n'+src)
+          # Preserve all original boot menu entries, timeout and full RAM fallback.
+          cfg=Path('out/isolinux-original.cfg').read_text()
+          assert 'timeout 10' in cfg and 'default vesamenu.c32' in cfg
+          assert 'set timeout=1' in Path('out/uefi-original.cfg').read_text()
+          PY
+          diff -u out/menu-original.cfg out/menu-shift.cfg >out/reports/only-menu.diff || test "$?" -eq 1
+          xorriso -indev input/verified-v115.iso -outdev out/stage.iso \
+            -map out/menu-shift.cfg /isolinux/menu.cfg \
+            -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          original=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(original)==293
+          target='./isolinux/menu.cfg'
+          replacements={target:hashlib.sha256(Path('out/menu-shift.cfg').read_bytes()).hexdigest()}
+          result=[];seen=set()
+          for line in original:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              result.append(replacements.get(name,m.group(1))+m.group(2)+name)
+          assert target in seen
+          Path('out/candidate.sha256sum.txt').write_text('\n'.join(result)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso \
+            -map out/candidate.sha256sum.txt /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso \
+            -extract /isolinux/menu.cfg out/verify/menu.cfg \
+            -extract /isolinux/isolinux.cfg out/verify/isolinux.cfg \
+            -extract /boot/grub/config.cfg out/verify/uefi.cfg \
+            -extract /live/initrd.img out/verify/initrd.img \
+            -extract /live/initrd-full.img out/verify/full.img \
+            -extract /live/filesystem.squashfs out/verify/root.squashfs \
+            -extract /sha256sum.txt out/verify/SHA256SUMS >out/reports/verify.log 2>&1
+          cmp out/menu-shift.cfg out/verify/menu.cfg
+          cmp out/isolinux-original.cfg out/verify/isolinux.cfg
+          cmp out/uefi-original.cfg out/verify/uefi.cfg
+          cmp out/initrd-original.img out/verify/initrd.img
+          cmp out/full-original.img out/verify/full.img
+          cmp out/root-original.squashfs out/verify/root.squashfs
+          cmp out/candidate.sha256sum.txt out/verify/SHA256SUMS
+          sha256sum input/verified-v115.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Instrument QEMU to hold Shift before Syslinux (test only)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_ahci.py')
+          s=p.read_text()
+          old="        vm = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)\n        try:"
+          new="        vm = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)\n        held_shift = False\n        try:"
+          assert s.count(old)==1,'Expected VM start'
+          s=s.replace(old,new,1)
+          old="                if serial.exists():"
+          new="""                if args.select_fullram_fallback and not held_shift and monitor.exists():
+                    from web103.site_test import send_key
+                    try:
+                        send_key(monitor, ['shift'], 8000)
+                        held_shift = True
+                    except (OSError, TimeoutError, RuntimeError):
+                        pass
+                if serial.exists():"""
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Serve isolated local test pages
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Hold Shift, select full RAM recovery, eject SATA media and verify browser still works
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python3 -u input/source/web109/boot_bench_ahci.py --iso out/candidate.iso --out out/fullram --mode online --allow-no-startup-probe --select-fullram-fallback --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 0
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture-after.log)" -eq 1
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('out/fullram/result.json')
+          r=json.loads(p.read_text())
+          assert r['fullram_fallback_selected'],r
+          assert r['first_home_seen_seconds'] is not None,r
+          assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'],r
+          assert not r['errors'],r
+          assert r['staged_ram_ready_seconds'] is None,'Must use original full RAM fallback, not staged method'
+          print('P50_V117_SHIFT_HELD_RECOVERY_PASSED',json.dumps(r,indent=2))
+          PY
+      - name: Print VM error logs on failed storage experiment
+        if: failure()
+        run: |
+          for p in out/fullram/qemu.log qemu.log serial.log; do
+            if test -f "$p"; then echo "DIAG_FILE $p"; head -n 80 "$p"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v117-recovery-proof-evidence
+          path: |
+            out/reports/
+            out/fullram/
+            
+            
+            
+          retention-days: 14
+          if-no-files-found: warn
