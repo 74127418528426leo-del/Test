@@ -1,0 +1,204 @@
+name: Puppy50 v117 - diagnose QEMU Shift-held BIOS menu timing
+on:
+  push:
+    branches: [puppy50-v117-fast-boot-engineering]
+    paths: ['.github/workflows/puppy50-v117-shift-press-probe.yml']
+permissions: {contents: read}
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install KVM and authenticate v115 release
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil xorriso
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/verified-v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/verified-v115.iso' | sha256sum -c -
+          lscpu >out/reports/host-cpu.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          text=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert text.count(needle)==1, 'Unexpected frame-polling code'
+          p.write_text(text.replace(needle,needle.replace('else .8','else .2'),1))
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1, 'Cannot identify exact QEMU boot-device code'
+          eject_old="if args.media == 'optical':"
+          assert s.count(eject_old)==1, 'Expected one benchmark media-eject decision'
+          # This experimental SATA device is a CD-ROM; remove medium with QMP 'eject',
+          # NOT device_del: AHCI buses intentionally do not support hot-unplug.
+          s=s.replace(eject_old,"if True:  # AHCI CD medium ejection",1)
+          Path('input/source/web109/boot_bench_ahci.py').write_text(s.replace(old,new,1))
+          PY
+      - name: Build reversible shift-to-recovery BIOS candidate from exact original v115
+        run: |
+          set -euo pipefail
+          mkdir -p out/verify
+          xorriso -osirrox on -indev input/verified-v115.iso \
+            -extract /isolinux/menu.cfg out/menu-original.cfg \
+            -extract /isolinux/isolinux.cfg out/isolinux-original.cfg \
+            -extract /boot/grub/config.cfg out/uefi-original.cfg \
+            -extract /live/initrd.img out/initrd-original.img \
+            -extract /live/initrd-full.img out/full-original.img \
+            -extract /live/filesystem.squashfs out/root-original.squashfs \
+            -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/menu-original.cfg');src=p.read_text()
+          assert src.count('menu title Boot menu')==1 and 'menu shiftkey' not in src
+          p2=Path('out/menu-shift.cfg')
+          p2.write_text('menu shiftkey\n'+src)
+          # Preserve all original boot menu entries, timeout and full RAM fallback.
+          cfg=Path('out/isolinux-original.cfg').read_text()
+          assert 'timeout 10' in cfg and 'default vesamenu.c32' in cfg
+          assert cfg.count('timeout 10')==1
+          Path('out/isolinux-fast.cfg').write_text(cfg.replace('timeout 10','timeout 0',1))
+          assert 'set timeout=1' in Path('out/uefi-original.cfg').read_text()
+          PY
+          diff -u out/menu-original.cfg out/menu-shift.cfg >out/reports/only-menu.diff || test "$?" -eq 1
+          xorriso -indev input/verified-v115.iso -outdev out/stage.iso \
+            -map out/menu-shift.cfg /isolinux/menu.cfg \
+            -map out/isolinux-fast.cfg /isolinux/isolinux.cfg \
+            -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          original=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(original)==293
+          target='./isolinux/menu.cfg'
+          replacements={target:hashlib.sha256(Path('out/menu-shift.cfg').read_bytes()).hexdigest(),
+                        './isolinux/isolinux.cfg':hashlib.sha256(Path('out/isolinux-fast.cfg').read_bytes()).hexdigest()}
+          result=[];seen=set()
+          for line in original:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              result.append(replacements.get(name,m.group(1))+m.group(2)+name)
+          assert set(replacements).issubset(seen)
+          Path('out/candidate.sha256sum.txt').write_text('\n'.join(result)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso \
+            -map out/candidate.sha256sum.txt /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso \
+            -extract /isolinux/menu.cfg out/verify/menu.cfg \
+            -extract /isolinux/isolinux.cfg out/verify/isolinux.cfg \
+            -extract /boot/grub/config.cfg out/verify/uefi.cfg \
+            -extract /live/initrd.img out/verify/initrd.img \
+            -extract /live/initrd-full.img out/verify/full.img \
+            -extract /live/filesystem.squashfs out/verify/root.squashfs \
+            -extract /sha256sum.txt out/verify/SHA256SUMS >out/reports/verify.log 2>&1
+          cmp out/menu-shift.cfg out/verify/menu.cfg
+          cmp out/isolinux-fast.cfg out/verify/isolinux.cfg
+          cmp out/uefi-original.cfg out/verify/uefi.cfg
+          cmp out/initrd-original.img out/verify/initrd.img
+          cmp out/full-original.img out/verify/full.img
+          cmp out/root-original.squashfs out/verify/root.squashfs
+          cmp out/candidate.sha256sum.txt out/verify/SHA256SUMS
+          sha256sum input/verified-v115.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Find the reliable BIOS Shift-key capture interval on real QEMU
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY'
+          import json,time,subprocess,hashlib
+          from pathlib import Path
+          from PIL import Image
+          from web85.qemu_debian_live_smoke import qmp
+          from web103.site_test import send_key
+          from web105.menu_selection import highlighted
+          iso=Path('out/candidate.iso').resolve(strict=True)
+          results=[]
+          for index,press_at in enumerate([0.1,0.3,0.5,0.7,0.9,1.1,1.3,1.5,1.7]):
+              out=Path(f'out/probe-{index}');out.mkdir(parents=True,exist_ok=True)
+              monitor=out/'qmp.sock';log=out/'qemu.log'
+              cmd=['qemu-system-x86_64','-machine','pc,accel=kvm',
+                  '-cpu','Westmere,-aes,-pclmulqdq,-x2apic,-3dnowprefetch',
+                  '-m','3072','-smp','2',
+                  '-drive',f'file={iso},if=none,id=livecd,format=raw,readonly=on',
+                  '-device','ich9-ahci,id=ahci',
+                  '-device','ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1',
+                  '-boot','order=c','-display','none','-vga','std',
+                  '-qmp',f'unix:{monitor},server=on,wait=off',
+                  '-serial',f'file:{out/"serial.log"}',
+                  '-no-reboot','-nic','none']
+              entry={'shift_press_at_seconds':press_at,'shift_sent':False,'menu_default_seen':False,'menu_recovery_seen':False,'guest_serial_header':''}
+              with log.open('wb') as logfile:
+                  vm=subprocess.Popen(cmd,stdout=logfile,stderr=subprocess.STDOUT)
+                  start=time.monotonic()
+                  try:
+                      while time.monotonic()-start<5.0 and vm.poll() is None:
+                          elapsed=time.monotonic()-start
+                          if not monitor.exists():
+                              time.sleep(.045);continue
+                          if not entry['shift_sent'] and elapsed>=press_at:
+                              try:
+                                  send_key(monitor,['shift'],5000)
+                                  entry['shift_sent']=True
+                                  entry['shift_actual_seconds']=round(elapsed,2)
+                              except Exception:
+                                  pass
+                          try:
+                              ppm=out/'current.ppm'
+                              qmp(monitor,'screendump',{'filename':str(ppm)})
+                              with Image.open(ppm) as frame:
+                                  frame.load()
+                                  state=highlighted(frame)
+                                  if state in ('default','recovery'):
+                                      entry['menu_'+state+'_seen']=True
+                                      entry['menu_seen_at_seconds']=round(time.monotonic()-start,2)
+                                      entry['menu_size']=frame.size
+                                      frame.save(out/'menu-visible.png')
+                                      break
+                          except Exception:
+                              pass
+                          time.sleep(.07)
+                      if (out/'serial.log').exists():
+                          entry['guest_serial_header']=(out/'serial.log').read_text(errors='replace')[:300]
+                  finally:
+                      if vm.poll() is None:
+                          vm.terminate()
+                          try:vm.wait(timeout=4)
+                          except subprocess.TimeoutExpired:vm.kill();vm.wait(timeout=3)
+              print('P50_SHIFT_PROBE',json.dumps(entry),flush=True)
+              results.append(entry)
+          Path('out/reports/shift-probe-results.json').write_text(json.dumps(results,indent=2)+'\n')
+          if not any(x['menu_default_seen'] for x in results):
+              raise SystemExit('No BIOS recovery menu observed; preserve candidate as unreleased')
+          PY
+      - name: Print VM error logs on failed storage experiment
+        if: failure()
+        run: |
+          for p in out/probe-*/qemu.log qemu.log serial.log; do
+            if test -f "$p"; then echo "DIAG_FILE $p"; head -n 80 "$p"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v117-shift-press-probe-evidence
+          path: |
+            out/reports/
+            out/probe-*/
+            
+            
+            
+          retention-days: 14
+          if-no-files-found: warn
