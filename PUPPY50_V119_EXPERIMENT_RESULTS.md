@@ -92,3 +92,32 @@ The old, much smaller [2026 experimental Puppy50 Alpine VM ISO](https://github.c
 - LZ4 initrd alone: only 0.160s mean gain; reject as unproven relative to added size.
 - The older offline Alpine solution was 48.24s to a visually recognized interactive Firefox page, and is not a useful drop-in secure web replacement.
 - **Nothing has demonstrated <3.00s genuine cold Firefox first frame, let alone consistent under-3s operation on the physical 2010 Acer.** No ISO labeled "3 seconds" may be released on these measurements.
+
+## Measured experiment E: bypass redundant Debian Live live-config service after early-user setup
+
+With the full original Zstd-compressed v117 root, unchanged kernel, original full-RAM fallback initrd, and only one experimental staged-boot initrd patch, this candidate **first creates the nonroot Live user in the initramfs, then masks systemd live-config.service**. The original live-boot and Live Manager behavior is kept in the fallback initrd. This is research-only: live-config may implement other hardware/localization functionality, so physical compatibility is NOT certified by a QEMU test.
+
+Four alternating cold BIOS KVM boots with exact same guest profile (2 virtual CPUs, 3 GiB, AHCI CD, 0.2s Firefox-frame polling) passed in GitHub Actions, each with checksum-verified RAM migration and a new authentic HTTP 200 after virtual-media ejection.
+
+| Trial | First Firefox frame | Full RAM READY |
+|---|---:|---:|
+| Original v117 #1 | 10.26 s | 16.97 s |
+| Early-user + live-config masked #1 | **8.98 s** | 15.70 s |
+| Early-user + live-config masked #2 | **8.97 s** | 15.64 s |
+| Original v117 #2 | 9.42 s | 16.63 s |
+| **Original mean** | **9.840 s** | **16.800 s** |
+| **Candidate mean** | **8.975 s** | **15.670 s** |
+
+Measured first-frame improvement **0.865 seconds**, RAM readiness improved by **1.130 seconds**. The root SquashFS size **stays 696,545,280 bytes**, avoiding the 255MiB compressed-root growth of the LZ4 experiment. All four post-eject HTTP receipts were **200**; no benchmark boot errors.
+
+**Still no real under-three-second Firefox cold boot.** The improvement includes the already-tested early-user precreation, not just masking systemd live-config; it cannot be attributed exclusively to the service alone without another candidate-to-candidate isolated comparison. The virtual machine does not prove operation on real Wi-Fi, i915, external hardware or HTTPS at all destinations; do not replace the recovery ISO. Stop before asserting a three-second result.
+
+[Completed successful benchmark](https://github.com/74127418528426leo-del/Test/actions/runs/43494435927)
+
+## The next major limitation
+
+All five v119 experiment families—root recompression, initramfs recompression, combined root-plus-early-user, historically smaller Alpine root, and early-user-plus-live-config bypass—have been tried against true visible Firefox frames where applicable. The largest fully functional, isolated same-host gain measured in v119 was **0.925s** by combining LZ4 and early user, but that added 255MiB and delayed full RAM readiness. The smaller live-config bypass gained **0.865s** while preserving original compressed root size; it needs broader hardware validation before adoption.
+
+**No existing test establishes <3.0 seconds, including on the real i3-540 Acer**. Host virtual benchmarks cannot substitute for old physical CPU/post/graphics timing. To get near three seconds requires a more radical, independently tested, **cold** GUI/browser startup redesign (the actual Firefox/X11 initialization and systemd/live-overlay critical path), not simply changing codecs or disabling background applets. A splash screen, browser PID, prelaunched snapshot, fake framebuffer or warm-resume timing is NOT valid.
+
+Retain the [v117 experimental released ISO](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v117-instant-bios-experimental) and separate [v115 recovery release](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental) rather than labeling these research-only test images production-ready.
