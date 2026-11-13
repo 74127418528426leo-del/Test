@@ -1,0 +1,497 @@
+name: Puppy50 v146 - test secure Firefox nice minus10 versus minus5
+on:
+  push:
+    branches: [puppy50-v146-firefox-nice-minus10-test]
+    paths: ['.github/workflows/puppy50-v146-firefox-priority-minus10-ab.yml', 'v146/**']
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 48
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          path: input/patches
+      - name: Install isolated VM and ISO tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input fixture out/main out/recheck out/reports
+      - name: Download and authenticate exact v115 ISO and evidence source
+        run: |
+          set -euo pipefail
+          base='https://github.com/74127418528426leo-del/Test/releases/download'
+          curl -fL --retry 3 --silent --show-error "$base/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso" -o input/base.iso
+          curl -fL --retry 3 --silent --show-error "$base/puppy50-v114-fast-verification-experimental/Puppy50_v115_Test_Evidence.zip" -o input/source.zip
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/base.iso' | sha256sum -c -
+          echo '7825360436f14213ae8415e1505a11868f48826a9f4d48f8eb02f1354842ad6b  input/source.zip' | sha256sum -c -
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('input/source.zip') as z:
+              assert z.testzip() is None
+          PY
+          python3 input/source/web109/boot_bench_staged.py --help | tail -n 12
+      - name: Build QEMU-only pre-PID1 authenticated X11 without weakening Firefox sandbox
+        run: |
+          set -euo pipefail
+          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/original.squashfs -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          # Exact two-part initrd layout from the original v115 build evidence.
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main/usr/lib/live/boot/9990-main.sh out/main-original.sh
+          sudo python3 input/patches/v118/precreate_user.py out/main
+          sudo python3 input/patches/v122/disable_liveconfig.py out/main
+          sudo python3 input/patches/v123/presystemd_x11.py out/main
+          sudo python3 input/patches/v125/require_early_drm.py out/main
+          sudo python3 input/patches/v126/preserve_xsocket.py out/main
+          sudo python3 input/patches/v124/diagnose_early_x11.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo diff -u out/main-original.sh out/main/usr/lib/live/boot/9990-main.sh >out/reports/ONLY_V123_PRESYSTEMD_X11_DIFF || test "$?" -eq 1
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+          xorriso -indev input/base.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          entries=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(entries)==293
+          digest=hashlib.sha256(Path('out/candidate.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          new=[];seen=set()
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              new.append((digest if name in changed else m.group(1))+m.group(2)+name)
+          assert changed.issubset(seen),changed-seen
+          Path('out/sha256sum.txt').write_text('\n'.join(new)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract /live/initrd.img out/recheck/initrd -extract /live/initrd-full.img out/recheck/fallback -extract /live/filesystem.squashfs out/recheck/root -extract /sha256sum.txt out/recheck/sha256sum.txt >out/reports/recheck.log 2>&1
+          cmp out/candidate.initrd out/recheck/initrd
+          cmp out/original-full.initrd out/recheck/fallback
+          cmp out/original.squashfs out/recheck/root
+          cmp out/sha256sum.txt out/recheck/sha256sum.txt
+          sha256sum input/base.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Preserve v126 baseline and build checksum-audited v127 early parallel Firefox ISO
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo python3 input/patches/v127/parallel_firefox.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V127_FIREFOX_DIRECT_EXEC' out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V127_BROWSER_START_RELOCATED' out/main/usr/lib/live/boot/9990-main.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/v127.cpio
+          zstd -q -3 -T2 -o out/v127.cpio.zst out/v127.cpio
+          cat out/early-prefix out/v127.cpio.zst >out/v127.initrd
+          cmp -n 36154880 out/original.initrd out/v127.initrd
+          xorriso -indev input/base.iso -outdev out/v127-stage.iso \
+            -map out/v127.initrd /live/initrd.img \
+            -map out/v127.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/v127-stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          entries=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(entries)==293
+          digest=hashlib.sha256(Path('out/v127.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          out=[];seen=set()
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name in changed:seen.add(name)
+              out.append((digest if name in changed else m.group(1))+m.group(2)+name)
+          assert seen==changed
+          Path('out/v127.manifest').write_text('\n'.join(out)+'\n')
+          PY
+          xorriso -indev out/v127-stage.iso -outdev out/v127.iso \
+            -map out/v127.manifest /sha256sum.txt -boot_image any replay \
+            -commit -end >out/reports/v127-final.log 2>&1
+          mkdir -p out/v127-recheck
+          xorriso -osirrox on -indev out/v127.iso \
+            -extract /live/initrd.img out/v127-recheck/initrd \
+            -extract /live/initrd.img-6.12.115+deb13.1-amd64 out/v127-recheck/initrd-versioned \
+            -extract /live/filesystem.squashfs out/v127-recheck/root \
+            -extract /live/initrd-full.img out/v127-recheck/fallback \
+            -extract /sha256sum.txt out/v127-recheck/manifest \
+            >out/reports/v127-verify.log 2>&1
+          cmp out/v127.initrd out/v127-recheck/initrd
+          cmp out/v127.initrd out/v127-recheck/initrd-versioned
+          cmp out/original.squashfs out/v127-recheck/root
+          cmp out/original-full.initrd out/v127-recheck/fallback
+          cmp out/v127.manifest out/v127-recheck/manifest
+          sha256sum out/candidate.iso out/v127.iso >out/reports/v127-ISO-hashes.txt
+          echo 'P50_V127_TWO_COLD_ISOS_VERIFIED_ROOT_AND_FALLBACK_IDENTICAL'
+      - name: Build second ISO prefetching 96MiB of libxul while initializing DRM
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo python3 input/patches/v131/prefetch_firefox.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V131_READAHEAD_STARTED' out/main/usr/lib/live/boot/9990-main.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/v131.cpio
+          zstd -q -3 -T2 -o out/v131.cpio.zst out/v131.cpio
+          cat out/early-prefix out/v131.cpio.zst >out/v131.initrd
+          cmp -n 36154880 out/original.initrd out/v131.initrd
+          xorriso -indev out/v127.iso -outdev out/v131-stage.iso \
+            -map out/v131.initrd /live/initrd.img \
+            -map out/v131.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/v131-stage.log 2>&1
+          python3 - <<'PY'
+          import hashlib,re
+          from pathlib import Path
+          entries=Path('out/v127.manifest').read_text().splitlines()
+          assert len(entries)==293
+          digest=hashlib.sha256(Path('out/v131.initrd').read_bytes()).hexdigest()
+          names={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          lines=[];seen=set()
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name in names:seen.add(name)
+              lines.append((digest if name in names else m.group(1))+m.group(2)+name)
+          assert seen==names
+          Path('out/v131.manifest').write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/v131-stage.iso -outdev out/v131.iso \
+            -map out/v131.manifest /sha256sum.txt -boot_image any replay \
+            -commit -end >out/reports/v131-repack.log 2>&1
+          mkdir -p out/v131-recheck
+          xorriso -osirrox on -indev out/v131.iso \
+            -extract /live/initrd.img out/v131-recheck/initrd \
+            -extract /live/initrd-full.img out/v131-recheck/fallback \
+            -extract /live/filesystem.squashfs out/v131-recheck/root \
+            -extract /sha256sum.txt out/v131-recheck/manifest >out/reports/v131-audit.log 2>&1
+          cmp out/v131.initrd out/v131-recheck/initrd
+          cmp out/original-full.initrd out/v131-recheck/fallback
+          cmp out/original.squashfs out/v131-recheck/root
+          cmp out/v131.manifest out/v131-recheck/manifest
+          sha256sum out/v127.iso out/v131.iso >out/reports/v131-ISO-hashes.txt
+          echo P50_V131_TWO_ISOS_RETAIN_IDENTICAL_FIREFOX_KERNEL_ROOT_AND_FALLBACK
+      - name: Build second candidate changing ONLY early guest hostname mapping
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo python3 input/patches/v135/preconfigure_hostname.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V135_HOST_MAPPING_ADDED' out/main/usr/lib/live/boot/9990-main.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/v135.cpio
+          zstd -q -3 -T2 -o out/v135.cpio.zst out/v135.cpio
+          cat out/early-prefix out/v135.cpio.zst >out/v135.initrd
+          cmp -n 36154880 out/original.initrd out/v135.initrd
+          xorriso -indev out/v131.iso -outdev out/v135-stage.iso \
+            -map out/v135.initrd /live/initrd.img \
+            -map out/v135.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/v135-stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          original=Path('out/v131.manifest').read_text().splitlines()
+          assert len(original)==293
+          newhash=hashlib.sha256(Path('out/v135.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          out=[];seen=set()
+          for line in original:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name in changed:seen.add(name)
+              out.append((newhash if name in changed else m.group(1))+m.group(2)+name)
+          assert seen==changed
+          Path('out/v135.manifest').write_text('\n'.join(out)+'\n')
+          PY
+          xorriso -indev out/v135-stage.iso -outdev out/v135.iso \
+            -map out/v135.manifest /sha256sum.txt -boot_image any replay \
+            -commit -end >out/reports/v135-final.log 2>&1
+          mkdir -p out/v135-verify
+          xorriso -osirrox on -indev out/v135.iso \
+            -extract /live/initrd.img out/v135-verify/initrd \
+            -extract /live/initrd-full.img out/v135-verify/full \
+            -extract /live/filesystem.squashfs out/v135-verify/root \
+            -extract /sha256sum.txt out/v135-verify/manifest >out/reports/v135-audit.log 2>&1
+          cmp out/v135.initrd out/v135-verify/initrd
+          cmp out/original-full.initrd out/v135-verify/full
+          cmp out/original.squashfs out/v135-verify/root
+          cmp out/v135.manifest out/v135-verify/manifest
+          sha256sum out/v131.iso out/v135.iso >out/reports/v135-ISO-sha256.txt
+          echo P50_V135_IDENTICAL_KERNEL_ROOT_FIREFOX_AND_RECOVERY
+      - name: Build second ISO adding ONLY increased libxul prefetch depth on v135 hosts ISO
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo python3 input/patches/v136/prefetch_256.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V133_PREFETCH_256MB_STARTED' out/main/usr/lib/live/boot/9990-main.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/v136.cpio
+          zstd -q -3 -T2 -o out/v136.cpio.zst out/v136.cpio
+          cat out/early-prefix out/v136.cpio.zst >out/v136.initrd
+          cmp -n 36154880 out/original.initrd out/v136.initrd
+          xorriso -indev out/v135.iso -outdev out/v136-stage.iso \
+            -map out/v136.initrd /live/initrd.img \
+            -map out/v136.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/v136-stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          entries=Path('out/v135.manifest').read_text().splitlines()
+          assert len(entries)==293
+          sha=hashlib.sha256(Path('out/v136.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          found=set();rows=[]
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line); assert m,line
+              name=m.group(3)
+              if name in changed: found.add(name)
+              rows.append((sha if name in changed else m.group(1))+m.group(2)+name)
+          assert found==changed
+          Path('out/v136.manifest').write_text('\n'.join(rows)+'\n')
+          PY
+          xorriso -indev out/v136-stage.iso -outdev out/v136.iso \
+            -map out/v136.manifest /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/v136-final.log 2>&1
+          mkdir -p out/v136-check
+          xorriso -osirrox on -indev out/v136.iso \
+            -extract /live/initrd.img out/v136-check/initrd \
+            -extract /live/initrd-full.img out/v136-check/fallback \
+            -extract /live/filesystem.squashfs out/v136-check/root \
+            -extract /sha256sum.txt out/v136-check/manifest >out/reports/v136-audit.log 2>&1
+          cmp out/v136.initrd out/v136-check/initrd
+          cmp out/original-full.initrd out/v136-check/fallback
+          cmp out/original.squashfs out/v136-check/root
+          cmp out/v136.manifest out/v136-check/manifest
+          sha256sum out/v135.iso out/v136.iso >out/reports/v136-ISO-sha256.txt
+          echo P50_V136_BOTH_ISOS_IDENTICAL_ROOT_KERNEL_RECOVERY_AND_FIREFOX_BINARY
+      - name: Build otherwise identical ISO giving Firefox -5 niceness before dropping privileges
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo python3 input/patches/v141/priority.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V141_FIREFOX_EARLY_PRIORITY_CONFIGURED' out/main/usr/lib/live/boot/9990-main.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/v141.cpio
+          zstd -q -3 -T2 -o out/v141.cpio.zst out/v141.cpio
+          cat out/early-prefix out/v141.cpio.zst >out/v141.initrd
+          cmp -n 36154880 out/original.initrd out/v141.initrd
+          xorriso -indev out/v136.iso -outdev out/v141-stage.iso \
+            -map out/v141.initrd /live/initrd.img \
+            -map out/v141.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/v141-stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          entries=Path('out/v136.manifest').read_text().splitlines()
+          assert len(entries)==293
+          digest=hashlib.sha256(Path('out/v141.initrd').read_bytes()).hexdigest()
+          targets={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          seen=set();out=[]
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3)
+              if name in targets:seen.add(name)
+              out.append((digest if name in targets else m.group(1))+m.group(2)+name)
+          assert seen==targets
+          Path('out/v141.manifest').write_text('\n'.join(out)+'\n')
+          PY
+          xorriso -indev out/v141-stage.iso -outdev out/v141.iso \
+            -map out/v141.manifest /sha256sum.txt -boot_image any replay \
+            -commit -end >out/reports/v141-final.log 2>&1
+          mkdir -p out/v141-recheck
+          xorriso -osirrox on -indev out/v141.iso \
+            -extract /live/initrd.img out/v141-recheck/initrd \
+            -extract /live/initrd-full.img out/v141-recheck/fallback \
+            -extract /live/filesystem.squashfs out/v141-recheck/root \
+            -extract /sha256sum.txt out/v141-recheck/manifest >out/reports/v141-audit.log 2>&1
+          cmp out/v141.initrd out/v141-recheck/initrd
+          cmp out/original-full.initrd out/v141-recheck/fallback
+          cmp out/original.squashfs out/v141-recheck/root
+          cmp out/v141.manifest out/v141-recheck/manifest
+          sha256sum out/v136.iso out/v141.iso >out/reports/v141-ISO-hashes.txt
+          echo P50_V141_IDENTICAL_KERNEL_ROOT_FIREFOX_SANDBOX_AND_RECOVERY_ONLY_PRIORITY_CHANGED
+      - name: Build minus10 Firefox priority image from exact minus5 trusted comparison candidate
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          sudo python3 input/patches/v146/nice_minus10.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          grep -Fq 'P50_V146_HIGHER_FIREFOX_PRIORITY_REQUESTED' out/main/usr/lib/live/boot/9990-main.sh
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/v146.cpio
+          zstd -q -3 -T2 -o out/v146.cpio.zst out/v146.cpio
+          cat out/early-prefix out/v146.cpio.zst >out/v146.initrd
+          cmp -n 36154880 out/original.initrd out/v146.initrd
+          xorriso -indev out/v141.iso -outdev out/v146-stage.iso \
+            -map out/v146.initrd /live/initrd.img \
+            -map out/v146.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/v146-stage.log 2>&1
+          python3 - <<'PY'
+          import hashlib,re
+          from pathlib import Path
+          entries=Path('out/v141.manifest').read_text().splitlines()
+          assert len(entries)==293
+          hash=hashlib.sha256(Path('out/v146.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          rows=[];seen=set()
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3)
+              if name in changed:seen.add(name)
+              rows.append((hash if name in changed else m.group(1))+m.group(2)+name)
+          assert seen==changed
+          Path('out/v146.manifest').write_text('\n'.join(rows)+'\n')
+          PY
+          xorriso -indev out/v146-stage.iso -outdev out/v146.iso \
+            -map out/v146.manifest /sha256sum.txt -boot_image any replay \
+            -commit -end >out/reports/v146-final.log 2>&1
+          mkdir -p out/v146-check
+          xorriso -osirrox on -indev out/v146.iso \
+            -extract /live/initrd.img out/v146-check/initrd \
+            -extract /live/initrd-full.img out/v146-check/fallback \
+            -extract /live/filesystem.squashfs out/v146-check/root \
+            -extract /sha256sum.txt out/v146-check/manifest >out/reports/v146-audit.log 2>&1
+          cmp out/v146.initrd out/v146-check/initrd
+          cmp out/original-full.initrd out/v146-check/fallback
+          cmp out/original.squashfs out/v146-check/root
+          cmp out/v146.manifest out/v146-check/manifest
+          sha256sum out/v141.iso out/v146.iso >out/reports/v146-ISO-sha256.txt
+          echo P50_V146_FIREFOX_MINUS10_COMPARISON_KERNEL_ROOT_AND_RECOVERY_IDENTICAL
+      - name: Use identical 0.2s SATA CD optical benchmark on both conditions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(needle)==1
+          s=s.replace(needle,needle.replace('else .8','else .2'),1)
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':","if True:  # AHCI CD medium ejection",1)
+          p2=Path('input/source/web109/boot_bench_ahci.py')
+          p2.write_text(s)
+          import ast
+          ast.parse(s)
+          PY
+      - name: Start local offline/online browser fixture
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Four matched real Firefox first-frame cold boots A-B-B-A with RAM and HTTP 200 proof
+        timeout-minutes: 27
+        run: |
+          set -euo pipefail
+          for sample in base1 cand1 cand2 base2; do
+            if [[ "$sample" == base* ]]; then iso=out/v141.iso; else iso=out/v146.iso; fi
+            python3 -u input/source/web109/boot_bench_ahci.py \
+              --iso "$iso" --out "out/$sample" \
+              --mode online --allow-no-startup-probe --wait-ram-ready \
+              --ram 3072 --seconds 48 --cpu-model i3-540-conservative \
+              --emulate-acer-id --firmware bios --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,os,re,statistics
+          names=['base1','cand1','cand2','base2']
+          data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in data.items():
+              assert r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None,(n,r)
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
+              serial=(Path('out')/n/'serial.log').read_text(errors='replace')
+              for marker in ['P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED',
+                             'P50_V123_XORG_START','P50_V124_FORENSICS_START','P50_V124_FORENSICS_END','P50_STAGE_READY']:
+                  assert marker in serial,(n,'missing',marker)
+              assert 'P50_V127_FIREFOX_DIRECT_EXEC' in serial,(n,'Same v127 direct Firefox launch missing')
+              assert 'P50_V127_BROWSER_START_RELOCATED' in serial,(n,'Duplicate autostart still present')
+              assert 'P50_V131_READAHEAD_STARTED' in serial,(n,'Both conditions require libxul prefetch')
+              assert 'P50_V131_READAHEAD_COMPLETE' in serial,(n,'Preload incomplete')
+              assert any(x in serial for x in ('P50_V135_HOST_MAPPING_ADDED','P50_V135_HOST_ALREADY_MAPPED')),(n,'Both images need identical host mapping')
+              assert 'P50_V133_PREFETCH_256MB_STARTED' in serial,(n,'Both images need same 256MiB prefetch')
+              assert 'P50_V141_FIREFOX_EARLY_PRIORITY_CONFIGURED' in serial,(n,'Both images need secure Firefox priority setup')
+              assert 'P50_V141_ACTUAL_NICE_VALUES' in serial,(n,'Actual nice report missing')
+              report_section=serial.split('P50_V141_ACTUAL_NICE_VALUES',1)[1].split('-- display and session processes --',1)[0]
+              if n.startswith('cand'):
+                  assert 'P50_V146_HIGHER_FIREFOX_PRIORITY_REQUESTED' in serial,(n,'Minus10 branch not executed')
+                  assert re.search(r'-10\s+user\s+firefox-esr\b',report_section),(n,'Firefox not running as nonroot nice -10',report_section[:500])
+              else:
+                  assert 'P50_V146_HIGHER_FIREFOX_PRIORITY_REQUESTED' not in serial,(n,'Baseline contaminated')
+                  assert re.search(r'-5\s+user\s+firefox-esr\b',report_section),(n,'Original -5 Firefox prerequisite absent',report_section[:500])
+              crit=serial[serial.index('P50_V124_FORENSICS_START'):serial.index('P50_V124_FORENSICS_END')+len('P50_V124_FORENSICS_END')]
+              assert '/usr/sbin/lightdm' not in crit,(n,'Late LightDM fallback')
+              assert '/usr/lib/xorg/Xorg :0 -auth /home/user/.Xauthority' in crit,(n,'Not the early authenticated display')
+              sockets=crit.split('-- xauth/x11 sockets --',1)[1].split('-- early Xorg log --',1)[0]
+              assert ' X0' in sockets,(n,'X11 socket lost after switch-root',sockets)
+          log=Path('out/reports/fixture-after.log').read_text()
+          nonce=os.environ['P50_NONCE']
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(receipts)==4,('Missing authenticated browser HTTP200 after media ejection',len(receipts),log[-900:])
+          baseline=statistics.mean(data[n]['first_home_seen_seconds'] for n in ('base1','base2'))
+          candidate=statistics.mean(data[n]['first_home_seen_seconds'] for n in ('cand1','cand2'))
+          report={
+              'test':'same early Firefox, 256MiB preload and hostname; compare nice=-5 versus nice=-10 Firefox with identical original sandbox',
+              'first_frame_definition':'actual Firefox framebuffer home pixels, host monotonic clock before QEMU launch',
+              'conditions':'A-B-B-A same GitHub runner, 2 virtual CPUs, 3GiB RAM, BIOS QEMU AHCI CD, 0.2-second poll',
+              'initial_v117_full_root_unchanged':True,
+              'early_authenticated_X11_survived_switch_root_in_all_four':True,
+              'full_RAM_checksum_achieved_in_all_four':True,
+              'media_ejected_after_RAM_in_all_four':True,
+              'new_post_eject_HTTP_200_receipts':len(receipts),
+              'v141_minus5_mean_first_frame_s':baseline,
+              'v146_minus10_mean_first_frame_s':candidate,
+              'extra_cpu_priority_gain_seconds':baseline-candidate,
+              'both_candidate_real_frames_below_5_sec':all(data[n]['first_home_seen_seconds']<5 for n in ('cand1','cand2')),
+              'physical_Acer_i3_540_tested':False,
+              'full_RAM_at_384MiB_supported':False,
+              'trials':{n:{key:data[n][key] for key in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for n in names}
+          }
+          Path('out/reports/v141-defer-openbox-comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('P50_V146_FOUR_BOOT_RESULT',json.dumps(report,indent=2))
+          PY
+      - name: Preserve diagnostic serial if a VM failed before validation
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          for name in ('base1','cand1','cand2','base2'):
+              serial=Path('out')/name/'serial.log'
+              if not serial.exists(): continue
+              t=serial.read_text(errors='replace')
+              markers={k:k in t for k in ('P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED',
+                                            'P50_V127_FIREFOX_DIRECT_EXEC','P50_V131_READAHEAD_STARTED','P50_STAGE_READY')}
+              print('P50_V146_DIAGNOSTIC',name,json.dumps(markers),t[-700:].replace('\r',''))
+          PY
+      - name: Preserve measurements and diff whether or not tests passed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v146-firefox-nice10-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+          retention-days: 14
+          if-no-files-found: warn
