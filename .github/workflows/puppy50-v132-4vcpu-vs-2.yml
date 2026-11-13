@@ -1,0 +1,130 @@
+name: Puppy50 v132 - compare real Firefox cold boot on 2 vs 4 virtual CPU threads
+on:
+  push:
+    branches: [puppy50-v132-vcpu-count-coldboot-test]
+    paths: ['.github/workflows/puppy50-v132-4vcpu-vs-2.yml']
+  workflow_dispatch: {}
+permissions: {contents: read}
+jobs:
+  vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install QEMU KVM and screenshot checker
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+      - name: Download exact immutable v122 LZ4 ISO and verify published SHA-256
+        run: |
+          set -euo pipefail
+          curl -fL --silent --show-error --retry 4 \
+            'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v122-direct-fast-codec-experimental/Puppy50_v122_LZ4_Experimental.iso' \
+            -o input/v122-lz4.iso
+          echo '87cdab9424092d42ccae70bc9823a8d9f7673269a4a2f269243a5e7c3ebb9302  input/v122-lz4.iso' | sha256sum -c -
+          stat -c 'published-ISO-bytes=%s' input/v122-lz4.iso
+      - name: Generate identical 2-vCPU and 4-vCPU QEMU harnesses
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          poll="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(poll)==1
+          s=s.replace(poll,poll.replace('else .8','else .2'),1)
+          usb="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          ahci="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(usb)==1
+          s=s.replace(usb,ahci,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':","if True:  # Both configurations eject the same AHCI virtual CD medium",1)
+          cpu_flag="'-smp', '2'"
+          assert s.count(cpu_flag)==1,'Cannot identify exact CPU thread limit'
+          two=Path('input/source/web109/boot_bench_2cpu.py')
+          four=Path('input/source/web109/boot_bench_4cpu.py')
+          two.write_text(s)
+          four.write_text(s.replace(cpu_flag,"'-smp', '4'",1))
+          ast.parse(two.read_text())
+          ast.parse(four.read_text())
+          assert two.read_text().replace(cpu_flag,"'-smp', '4'",1)==four.read_text()
+          print('P50_V132_ONLY_DIFFERENCE_TWO_VS_FOUR_GUEST_VCPUS')
+          PY
+      - name: Start isolated browser HTTP server with authenticated per-run nonce
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          time.sleep(2)
+          for port in (8765,8766):
+              with socket.create_connection(('127.0.0.1',port),timeout=5):pass
+          PY
+      - name: Cold A-B-B-A actual Firefox render and verified media eject and HTTP200
+        timeout-minutes: 22
+        run: |
+          set -euo pipefail
+          for trial in two1 four1 four2 two2; do
+            if [[ "$trial" == two* ]]; then exe=input/source/web109/boot_bench_2cpu.py; else exe=input/source/web109/boot_bench_4cpu.py; fi
+            python3 -u "$exe" \
+              --iso input/v122-lz4.iso --out "out/$trial" \
+              --mode online --allow-no-startup-probe --wait-ram-ready \
+              --ram 3072 --seconds 65 --cpu-model i3-540-conservative \
+              --emulate-acer-id --firmware bios --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          import json,statistics,re,os
+          from pathlib import Path
+          names=('two1','four1','four2','two2')
+          runs={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in runs.items():
+              assert r['first_home_seen_seconds'] is not None,(n,'No true Firefox GUI frame')
+              assert r['staged_ram_ready_seconds'] is not None,(n,'No checksum-verified RAM-ready')
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
+          log=Path('out/reports/fixture-after.log').read_text(errors='replace')
+          nonce=os.environ['P50_NONCE']
+          received=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(received)==4,('Missing browser server HTTP200 after media eject',len(received))
+          base=statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('two1','two2'))
+          four=statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('four1','four2'))
+          result={
+             'purpose':'diagnostic only: published v122 real cold Firefox, 2 vs 4 QEMU VCPU on same physical CI host',
+             'unchanged_published_ISO_sha256':'87cdab9424092d42ccae70bc9823a8d9f7673269a4a2f269243a5e7c3ebb9302',
+             'same_guest_CPUID_flags':'Westmere, without AES or PCLMUL; this is not an actual 2010 CPU clock/cache simulation',
+             'same_guest_RAM_MiB':3072,
+             'two_vcpu_mean_actual_Firefox_first_frame_seconds':base,
+             'four_vcpu_mean_actual_Firefox_first_frame_seconds':four,
+             'four_cpu_gain_seconds':base-four,
+             'both_four_vcpu_samples_under_5_seconds':all(runs[n]['first_home_seen_seconds']<5 for n in ('four1','four2')),
+             'all_four_HTTP_200_responses_after_verified_RAM_copy_and_eject':len(received),
+             'measured_from':'host monotonic before QEMU launch',
+             'old_physical_Acer_verified':False,
+             'this_is_a_new_OS_optimization':False,
+             'runs':{n:{k:runs[n][k] for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for n in names}}
+          Path('out/reports/v132-cpu-comparison.json').write_text(json.dumps(result,indent=2)+'\n')
+          print('P50_V132_SAME_ISO_CPU_COUNT_AB',json.dumps(result,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v132-real-firefox-2vs4cpu-evidence
+          path: |
+            out/reports/
+            out/two1/
+            out/two2/
+            out/four1/
+            out/four2/
+          retention-days: 14
+          if-no-files-found: warn
