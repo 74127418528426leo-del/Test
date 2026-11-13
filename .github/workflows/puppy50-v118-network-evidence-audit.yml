@@ -1,0 +1,51 @@
+name: Puppy50 v118 - independently audit post-eject HTTP receipts
+on:
+  push:
+    branches: [puppy50-v118-sub3-coldboot-research]
+    paths: ['.github/workflows/puppy50-v118-network-evidence-audit.yml']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Retrieve actual four-VM evidence for both v118 builds
+        run: |
+          set -euo pipefail
+          mkdir -p out/early out/direct
+          gh run download 43486023722 --repo "$GITHUB_REPOSITORY" --name puppy50-v118-early-user-ab-evidence --dir out/early
+          gh run download 43486306890 --repo "$GITHUB_REPOSITORY" --name puppy50-v118-direct-x-ab-evidence --dir out/direct
+      - name: Count actual server-received HTTP after media ejection; cross-check VM results
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for group,run_id in [('early',43486023722),('direct',43486306890)]:
+              root=Path('out')/group
+              logs=list(root.rglob('fixture-after.log'))
+              assert len(logs)==1,(group,logs)
+              log=logs[0].read_text(errors='replace')
+              nonce=f'P50-{run_id}'
+              hits=[line for line in log.splitlines() if f'GET /after.html?nonce={nonce}' in line and (' 200 ' in line or ' 200"' in line)]
+              samples={}
+              for name in ('base1','cand1','cand2','base2'):
+                  paths=list(root.rglob(name+'/result.json'))
+                  assert len(paths)==1,(group,name,paths)
+                  v=json.loads(paths[0].read_text())
+                  samples[name]={'first_home_seen_seconds':v['first_home_seen_seconds'],
+                      'media_ejected':v['media_ejected'],
+                      'input_sent_after_eject':v['input_sent_after_eject'],
+                      'ram_ready_seconds':v['staged_ram_ready_seconds'],
+                      'errors':v['errors']}
+                  assert v['first_home_seen_seconds'] is not None and v['staged_ram_ready_seconds'] is not None,(group,name)
+                  assert v['media_ejected'] and v['input_sent_after_eject'] and not v['errors'],(group,name)
+              output={'test':group,'source_run':run_id,'post_eject_HTTP_200_count':len(hits),'VM_results':samples}
+              print('P50_V118_HTTP_AUDIT',json.dumps(output,indent=2),flush=True)
+              assert len(hits)==4,(group,'Expected one NEW HTTP 200 per VM after media ejection',hits)
+          print('P50_V118_ALL_EIGHT_POST_EJECT_BROWSER_HTTP_RECEIPTS_VERIFIED')
+          PY
