@@ -1,0 +1,189 @@
+name: Puppy50 v119 - test LZ4-compressed initramfs versus Zstd for genuine cold Firefox
+on:
+  push:
+    branches: [puppy50-v119-lz4-bottleneck-experiment]
+    paths: ['.github/workflows/puppy50-v119-lz4-initramfs.yml']
+  workflow_dispatch: {}
+permissions: {contents: read}
+jobs:
+  lz4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install isolated image and QEMU/KVM test tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd lz4 cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports out/root fixture out/check
+      - name: Download and authenticate v117 source image and both initrd aliases
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 \
+            'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso' \
+            -o input/base.iso
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/base.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/base.iso \
+            -extract /live/filesystem.squashfs out/original.squashfs \
+            -extract /live/initrd.img out/original.initrd \
+            -extract /live/initrd.img-6.12.115+deb13.1-amd64 out/original-versioned.initrd \
+            -extract /live/initrd-full.img out/original-full.initrd \
+            -extract /sha256sum.txt out/original.manifest >out/reports/extract.log 2>&1
+          cmp out/original.initrd out/original-versioned.initrd
+      - name: Replace only Zstd-compressed main initrd archive with lossless legacy LZ4
+        run: |
+          set -euo pipefail
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          cpio -it --quiet <out/main.cpio >out/reports/initrd-paths.txt
+          grep -Fq 'usr/lib/live/boot/9990-main.sh' out/reports/initrd-paths.txt
+          grep -Fq 'usr/lib/p50-stage/p50-migrate.sh' out/reports/initrd-paths.txt
+          lz4 -l -9 -f out/main.cpio out/main.lz4 >out/reports/lz4-output.log 2>&1
+          lz4 -d -f out/main.lz4 out/verify.cpio >>out/reports/lz4-output.log 2>&1
+          cmp out/main.cpio out/verify.cpio
+          cat out/early-prefix out/main.lz4 >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          src=Path('out/original.initrd');dst=Path('out/candidate.initrd')
+          info={'original_initrd_bytes':src.stat().st_size,
+                'lz4_initrd_bytes':dst.stat().st_size,
+                'exact_original_early_microcode_archive':True,
+                'identical_uncompressed_main_initrd_contents':True,
+                'full_ram_fallback_initrd_unchanged':True}
+          print('P50_V119_INITRD_CODECS',json.dumps(info))
+          Path('out/reports/initrd-codec.json').write_text(json.dumps(info,indent=2)+'\n')
+          PY
+      - name: Repack ISO without changing kernel, full RAM fallback or main root
+        run: |
+          set -euo pipefail
+          xorriso -indev input/base.iso -outdev out/stage.iso \
+            -map out/candidate.initrd /live/initrd.img \
+            -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          source=Path('out/original.manifest').read_text().splitlines()
+          assert len(source)==293
+          targets={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          digest=hashlib.sha256(Path('out/candidate.initrd').read_bytes()).hexdigest()
+          out=[];seen=set()
+          for line in source:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name in targets:seen.add(name)
+              out.append((digest if name in targets else m.group(1))+m.group(2)+name)
+          assert seen==targets
+          Path('out/candidate.manifest').write_text('\n'.join(out)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso \
+            -map out/candidate.manifest /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/final-repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso \
+            -extract /live/filesystem.squashfs out/check/root.squashfs \
+            -extract /live/initrd.img out/check/initrd \
+            -extract /live/initrd.img-6.12.115+deb13.1-amd64 out/check/initrd-versioned \
+            -extract /live/initrd-full.img out/check/full \
+            -extract /sha256sum.txt out/check/manifest >out/reports/recheck.log 2>&1
+          cmp out/original.squashfs out/check/root.squashfs
+          cmp out/candidate.initrd out/check/initrd
+          cmp out/candidate.initrd out/check/initrd-versioned
+          cmp out/original-full.initrd out/check/full
+          cmp out/candidate.manifest out/check/manifest
+          sha256sum input/base.iso out/candidate.iso >out/reports/isohashes.txt
+          echo 'P50_V119_LZ4_INITRD_BYTE_EXACT_RECONSTRUCTION_OK'
+      - name: Keep identical real QEMU AHCI/CD Firefox measurement
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(needle)==1
+          s=s.replace(needle,needle.replace('else .8','else .2'),1)
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':","if True:  # QEMU AHCI CD eject; not unsupported device_del",1)
+          p2=Path('input/source/web109/boot_bench_ahci.py')
+          p2.write_text(s)
+          import ast
+          ast.parse(s)
+          PY
+      - name: Start nonce-scoped local HTTP fixture
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py \
+            --fixture fixture/unused.mp4 --nonce "$P50_NONCE" \
+            --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py \
+            --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time;time.sleep(2);[socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Matched A-B-B-A real Firefox plus safe RAM/medium/network verification
+        timeout-minutes: 22
+        run: |
+          set -euo pipefail
+          for sample in base1 lz4_1 lz4_2 base2; do
+            if [[ "$sample" == base* ]]; then iso=input/base.iso; else iso=out/candidate.iso; fi
+            python3 -u input/source/web109/boot_bench_ahci.py \
+              --iso "$iso" --out "out/$sample" --mode online \
+              --allow-no-startup-probe --wait-ram-ready \
+              --ram 3072 --seconds 190 \
+              --cpu-model i3-540-conservative --emulate-acer-id \
+              --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          import json,re,os,statistics
+          from pathlib import Path
+          names=['base1','lz4_1','lz4_2','base2']
+          data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in data.items():
+              assert r['first_home_seen_seconds'] is not None,(n,r)
+              assert r['staged_ram_ready_seconds'] is not None,(n,r)
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
+          log=Path('out/reports/fixture-after.log').read_text()
+          nonce=os.environ['P50_NONCE']
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(receipts)==4,('Missing genuine post-eject HTTP 200',len(receipts),log[-1000:])
+          result={
+            'method':'cold host QEMU launch, BIOS, AHCI CD, 2 virtual Westmere CPUs, 3GiB guest, 0.2s framebuffer polling',
+            'iso_source_sha256':'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83',
+            'original_zstd_first_frame_s':statistics.mean(data[x]['first_home_seen_seconds'] for x in ('base1','base2')),
+            'recompressed_lz4_initrd_first_frame_s':statistics.mean(data[x]['first_home_seen_seconds'] for x in ('lz4_1','lz4_2')),
+            'lz4_initrd_first_frame_gain_s':0,
+            'post_eject_real_HTTP_200_receipts':len(receipts),
+            'all_four_post_eject_verified':True,
+            'three_second_goal':all(data[x]['first_home_seen_seconds']<3.0 for x in ('lz4_1','lz4_2')),
+            'trials':{k:{f:data[k][f] for f in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for k in names}
+          }
+          result['lz4_first_frame_gain_s']=result['original_zstd_first_frame_s']-result['recompressed_lz4_first_frame_s']
+          Path('out/reports/v119_lz4_comparison.json').write_text(json.dumps(result,indent=2)+'\n')
+          print('P50_V119_LZ4_INITRD_AB',json.dumps(result,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v119-lz4-initrd-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/lz4_1/
+            out/lz4_2/
+          retention-days: 14
+          if-no-files-found: warn
