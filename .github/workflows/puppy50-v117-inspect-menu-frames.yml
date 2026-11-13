@@ -1,0 +1,60 @@
+name: Puppy50 v117 - inspect actual firmware and menu video frames
+on:
+  push:
+    branches: [puppy50-v117-fast-boot-engineering]
+    paths: ['.github/workflows/puppy50-v117-inspect-menu-frames.yml']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download existing signed GitHub Actions evidence from the actual recovery runs
+        run: |
+          set -euo pipefail
+          mkdir -p frames/probe frames/recovery
+          gh run download 43434917786 --repo "$GITHUB_REPOSITORY" --name puppy50-v117-shift-press-probe-evidence --dir frames/probe
+          gh run download 43434323507 --repo "$GITHUB_REPOSITORY" --name puppy50-v117-recovery-proof-evidence --dir frames/recovery
+          find frames -type f | sort | head -80
+      - name: Emit small visual contact sheet of actual QEMU screenshot evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,io
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          root=Path('frames')
+          photos=[]
+          for p in sorted(root.rglob('current.ppm')):
+              if 'probe' in str(p) or 'recovery' in str(p):
+                  photos.append(p)
+          for p in sorted(root.rglob('menu-*.png')):
+              photos.append(p)
+          print('P50_FRAMES',[(str(x),x.stat().st_size) for x in photos][:32])
+          images=[]
+          for p in photos[:16]:
+              try:
+                  im=Image.open(p);im.load()
+                  print('P50_FRAME',p,im.size,im.getpixel((min(500,im.width-1),min(255,im.height-1))))
+                  images.append((str(p),im.convert('RGB')))
+              except Exception as e:
+                  print('P50_IMAGE_ERROR',p,str(e))
+          assert images,'No screenshot images in evidence'
+          w,h=480,320
+          canv=Image.new('RGB',(w*4,h*((len(images)+3)//4)),(26,29,35))
+          dr=ImageDraw.Draw(canv)
+          for i,(n,im) in enumerate(images):
+              x=(i%4)*w;y=(i//4)*h
+              im.thumbnail((w-10,h-38))
+              canv.paste(im,(x+5,y+30))
+              dr.text((x+4,y+4),Path(n).parent.name+' '+Path(n).name,fill=(255,255,255))
+          bio=io.BytesIO();canv.save(bio,format='PNG',optimize=True)
+          print('P50_CONTACT_SHEET_BYTES',len(bio.getvalue()))
+          print('P50_CONTACT_SHEET_BASE64_BEGIN')
+          print(base64.b64encode(bio.getvalue()).decode())
+          print('P50_CONTACT_SHEET_BASE64_END')
+          PY
