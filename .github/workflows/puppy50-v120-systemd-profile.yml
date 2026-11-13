@@ -2,7 +2,7 @@ name: Puppy50 v120 - persistent systemd critical path diagnostic
 on:
   push:
     branches: [puppy50-v120-direct-session-fastpath]
-    paths: ['.github/workflows/puppy50-v120-systemd-profile.yml']
+    paths: ['.github/workflows/puppy50-v120-systemd-profile.yml', 'v120/profile_guest.py']
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -131,7 +131,8 @@ jobs:
           assert r['first_home_seen_seconds'] and r['staged_ram_ready_seconds'],r
           assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],r
           serial=Path('out/bios/serial.log').read_text(errors='replace').replace('\r','')
-          assert 'P50_V120_CRITICAL_BEGIN' in serial and 'P50_V120_CRITICAL_END' in serial,('systemd reporter never fired',serial[-2400:])
+          assert 'P50_V120_CRITICAL_BEGIN' in serial and 'P50_V120_CRITICAL_END' in serial
+          assert 'P50_V120_PROCESS_START name=firefox-esr' in serial, 'Missing actual Firefox process-start timestamp',('systemd reporter never fired',serial[-2400:])
           start=serial.index('P50_V120_CRITICAL_BEGIN')
           end=serial.index('P50_V120_CRITICAL_END',start)+len('P50_V120_CRITICAL_END')
           output=serial[start:end]
