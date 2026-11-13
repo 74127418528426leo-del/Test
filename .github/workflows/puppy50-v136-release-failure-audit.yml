@@ -20,6 +20,40 @@ jobs:
             --name puppy50-v136-release-shipping-bios-uefi-evidence \
             --dir diagnostic
           find diagnostic -type f | head -45
+          python3 -c 'import PIL; print("PIL available")'
+      - name: Classify actual saved QEMU video frame and show terminal-like grayscale projection
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import collections,os
+          from pathlib import Path
+          try:
+              from PIL import Image
+          except ImportError:
+              print('PIL not installed');raise
+          base=Path('diagnostic')
+          frames=list(base.rglob('v136_bios/checkpoint_*.png'))
+          frames.sort()
+          assert frames,'Original failure evidence has no screenshots'
+          for p in (frames[:1]+frames[-3:]):
+              im=Image.open(p).convert('RGB')
+              total=im.width*im.height
+              colors=collections.Counter(im.getdata())
+              black=sum(count for (r,g,b),count in colors.items() if max(r,g,b)<32)
+              bright=sum(count for (r,g,b),count in colors.items() if max(r,g,b)>160)
+              print('P50_V136_ORIGINAL_SAVED_FRAME',p.name,'size',im.size,
+                    'dark_pct',round(black/total*100,2),'bright_pct',round(bright/total*100,2),
+                    'dominant_colors',colors.most_common(9))
+              small=im.resize((85,24))
+              chars=' .:-=+*#%@'
+              for y in range(small.height):
+                  row=''
+                  for x in range(small.width):
+                      rgb=small.getpixel((x,y))
+                      b=sum(rgb)/3
+                      row+=chars[min(len(chars)-1,int(b/256*len(chars)))]
+                  print('P50_V136_FRAME_ASCII '+row)
+          PY
       - name: Inspect BIOS serial, root mount, Xorg/Firefox, DRM and host QEMU errors
         run: |
           set -euo pipefail
