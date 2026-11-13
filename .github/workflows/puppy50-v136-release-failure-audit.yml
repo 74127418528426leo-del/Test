@@ -1,0 +1,61 @@
+name: Puppy50 v136 - audit release smoke failure independently
+on:
+  push:
+    branches: [puppy50-v136-256mb-prefetch-plus-hosts]
+    paths: ['.github/workflows/puppy50-v136-release-failure-audit.yml']
+permissions: {contents: read, actions: read}
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download exact failed release smoke artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostic
+          gh run download 43520338227 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name puppy50-v136-release-shipping-bios-uefi-evidence \
+            --dir diagnostic
+          find diagnostic -type f | head -45
+      - name: Inspect BIOS serial, root mount, Xorg/Firefox, DRM and host QEMU errors
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re,json
+          root=Path('diagnostic')
+          matches=list(root.rglob('v136_bios/serial.log'))
+          assert len(matches)==1,matches
+          t=matches[0].read_text(errors='replace').replace('\r','')
+          keys=['P50_V118_EARLY_USER','P50_V119_LIVECONFIG_DISABLED',
+                'P50_V123_INITRD_LAUNCH_REQUEST','P50_V125_DRM_GATE_START',
+                'P50_V125_MODPROBE_SUCCEEDED','P50_V125_EARLY_DRM_READY',
+                'P50_V126_EARLY_SOCKET_PRESERVED','P50_V127_FIREFOX_DIRECT_EXEC',
+                'P50_V131_READAHEAD_COMPLETE','P50_V133_PREFETCH_256MB_STARTED',
+                'P50_V135_HOST_MAPPING_ADDED','P50_V135_HOST_ALREADY_MAPPED',
+                'P50_V123_XORG_START','P50_V123_OPENBOX_START',
+                'P50_V124_FORENSICS_START','P50_V124_FORENSICS_END',
+                'P50_STAGE_COPY_VERIFIED','P50_STAGE_READY','P50_STAGE_FAILED',
+                'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN']
+          found={k:t.count(k) for k in keys}
+          print('P50_V136_RELEASE_FAILURE_MARKERS',json.dumps(found,indent=2))
+          report_files=list(root.rglob('v136_bios/result.json'))
+          if len(report_files)==1:print('P50_V136_RELEASE_FAILURE_RESULT',report_files[0].read_text())
+          relevant=[line for line in t.splitlines() if re.search(r'P50_|mount|failed|error|drm|lightdm|Xorg|Openbox|firefox|kernel panic|network|root|bochs|X11|permission|emergency',line,re.I)]
+          print('P50_V136_RELEASE_RELEVANT_SERIAL\n'+'\n'.join(relevant[-130:])[-24000:])
+          idx=t.find('P50_V124_FORENSICS_START')
+          if idx>=0:print('P50_V136_RELEASE_GUEST_FORENSIC_START\n'+t[idx:idx+26000])
+          print('P50_V136_RELEASE_SERIAL_TAIL\n'+t[-10000:])
+          Path('v136-release-failure-audit.json').write_text(json.dumps({
+              'source_run':'https://github.com/74127418528426leo-del/Test/actions/runs/43520338227',
+              'markers':found,'failure':'exact shipping BIOS first Firefox frame absent',
+              'serial_tail':t[-13000:]},indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v136-release-failure-audit
+          path: v136-release-failure-audit.json
+          retention-days: 14
