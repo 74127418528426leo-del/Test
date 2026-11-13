@@ -62,3 +62,33 @@ An instrumented v117 startup reached the live-root hook at ~**1.65s guest kernel
 **No newly published v119 ISO is certified <3 seconds.** Do not publish or claim a working v119 production OS simply because an experimental QEMU benchmark has a speed gain. Do not remove a physical USB until the green VERIFIED RAM READY notice. Keep the original v115 recovery medium separately available because the released v117 experimental BIOS Shift recovery menu remains unverified.
 
 Tests are performed on isolated GitHub Actions KVM runners; the private physical Acer has not been booted. Browser networking and HTTPS evidence varies by experiment; the v119 root and initrd comparisons have verified four real authenticated local HTTP 200 responses after ejection, but that is not a real-world guarantee of every website, Wi-Fi SSID, 4K video or hardware configuration.
+
+## Measured experiment C: combined LZ4 root plus early Live-user creation
+
+A brand-new, checksum-audited test ISO combined **both separately working edits**: lossless LZ4 compression of the entire original live root, plus the previously validated earlier creation of the nonroot live user in the initramfs. The original kernel, original full-RAM fallback initrd, Firefox binary, networking components and 293-item checksum manifest all remained intact or were reconciled as required for the changed root/initrd. Four QEMU KVM BIOS/SATA VMs, 3 GiB RAM, 2 virtual CPUs and identical 0.2s framebuffer sampling all passed Firefox visible-frame, checksum-verified RAM backing switch, safe virtual-medium ejection and a genuine nonce-authenticated HTTP 200 request from the browser afterward.
+
+| Same-host A–B–B–A trial | Firefox first frame | RAM READY |
+|---|---:|---:|
+| Original v117 #1 | 9.82 s | 17.51 s |
+| Integrated LZ4 + early user #1 | **8.82 s** | 18.01 s |
+| Integrated LZ4 + early user #2 | **8.86 s** | 18.05 s |
+| Original v117 #2 | 9.71 s | 17.40 s |
+| **Original mean** | **9.765 s** | **17.455 s** |
+| **Integrated candidate mean** | **8.840 s** | **18.030 s** |
+
+This demonstrates a **0.925-second** mean first-frame improvement on this host, but RAM completion was **0.575 seconds slower** because the LZ4 root occupies more bytes. **Not a three-second OS; not a dependable speed guarantee for a physical Acer or any USB drive.** Absolute means must not be compared against earlier different-host tests. The LZ4 root remains ~919MiB compressed, worse for the historic 384MiB RAM-only requirement.
+
+[Complete original test, screenshots, RAM readiness and four post-eject HTTP 200 receipts](https://github.com/74127418528426leo-del/Test/actions/runs/43493480944)
+
+## Measured experiment D: older 220.5MB Alpine architecture, cold first interactive Firefox
+
+The old, much smaller [2026 experimental Puppy50 Alpine VM ISO](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-qemu-v63), original sha256 `59a83764fbc5935650e2d5248f0ecd63c78e0915dd717620ff33fd3c717ef0ef`, was tested directly in QEMU/KVM with 1GiB guest RAM and 2 vCPUs. This is *not* a functional web-network equivalent: it has no virtual NIC, no certified TLS/HTTPS, and no physical hardware validation. A real, visually detected Firefox JavaScript-ready page appeared after **48.24 seconds from before QEMU launch**. The screenshot showed a valid 1920×1080 framebuffer and independently recognized script-ready colored page content, and the serial confirmed Xorg/Firefox launch, RAM root copy/switch, and safe virtual ISO-media eject. The result is a long cold startup despite the small ISO; **reject this legacy architecture as a way to achieve 3s**.
+
+[Historical Alpine first-frame test with real framebuffer screenshot](https://github.com/74127418528426leo-del/Test/actions/runs/43493771917)
+
+## Current best findings, without exaggerated claims
+
+- Largest isolated improvement verified on a single host in these rounds: ~0.925 seconds by combining early user with LZ4, but the compressed root grew by 255MiB and RAM-ready became slower.
+- LZ4 initrd alone: only 0.160s mean gain; reject as unproven relative to added size.
+- The older offline Alpine solution was 48.24s to a visually recognized interactive Firefox page, and is not a useful drop-in secure web replacement.
+- **Nothing has demonstrated <3.00s genuine cold Firefox first frame, let alone consistent under-3s operation on the physical 2010 Acer.** No ISO labeled "3 seconds" may be released on these measurements.
