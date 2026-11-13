@@ -41,3 +41,26 @@ This directly explains why minor tweaks to compression or service ordering canno
 Do not claim or guarantee a three-second startup. The v122 research branch contains reproducible source and evidence. A separate release workflow builds two clearly labeled **EXPERIMENTAL** ISOs: faster LZ4 and smaller Zstandard, and must successfully boot the **exact candidate bytes under BIOS and UEFI**, copy root to verified RAM, virtually eject boot media, and make a new HTTP 200 request from Firefox afterward **before** a download is published. User's actual Acer X3950 firmware, Intel i915, Wi-Fi, dual monitors, streaming 4K, and public HTTPS across all sites have NOT been certified. Do not remove real USB boot media before green RAM READY. Neither image is an official Puppy Linux distribution or a production OS.
 
 [Original released v117 ISO](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v117-instant-bios-experimental) · [Original v115 recovery](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental) · [Draft research pull request](https://github.com/74127418528426leo-del/Test/pull/3)
+
+## Published v122 experimental release — exact binary verification
+
+The exact ISO files built from the v122 research branch were freshly booted under BIOS and UEFI, then published separately as [Puppy50 v122 EXPerimental](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v122-direct-fast-codec-experimental). The [successful exact-release publishing workflow](https://github.com/74127418528426leo-del/Test/actions/runs/43501613083) verified actual Firefox frame, checksum-verified RAM copy, QMP boot medium removal, and a new independent HTTP 200 response in each of four virtual machines.
+
+| Exact published ISO test | Real Firefox first frame (host QEMU-launch clock) | Full verified RAM READY | Post-ejection HTTP 200 |
+|---|---:|---:|:---:|
+| Zstd BIOS | 8.76 s | 16.48 s | PASS |
+| LZ4 BIOS | **8.36 s** | 17.07 s | PASS |
+| Zstd UEFI | 13.31 s | 20.53 s | PASS |
+| LZ4 UEFI | **12.67 s** | 21.39 s | PASS |
+
+This release-validation runner is different from the successful six-boot controlled research benchmark; do not compare absolute times across machines and claim a regression. Neither the BIOS nor UEFI validation establishes a consistent 3-second startup, and no physical Acer test has been performed.
+
+### Real GitHub uploaded assets and SHA256
+
+- [Faster LZ4 ISO: 1,173,618,688 bytes](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v122-direct-fast-codec-experimental/Puppy50_v122_LZ4_Experimental.iso). SHA256: 87cdab9424092d42ccae70bc9823a8d9f7673269a4a2f269243a5e7c3ebb9302.
+- [Full LZ4 ZIP: 1,173,621,547 bytes, containing ISO/checksum/README](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v122-direct-fast-codec-experimental/Puppy50_v122_LZ4_Experimental.zip). SHA256: 902e70f3ee047141fdefdd532a03cf5988a22e3b7f9201d952e05faead9303b0.
+- [Smaller Zstandard ISO: 906,297,344 bytes](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v122-direct-fast-codec-experimental/Puppy50_v122_ZSTD_Experimental.iso). SHA256: c523be070c77e0c8a7498e5bdae69620afc8522e0c0814681c77939fa4594403.
+- [Published ZIP checksum file](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v122-direct-fast-codec-experimental/LZ4_ZIP_SHA256SUMS).
+- [Published README](https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v122-direct-fast-codec-experimental/README.txt).
+
+The release is EXPERIMENTAL, NOT an under-three-second product or a real-hardware compatibility guarantee. Full-RAM fallback archive is still present, but Shift-held boot-menu rescue selection is unproven. Keep separately bootable original v115 recovery media and never eject the actual boot USB before green SHA-verified RAM READY.
