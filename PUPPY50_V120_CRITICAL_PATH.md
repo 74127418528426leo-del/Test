@@ -44,3 +44,16 @@ The first v121 direct-start-at-basic.target iteration had a **static source-patt
 - No network TLS/sandbox protections were removed in these v120 experiments. Retain all verification gates on any new release.
 
 **Decision: keep v120 as an auditable research branch, NOT a 3-second ISO.**
+
+## Independent second guest profile: process start times from actual /proc
+
+[Completed v120 process-uptime profile](https://github.com/74127418528426leo-del/Test/actions/runs/43499820480) measured actual kernel process-creation times by reading process stat field 22 from within the real booted guest (rather than guessing from PID existence).
+
+- **Xorg:** guest kernel uptime **4.960 seconds** at process creation.
+- **Openbox:** guest kernel uptime **5.640 seconds**.
+- **Firefox ESR parent process:** guest kernel uptime **5.800 seconds**.
+- **Real first Firefox frame:** **9.43 seconds** from host monotonic immediately **before QEMU launch**; the kernel-uptime clock and host clock have different origins and must not be subtracted directly.
+- **systemd graphical target:** this separate runner reported **2.236s kernel + 2.745s userspace = 4.981s**. The first runner reported 3.902s; absolute timings are not universal.
+- This VM again completed SHA-verifiable RAM migration, safe virtual medium removal, and a successful new HTTP 200 browser request after ejection.
+
+The normal Firefox launch path on this guest is **already >3 seconds since guest kernel clock start before Firefox exists**, let alone renders. Getting a true sub-3-second *cold* browser frame would require bypassing the existing start dependencies, or redesigning the OS/browser, not merely masking a small service. The trial does not prove that every imaginable radically different architecture is incapable of three seconds, nor does it test a physical Acer CPU/firmware.
