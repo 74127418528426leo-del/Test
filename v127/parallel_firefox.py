@@ -9,9 +9,9 @@ disposable extracted staged initramfs already patched through v126.
 from pathlib import Path
 import argparse
 
-ORIGINAL = '''    /usr/bin/dbus-run-session -- /usr/bin/openbox-session \\
-    >/run/p50-v123-openbox.log 2>&1 &'''
-REPLACEMENT = '''    /usr/bin/dbus-run-session -- /bin/sh -c '
+ORIGINAL = '''\t/usr/bin/dbus-run-session -- /usr/bin/openbox-session \\
+\t>/run/p50-v123-openbox.log 2>&1 &'''
+REPLACEMENT = '''\t/usr/bin/dbus-run-session -- /bin/sh -c '
         printf "P50_V127_FIREFOX_DIRECT_EXEC %s\\\\n" "$(cat /proc/uptime)" >/dev/ttyS0
         firefox-esr file:///usr/share/puppy50web/index.html >/tmp/puppy50-firefox.log 2>&1 &
         exec /usr/bin/openbox-session
