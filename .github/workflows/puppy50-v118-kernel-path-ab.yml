@@ -1,0 +1,149 @@
+name: Puppy50 v118 - measure diagnostic kernel-entry lower bound
+on:
+  push:
+    branches: [puppy50-v118-sub3-coldboot-research]
+    paths: ['.github/workflows/puppy50-v118-kernel-path-ab.yml']
+permissions: {contents: read}
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install KVM and authenticate v115 release
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil xorriso
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports fixture
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/verified-v115.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/verified-v115.iso' | sha256sum -c -
+          lscpu >out/reports/host-cpu.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          text=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert text.count(needle)==1, 'Unexpected frame-polling code'
+          p.write_text(text.replace(needle,needle.replace('else .8','else .2'),1))
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1, 'Cannot identify exact QEMU boot-device code'
+          eject_old="if args.media == 'optical':"
+          assert s.count(eject_old)==1, 'Expected one benchmark media-eject decision'
+          # This experimental SATA device is a CD-ROM; remove medium with QMP 'eject',
+          # NOT device_del: AHCI buses intentionally do not support hot-unplug.
+          s=s.replace(eject_old,"if True:  # AHCI CD medium ejection",1)
+          Path('input/source/web109/boot_bench_ahci.py').write_text(s.replace(old,new,1))
+          PY
+      - name: Authenticate exact released v117 ISO then extract unmodified Linux boot inputs
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 \
+            'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso' \
+            -o input/v117.iso
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/v117.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/v117.iso \
+            -extract /live/vmlinuz input/kernel \
+            -extract /live/initrd.img input/initrd.img \
+            -extract /isolinux/live.cfg out/reports/bios-live.cfg \
+            -extract /live/filesystem.squashfs input/root.squashfs \
+            >out/reports/boot-input-extract.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/reports/bios-live.cfg').read_text()
+          assert 'append boot=live components usb-storage.delay_use=0 quiet locales=en_US.UTF-8' in p
+          assert Path('input/kernel').stat().st_size>1_000_000
+          assert Path('input/initrd.img').stat().st_size>10_000_000
+          assert Path('input/root.squashfs').stat().st_size>600_000_000
+          PY
+          sha256sum input/kernel input/initrd.img input/root.squashfs >out/reports/boot-input-hashes.txt
+      - name: Construct ONLY a diagnostic QEMU kernel-entry alternative
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_ahci.py')
+          s=p.read_text()
+          marker="    if args.firmware == 'uefi':"
+          addition="""    # P50_V118_DIAGNOSTIC_ONLY: Linux kernel and initrd are directly
+    # injected into emulated machine by QEMU. This bypasses ISO bootloader
+    # and can NOT be claimed as a physical power-on or bootable ISO timing.
+    cmd += ['-kernel', str(Path('input/kernel').resolve(strict=True)),
+            '-initrd', str(Path('input/initrd.img').resolve(strict=True)),
+            '-append', 'boot=live components usb-storage.delay_use=0 quiet locales=en_US.UTF-8']
+"""
+          assert s.count(marker)==1
+          p2=Path('input/source/web109/boot_bench_directkernel.py')
+          p2.write_text(s.replace(marker,addition+marker,1))
+          import ast
+          ast.parse(p2.read_text())
+          PY
+      - name: Serve isolated local test pages
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: A-B-B-A test genuine Firefox frame, RAM migration and post-media browsing
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          for trial in iso1 injected1 injected2 iso2; do
+            if [[ "$trial" == iso* ]]; then bench=input/source/web109/boot_bench_ahci.py; else bench=input/source/web109/boot_bench_directkernel.py; fi
+            python3 -u "$bench" --iso input/v117.iso --out "out/$trial" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 190 --cpu-model i3-540-conservative --emulate-acer-id --media usb --bandwidth 0
+          done
+          test "$(grep -c "GET /after.html?nonce=$P50_NONCE.* 200 " out/reports/fixture-after.log)" -eq 4
+          python3 - <<'PY'
+          import json,statistics
+          from pathlib import Path
+          names=['iso1','injected1','injected2','iso2']
+          r={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,v in r.items():
+              assert v['first_home_seen_seconds'] is not None and v['staged_ram_ready_seconds'] is not None,(n,v)
+              assert v['media_ejected'] and v['input_sent_after_eject'] and v['qemu_running_at_end'] and not v['errors'],(n,v)
+          sums={'test':'QEMU direct -kernel/-initrd vs boot from physical-shaped emulated BIOS ISO',
+                'IMPORTANT':'diagnostic only; host kernel injection is NOT bootable physical media, not valid as a physical cold-boot result',
+                'iso_sha256':'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83',
+                'both_media':'identical verified root and stage migration on AHCI virtual media',
+                'conditions':'A-B-B-A same GitHub runner, KVM 2 vCPU, 3GiB, 0.2s framebuffer sampling; host clock from before QEMU',
+                'trials':{n:{k:r[n][k] for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected','input_sent_after_eject')} for n in names}}
+          for group,ns in [('iso',('iso1','iso2')),('kernel_injected',('injected1','injected2'))]:
+              for key in ('first_home_seen_seconds','staged_ram_ready_seconds'):
+                  sums[group+'_mean_'+key]=statistics.mean(r[n][key] for n in ns)
+          sums['kernel_entry_gain_seconds']=sums['iso_mean_first_home_seen_seconds']-sums['kernel_injected_mean_first_home_seen_seconds']
+          sums['sub3_real_firefox_frame']=all(r[n]['first_home_seen_seconds']<3.0 for n in ('injected1','injected2'))
+          Path('out/reports/v118_kernel_path_ab.json').write_text(json.dumps(sums,indent=2)+'\n')
+          print('P50_V118_KERNEL_PATH_AB',json.dumps(sums,indent=2))
+          PY
+      - name: Print VM error logs on failed storage experiment
+        if: failure()
+        run: |
+          for p in out/iso1/qemu.log out/injected1/qemu.log out/injected1/serial.log; do
+            if test -f "$p"; then echo "DIAG_FILE $p"; head -n 80 "$p"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v118-kernel-path-evidence
+          path: |
+            out/reports/
+            out/iso1/
+            out/iso2/
+            out/injected1/
+            out/injected2/
+          retention-days: 14
+          if-no-files-found: warn
