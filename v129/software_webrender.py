@@ -26,7 +26,7 @@ HOOK=r'''
         done
         printf '%s\n' 'P50_V129_POLICY_JSON' > "$p50_policy_dir/policies.json" || panic "v129: cannot install test preference"
         printf 'P50_V129_POLICY_BEFORE_BROWSER %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
-'''.replace('P50_V129_POLICY_JSON',POLICY_TOKEN)
+'''
 
 REPORT=r'''(
     "$B" sleep 12
@@ -68,7 +68,7 @@ def patch(root:Path)->tuple[Path,Path]:
         raise ValueError("Unexpected live-boot source: cannot prove pre-Firefox injection")
     if 'P50_V129_SOFTWARE_WEBRENDER' in s or 'P50_V129_PREF_PROFILE_BEGIN' in m:
         raise ValueError("Already patched")
-    injected=HOOK.replace('POLICY_TOKEN',POLICY)
+    injected=HOOK.replace('P50_V129_POLICY_JSON',POLICY)
     main.write_text(s.replace(MAIN_MARKER,injected+MAIN_MARKER,1))
     migration.write_text(m.replace(MIGRATE_MARKER,REPORT+MIGRATE_MARKER,1))
     return main,migration
