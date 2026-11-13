@@ -17,3 +17,20 @@ The [four-boot A–B–B–A workflow](https://github.com/74127418528426leo-del/
 **Release hold:** even if the policy shortens the first frame, it needs independent 4K video, HTTPS, GPU/i915, physical Acer and UEFI validation before production use. It is not valid to infer <3 seconds on a physical 2010 Acer from fast VM runner samples. All current versions still fail the 384MiB full-RAM Firefox target because the compressed system root alone is ~664MiB.
 
 Keep [v122 experimental release](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v122-direct-fast-codec-experimental) and separate [v115 recovery ISO](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental).
+
+## Completed four-boot graphics-pref result and independent artifact audit
+
+The first full [v129 A–B–B–A cold-boot test](https://github.com/74127418528426leo-del/Test/actions/runs/43508019175) executed **all four QEMU VMs**. Every VM produced a genuine Firefox home frame, checksum-verifiable RAM-ready, safe boot-media eject and new authenticated HTTP 200 after eject, with zero benchmark errors. **The workflow itself correctly FAILED the stricter release check** because it could not establish that Firefox wrote/retained the requested preference inside its live profile. A separate [independent audit of saved VM serial and results](https://github.com/74127418528426leo-del/Test/actions/runs/43509153482) confirmed that the candidate's `P50_V129_POLICY_BEFORE_BROWSER` marker was present in both candidate boots, but the asynchronous preference reporter never emitted either the observed or missing-preference marker. This is a test-instrumentation gap, not proof that Firefox applied the preference.
+
+| Alternating same-host trial | Genuine first Firefox frame | RAM READY |
+| --- | ---: | ---: |
+| v127 original graphics pref #1 | 6.97 s | 14.13 s |
+| v129 policy written before Firefox #1 | 6.80 s | 13.96 s |
+| v129 policy written before Firefox #2 | 6.78 s | 13.92 s |
+| v127 original graphics pref #2 | 6.79 s | 13.93 s |
+| **v127 mean** | **6.880 s** | **14.030 s** |
+| **v129 candidate mean** | **6.790 s** | **13.940 s** |
+
+First-frame mean difference **0.090 seconds** and RAM mean difference **0.090 seconds** are **below the ~0.2s framebuffer polling interval** and not meaningful evidence of a repeatable speedup. One baseline boot (6.79s) was virtually identical to both candidates. The hypothesis that software WebRender would remove a >1-second first-paint stall in this particular QEMU guest was **not supported by this small timing experiment**. The Mozilla issue is valid for its particular Linux CI configuration and cannot automatically be extrapolated to this VM or physical Acer.
+
+**Disposition: do not adopt or release v129**, do not claim that `gfx.webrender.software` was positively verified, and do not claim <3s. The original v127 and released v122 remain available; the public v122 release was not modified. Further browser-pref studies should use a persistent after-switchroot reporter or an explicit about:policies / about:config UI inspection rather than treating an asynchronous migration-service report as reliable.
