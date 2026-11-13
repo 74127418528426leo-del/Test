@@ -11,11 +11,13 @@ import argparse
 INSERT='''        # P50_V125_DRM_PREREQ: test only. Without the DRM driver, early Xorg
         # fails AddScreen/ScreenInit and the old LightDM creates an illusion of
         # a successful early boot; explicitly disallow that false positive.
+        printf 'P50_V125_DRM_GATE_START %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
         p50_lightdm="$p50_root/etc/systemd/system/lightdm.service"
         [ ! -e "$p50_lightdm" ] && [ ! -L "$p50_lightdm" ] || panic "v125: existing lightdm override"
         ln -s /dev/null "$p50_lightdm" || panic "v125: cannot prevent late LightDM fallback"
-        [ -x "$p50_root/usr/sbin/modprobe" ] || panic "v125: missing root modprobe"
-        chroot "$p50_root" /usr/sbin/modprobe -q bochs_drm || panic "v125: bochs_drm is unavailable"
+        [ -x "$p50_root/usr/sbin/modprobe" ] || { printf 'P50_V125_MODPROBE_NOT_INSTALLED\n' >/dev/ttyS0; panic "v125: missing root modprobe"; }
+        chroot "$p50_root" /usr/sbin/modprobe -q bochs_drm || { printf 'P50_V125_MODPROBE_FAILED\n' >/dev/ttyS0; panic "v125: bochs_drm is unavailable"; }
+        printf 'P50_V125_MODPROBE_SUCCEEDED\n' >/dev/ttyS0
         udevadm trigger --subsystem-match=drm >/dev/null 2>&1 || panic "v125: cannot trigger DRM"
         udevadm settle >/dev/null 2>&1 || panic "v125: cannot settle DRM"
         p50_drm_attempt=0
@@ -23,7 +25,7 @@ INSERT='''        # P50_V125_DRM_PREREQ: test only. Without the DRM driver, earl
             sleep .10
             p50_drm_attempt=$((p50_drm_attempt+1))
         done
-        [ -c "$p50_root/dev/dri/card0" ] || panic "v125: no ready virtual DRM card0"
+        [ -c "$p50_root/dev/dri/card0" ] || { printf 'P50_V125_DRM_CARD0_NOT_READY\n' >/dev/ttyS0; panic "v125: no ready virtual DRM card0"; }
         printf 'P50_V125_EARLY_DRM_READY %s\\n' "$(cat /proc/uptime)" >/dev/ttyS0
 '''
 BEFORE="cat > \"$p50_start\" <<'P50_V123_START_X'"
