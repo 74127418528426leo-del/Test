@@ -1,0 +1,51 @@
+name: Puppy50 v123 - forensic review of failed pre-PID1 X11 boot
+on:
+  push:
+    branches: [puppy50-v123-presystemd-display-prototype]
+    paths: ['.github/workflows/puppy50-v123-forensic.yml']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download original failed VM serial and framebuffer evidence
+        run: |
+          set -euo pipefail
+          mkdir -p forensic
+          gh run download 43500793748 --repo "$GITHUB_REPOSITORY" \
+            --name puppy50-v123-presystemd-x11-evidence --dir forensic
+          find forensic -maxdepth 4 -type f | head -30
+      - name: Interpret where and why pre-systemd launch failed
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          root=Path('forensic')
+          serials=list(root.rglob('serial.log'))
+          assert len(serials)==1,serials
+          t=serials[0].read_text(errors='replace').replace('\r','')
+          markers=['P50_V123_INITRD_LAUNCH_REQUEST','P50_V123_XORG_START','P50_V123_OPENBOX_START',
+                   'P50_STAGE_READY','P50_STAGE_FAILED','P50_STAGE_NOT_READY',
+                   'P50_V91_NONROOT_FIREFOX_PROCESS_SEEN']
+          result_paths=list(root.rglob('result.json'))
+          result=json.loads(result_paths[0].read_text()) if len(result_paths)==1 else {}
+          print('P50_V123_FORENSIC_MARKERS',json.dumps({x:t.count(x) for x in markers}))
+          print('P50_V123_FORENSIC_RESULT',json.dumps({k:result.get(k) for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected','errors')}))
+          interesting=[l for l in t.splitlines() if re.search('P50_|panic|FAIL|ERROR|Error|Xorg|X11|display|chroot|login|lightdm|openbox|user@|mount|no such|permission denied|signal',l,re.I)]
+          print('P50_V123_FORENSIC_RELEVANT_SERIAL_START')
+          print('\n'.join(interesting[-170:])[-24000:])
+          print('P50_V123_FORENSIC_SERIAL_TAIL')
+          print(t[-7000:])
+          Path('v123-forensic-summary.json').write_text(json.dumps({'markers':{x:t.count(x) for x in markers},'vmbrowser':result.get('first_home_seen_seconds'),'ramready':result.get('staged_ram_ready_seconds'),'interesting':interesting[-170:]},indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v123-forensic-summary
+          path: v123-forensic-summary.json
+          retention-days: 14
