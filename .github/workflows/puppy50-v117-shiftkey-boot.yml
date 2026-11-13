@@ -1,7 +1,7 @@
 name: Puppy50 v117 - Shift-to-recovery instant BIOS boot A/B
 on:
   push:
-    branches: [puppy50-v116-evidence-audit]
+    branches: [puppy50-v117-fast-boot-engineering]
     paths: ['.github/workflows/puppy50-v117-shiftkey-boot.yml']
 permissions: {contents: read}
 jobs:
