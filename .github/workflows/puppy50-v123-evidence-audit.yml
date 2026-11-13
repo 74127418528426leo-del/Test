@@ -1,0 +1,61 @@
+name: Puppy50 v123 - inspect failed early X11 boot from existing VM evidence
+on:
+  push:
+    branches: [puppy50-v123-presystemd-display-prototype]
+    paths: ['.github/workflows/puppy50-v123-evidence-audit.yml']
+permissions: {actions: read, contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download actual rejected pre-systemd VM evidence
+        run: |
+          set -euo pipefail
+          mkdir -p input
+          gh run download 43500793748 --repo "$GITHUB_REPOSITORY" \
+            --name puppy50-v123-presystemd-x11-evidence --dir input
+          find input -maxdepth 4 -type f | head -100
+      - name: Print actual guest serial failure and screenshot progression
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends python3-pil >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          from PIL import Image
+          files=list(Path('input').rglob('serial.log'))
+          assert len(files)==1,files
+          s=files[0].read_text(errors='replace').replace('\r','')
+          markers=['P50_V123','P50_V118','P50_V119','P50_STAGE_','live-boot','panic','failed','error','P50_V91']
+          relevant=[line[:550] for line in s.splitlines() if any(k.lower() in line.lower() for k in markers)]
+          print('P50_V123_GUEST_SERIAL_MATCHES',json.dumps(relevant[:120],indent=2))
+          print('P50_V123_GUEST_SERIAL_TAIL',repr(s[-4500:]))
+          logs=list(Path('input').rglob('qemu.log'))
+          if logs:print('P50_V123_QEMU_HOST_LOG',logs[0].read_text(errors='replace')[-2400:])
+          shots=sorted(Path('input').rglob('checkpoint_*.png'))
+          for p in shots:
+              with Image.open(p) as im:
+                  im.load()
+                  colors=im.convert('RGB').resize((160,100)).getcolors(160*100)
+                  dominant=sorted(colors,reverse=True)[:3] if colors else []
+                  print('P50_V123_SCREEN_CHECKPOINT',p.name,im.size,dominant)
+          report={
+              'source_run':'https://github.com/74127418528426leo-del/Test/actions/runs/43500793748',
+              'valid_firefox_frame_seen':False,
+              'verified_RAM_ready':False,
+              'virtual_media_eject_performed':False,
+              'physical_release_approved':False,
+              'serial_match_count':len(relevant),
+              'marker_lines':relevant[:120],
+              'screenshots':len(shots)}
+          Path('v123-diagnostic.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('P50_V123_FAILED_PROTOTYPE_RETAINED_AS_REJECTED',json.dumps({k:v for k,v in report.items() if k!='marker_lines'}))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v123-postmortem
+          path: v123-diagnostic.json
+          retention-days: 14
