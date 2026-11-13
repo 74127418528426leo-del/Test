@@ -70,11 +70,14 @@ jobs:
           # Preserve all original boot menu entries, timeout and full RAM fallback.
           cfg=Path('out/isolinux-original.cfg').read_text()
           assert 'timeout 10' in cfg and 'default vesamenu.c32' in cfg
+          assert cfg.count('timeout 10')==1
+          Path('out/isolinux-fast.cfg').write_text(cfg.replace('timeout 10','timeout 0',1))
           assert 'set timeout=1' in Path('out/uefi-original.cfg').read_text()
           PY
           diff -u out/menu-original.cfg out/menu-shift.cfg >out/reports/only-menu.diff || test "$?" -eq 1
           xorriso -indev input/verified-v115.iso -outdev out/stage.iso \
             -map out/menu-shift.cfg /isolinux/menu.cfg \
+            -map out/isolinux-fast.cfg /isolinux/isolinux.cfg \
             -boot_image any replay -commit -end >out/reports/stage.log 2>&1
           python3 - <<'PY'
           from pathlib import Path
@@ -82,13 +85,14 @@ jobs:
           original=Path('out/original.sha256sum.txt').read_text().splitlines()
           assert len(original)==293
           target='./isolinux/menu.cfg'
-          replacements={target:hashlib.sha256(Path('out/menu-shift.cfg').read_bytes()).hexdigest()}
+          replacements={target:hashlib.sha256(Path('out/menu-shift.cfg').read_bytes()).hexdigest(),
+                        './isolinux/isolinux.cfg':hashlib.sha256(Path('out/isolinux-fast.cfg').read_bytes()).hexdigest()}
           result=[];seen=set()
           for line in original:
               m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line);assert m,line
               name=m.group(3);assert name not in seen;seen.add(name)
               result.append(replacements.get(name,m.group(1))+m.group(2)+name)
-          assert target in seen
+          assert set(replacements).issubset(seen)
           Path('out/candidate.sha256sum.txt').write_text('\n'.join(result)+'\n')
           PY
           xorriso -indev out/stage.iso -outdev out/candidate.iso \
@@ -103,7 +107,7 @@ jobs:
             -extract /live/filesystem.squashfs out/verify/root.squashfs \
             -extract /sha256sum.txt out/verify/SHA256SUMS >out/reports/verify.log 2>&1
           cmp out/menu-shift.cfg out/verify/menu.cfg
-          cmp out/isolinux-original.cfg out/verify/isolinux.cfg
+          cmp out/isolinux-fast.cfg out/verify/isolinux.cfg
           cmp out/uefi-original.cfg out/verify/uefi.cfg
           cmp out/initrd-original.img out/verify/initrd.img
           cmp out/full-original.img out/verify/full.img
