@@ -68,3 +68,26 @@ All three experimentally measured optimizations in this research round are **wel
 The small measured wins cannot add up to a reliable sub-3-second cold Firefox boot on this unchanged large Debian Live system. The next architectural direction—if pursued—must involve much more radical but separately safety-verified reductions to live root preparation, kernel/userspace startup and Firefox cold initialization, not just changes to the boot menu or QEMU launcher. The physical old i3-540 is still not benchmarked, and no claim that it can meet <3 s is supported.
 
 **Release decision: no new v118 under-3-second ISO or ZIP. Retain v117 as the latest released experimental image.**
+
+## Independent network retest — same v118 early-user candidate
+
+The additional [artifact audit](https://github.com/74127418528426leo-del/Test/actions/runs/43487619493) found that **all eight VMs in the early-user and direct-X A–B–B–A runs reached the fixture server after virtual-media ejection**, but the server returned HTTP **403** because the original benchmark defaulted to the literal nonce P50-TEST while the test server expected P50-<GitHub run ID>. This was a **test-harness token mismatch**, not a broken guest NIC; it also meant the original comparisons did not independently prove a successful HTTP 200 page load.
+
+A new independent [corrected BIOS-and-UEFI validation](https://github.com/74127418528426leo-del/Test/actions/runs/43487831058) rebuilt the same early-user-only experimental patch, set a shared per-run nonce, and required a **real HTTP 200 recorded by the fixture server AFTER verified RAM-ready and virtual medium ejection**.
+
+**Result: PASS, two actual successful HTTP 200 responses**, one each from BIOS and UEFI. Both configurations reached a real Firefox first frame, passed the full root copy checksum verification and the QMP media-eject checks, and recorded zero benchmark errors.
+
+| Independent v118 early-user validation | First visible Firefox frame | Verified RAM READY | Server HTTP 200 after eject |
+| --- | ---: | ---: | :---: |
+| BIOS/QEMU SATA | 9.07 s | 16.27 s | PASS |
+| UEFI/QEMU SATA | 11.61 s | 19.28 s | PASS |
+
+**Do not compare absolute startup times from different GitHub runners as proof of progress or regression.** This retest's BIOS time of 9.07 seconds does not invalidate the earlier same-host v118 7.075-second candidate mean vs its 7.495-second v117 baseline. It further demonstrates host variability, while establishing working post-ejection browser HTTP and intact UEFI boot.
+
+### Final v118 research disposition
+
+- All three matched architecture experiments improved their respective same-host v117 baseline by **0.400 s**, **0.420 s** and **0.380 s**, respectively. Not one came close to an authentic under-3-second cold Firefox first frame.
+- The early-user patch is the simpler positive performance candidate; direct-X did not demonstrate a clearly superior benefit and added session complexity.
+- A repaired independent functional test established that the early-user build has real browser/network connectivity on **both BIOS and UEFI**, and remains safe to eject virtual media **only after full checksum-verified RAM READY**.
+- The old Acer i3-540 has **not** been physically booted or measured; Wi-Fi, i915, dual displays and 4K are not certified by a VM.
+- **No v118 ISO or ZIP is being released or labeled under three seconds.** Retain the separately verified v117 experimental release and the original v115 recovery boot medium. A true three-second cold Firefox requires a much more radical OS/browser startup architecture and independent repeatable tests, not a bootloader shortcut or a warm-resume timing substitution.
