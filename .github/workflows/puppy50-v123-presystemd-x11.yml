@@ -2,7 +2,7 @@ name: Puppy50 v123 - test authenticated pre-PID1 X11 and genuine Firefox cold fr
 on:
   push:
     branches: [puppy50-v123-presystemd-display-prototype]
-    paths: ['.github/workflows/puppy50-v123-presystemd-x11.yml']
+    paths: ['.github/workflows/puppy50-v123-presystemd-x11.yml', 'v123/presystemd_x11.py']
   workflow_dispatch: {}
 permissions:
   contents: read
