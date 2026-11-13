@@ -1,0 +1,81 @@
+name: Puppy50 v129 - inspect actual Firefox gfx preference state from saved VM artifacts
+on:
+  push:
+    branches: [puppy50-v129-webrender-cold-first-paint]
+    paths: ['.github/workflows/puppy50-v129-pref-state-audit.yml']
+permissions: {actions: read, contents: read}
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Retrieve all four original boot result and guest serial logs without retiming
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          gh run download 43508019175 --repo "$GITHUB_REPOSITORY" \
+            --name puppy50-v129-software-webrender-evidence \
+            --dir evidence
+          find evidence -maxdepth 3 -name serial.log -o -name result.json
+      - name: Diagnose whether Firefox applied software WebRender or reporter failed
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re,json,statistics
+          root=Path('evidence')
+          results={};nonce='P50-43508019175'
+          for name in ['base1','cand1','cand2','base2']:
+              serials=list(root.rglob(f'{name}/serial.log'))
+              res=list(root.rglob(f'{name}/result.json'))
+              assert len(serials)==1 and len(res)==1,(name,serials,res)
+              t=serials[0].read_text(errors='replace').replace('\r','')
+              r=json.loads(res[0].read_text())
+              patterns=['P50_V129_POLICY_BEFORE_BROWSER',
+                        'P50_V129_PREF_PROFILE_BEGIN',
+                        'P50_V129_PREF_PROFILE_END',
+                        'P50_V129_PREF_OBSERVED',
+                        'P50_V129_PREF_NOT_PERSISTED',
+                        'gfx.webrender.software',
+                        'P50_V127_FIREFOX_DIRECT_EXEC',
+                        'P50_STAGE_READY']
+              lines=t.splitlines()
+              evidence=[line for line in lines if any(v in line for v in patterns)]
+              before=t.find('P50_V129_PREF_PROFILE_BEGIN')
+              after=t.find('P50_V129_PREF_PROFILE_END',before)
+              if before>=0:
+                  print('P50_V129_PROFILE_BLOCK',name,repr(t[before:after+len('P50_V129_PREF_PROFILE_END') if after>=0 else before+1600]))
+              print('P50_V129_MARKERS',name,{p:t.count(p) for p in patterns})
+              print('P50_V129_SERIAL_RELEVANT',name,evidence[:30])
+              results[name]={'first_real_Firefox_frame_seconds':r.get('first_home_seen_seconds'),
+                             'RAM_ready_seconds':r.get('staged_ram_ready_seconds'),
+                             'media_ejected':r.get('media_ejected'),
+                             'errors':r.get('errors'),
+                             'policy_before_browser':bool('P50_V129_POLICY_BEFORE_BROWSER' in t),
+                             'pref_observed_in_profile':bool('P50_V129_PREF_OBSERVED' in t),
+                             'pref_reported_missing':bool('P50_V129_PREF_NOT_PERSISTED' in t)}
+          logs=list(root.rglob('fixture-after.log'))
+          assert len(logs)==1,logs
+          fx=logs[0].read_text()
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',fx)
+          b=statistics.mean(results[n]['first_real_Firefox_frame_seconds'] for n in ('base1','base2'))
+          c=statistics.mean(results[n]['first_real_Firefox_frame_seconds'] for n in ('cand1','cand2'))
+          data={'source_run':'https://github.com/74127418528426leo-del/Test/actions/runs/43508019175',
+                'original_firefox_first_frame_mean_s':b,
+                'candidate_first_frame_mean_s':c,
+                'same_host_mean_gain_s':b-c,
+                'authenticated_post_eject_HTTP_200_receipts':len(receipts),
+                'preference_verified_for_both_candidates':all(results[n]['pref_observed_in_profile'] for n in ('cand1','cand2')),
+                'trials':results,
+                'statement':'Research-only. Do NOT claim effective software WebRender unless evidence proves the preference was actually set. No <3s result.'}
+          Path('v129-policy-audit.json').write_text(json.dumps(data,indent=2)+'\n')
+          print('P50_V129_INDEPENDENT_ARTIFACT_AUDIT',json.dumps(data,indent=2))
+          assert len(receipts)==4,('Missing real HTTP200 after safe RAM eject',len(receipts))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v129-independent-pref-audit
+          path: v129-policy-audit.json
+          retention-days: 14
