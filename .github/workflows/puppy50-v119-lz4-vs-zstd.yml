@@ -1,0 +1,189 @@
+name: Puppy50 v119 - evaluate LZ4 SquashFS vs Zstd for genuine cold Firefox
+on:
+  push:
+    branches: [puppy50-v119-lz4-bottleneck-experiment]
+    paths: ['.github/workflows/puppy50-v119-lz4-vs-zstd.yml']
+  workflow_dispatch: {}
+permissions: {contents: read}
+jobs:
+  lz4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install isolated image and QEMU/KVM test tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports out/root fixture out/check
+      - name: Download and verify immutable released v117 ISO
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 \
+            'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso' \
+            -o input/base.iso
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/base.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/base.iso \
+            -extract /live/filesystem.squashfs out/original.squashfs \
+            -extract /live/initrd.img out/original.initrd \
+            -extract /live/initrd-full.img out/original-full.initrd \
+            -extract /sha256sum.txt out/original.manifest >out/reports/extract.log 2>&1
+          unsquashfs -s out/original.squashfs | tee out/reports/original-squashfs.txt
+          grep -qi zstd out/reports/original-squashfs.txt
+      - name: Rebuild identical extracted root with faster LZ4 compression
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -no-progress -processors 4 -dest out/root out/original.squashfs >out/reports/unsquashfs.log 2>&1
+          test -f out/root/usr/lib/firefox-esr/libxul.so
+          test -f out/root/usr/local/sbin/puppy50-prepare-session
+          test -f out/root/etc/ssl/certs/ca-certificates.crt
+          sudo mksquashfs out/root out/lz4.squashfs -noappend -no-progress \
+            -comp lz4 -b 262144 -processors 4 >out/reports/mksquashfs.log 2>&1
+          unsquashfs -s out/lz4.squashfs | tee out/reports/lz4-squashfs.txt
+          grep -qi lz4 out/reports/lz4-squashfs.txt
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          src=Path('out/original.squashfs')
+          dst=Path('out/lz4.squashfs')
+          report={'kind':'storage-codec-only experimental candidate',
+                  'root_data_files_preserved_by_unsquashfs_and_mksquashfs':True,
+                  'original_root_bytes':src.stat().st_size,
+                  'lz4_root_bytes':dst.stat().st_size,
+                  'original_root_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),
+                  'lz4_root_sha256':hashlib.sha256(dst.read_bytes()).hexdigest()}
+          print('P50_V119_ROOT_SIZE',json.dumps(report))
+          Path('out/reports/root-size.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - name: Repack BIOS and UEFI bootable test ISO with corrected SHA manifest
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          xorriso -indev input/base.iso -outdev out/stage.iso \
+            -map out/lz4.squashfs /live/filesystem.squashfs \
+            -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          p=Path('out/original.manifest')
+          source=p.read_text().splitlines()
+          assert len(source)==293
+          target='./live/filesystem.squashfs'
+          digest=hashlib.sha256(Path('out/lz4.squashfs').read_bytes()).hexdigest()
+          out=[];n=0
+          for line in source:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name==target:n+=1
+              out.append((digest if name==target else m.group(1))+m.group(2)+name)
+          assert n==1,(n,'Missing/duplicated compressed root checksum entry')
+          Path('out/candidate.manifest').write_text('\n'.join(out)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso \
+            -map out/candidate.manifest /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/final-repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso \
+            -extract /live/filesystem.squashfs out/check/root.squashfs \
+            -extract /live/initrd.img out/check/initrd \
+            -extract /live/initrd-full.img out/check/full \
+            -extract /sha256sum.txt out/check/manifest >out/reports/recheck.log 2>&1
+          cmp out/lz4.squashfs out/check/root.squashfs
+          cmp out/original.initrd out/check/initrd
+          cmp out/original-full.initrd out/check/full
+          cmp out/candidate.manifest out/check/manifest
+          sha256sum input/base.iso out/candidate.iso >out/reports/isohashes.txt
+          echo 'P50_V119_ISO_AUDIT_OK original kernel, both initrds, new LZ4 root with matching manifest'
+      - name: Keep identical real QEMU AHCI/CD Firefox measurement
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(needle)==1
+          s=s.replace(needle,needle.replace('else .8','else .2'),1)
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':","if True:  # QEMU AHCI CD eject; not unsupported device_del",1)
+          p2=Path('input/source/web109/boot_bench_ahci.py')
+          p2.write_text(s)
+          import ast
+          ast.parse(s)
+          PY
+      - name: Start nonce-scoped local HTTP fixture
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py \
+            --fixture fixture/unused.mp4 --nonce "$P50_NONCE" \
+            --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py \
+            --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time;time.sleep(2);[socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Matched A-B-B-A real Firefox plus safe RAM/medium/network verification
+        timeout-minutes: 22
+        run: |
+          set -euo pipefail
+          for sample in base1 lz4_1 lz4_2 base2; do
+            if [[ "$sample" == base* ]]; then iso=input/base.iso; else iso=out/candidate.iso; fi
+            python3 -u input/source/web109/boot_bench_ahci.py \
+              --iso "$iso" --out "out/$sample" --mode online \
+              --allow-no-startup-probe --wait-ram-ready \
+              --ram 3072 --seconds 190 \
+              --cpu-model i3-540-conservative --emulate-acer-id \
+              --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          import json,re,os,statistics
+          from pathlib import Path
+          names=['base1','lz4_1','lz4_2','base2']
+          data={n:json.loads((Path('out')/n/'result.json').read_text()) for n in names}
+          for n,r in data.items():
+              assert r['first_home_seen_seconds'] is not None,(n,r)
+              assert r['staged_ram_ready_seconds'] is not None,(n,r)
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
+          log=Path('out/reports/fixture-after.log').read_text()
+          nonce=os.environ['P50_NONCE']
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(receipts)==4,('Missing genuine post-eject HTTP 200',len(receipts),log[-1000:])
+          result={
+            'method':'cold host QEMU launch, BIOS, AHCI CD, 2 virtual Westmere CPUs, 3GiB guest, 0.2s framebuffer polling',
+            'iso_source_sha256':'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83',
+            'original_zstd_first_frame_s':statistics.mean(data[x]['first_home_seen_seconds'] for x in ('base1','base2')),
+            'recompressed_lz4_first_frame_s':statistics.mean(data[x]['first_home_seen_seconds'] for x in ('lz4_1','lz4_2')),
+            'lz4_first_frame_gain_s':0,
+            'post_eject_real_HTTP_200_receipts':len(receipts),
+            'all_four_post_eject_verified':True,
+            'three_second_goal':all(data[x]['first_home_seen_seconds']<3.0 for x in ('lz4_1','lz4_2')),
+            'trials':{k:{f:data[k][f] for f in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for k in names}
+          }
+          result['lz4_first_frame_gain_s']=result['original_zstd_first_frame_s']-result['recompressed_lz4_first_frame_s']
+          Path('out/reports/v119_lz4_comparison.json').write_text(json.dumps(result,indent=2)+'\n')
+          print('P50_V119_LZ4_AB',json.dumps(result,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v119-lz4-comparison-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/lz4_1/
+            out/lz4_2/
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,0 +1,132 @@
+name: Puppy50 v119 - measure old 220MB Alpine Firefox cold boot alternate architecture
+on:
+  push:
+    branches: [puppy50-v119-lz4-bottleneck-experiment]
+    paths: ['.github/workflows/puppy50-v119-alpine-cold-frame.yml']
+  workflow_dispatch: {}
+permissions: {contents: read}
+jobs:
+  legacy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: input/legacy/web56
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-v63-public-qemu-vm
+          path: input/legacy
+      - name: Install minimal QEMU KVM VM tester and fetch the exact old offline ISO
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input/iso out/vm out/reports
+          curl -fLsS --retry 3 \
+            'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-qemu-v63/Puppy50_Web_QEMU_Preview_v62.iso' \
+            -o input/iso/alpine-v62.iso
+          echo '59a83764fbc5935650e2d5248f0ecd63c78e0915dd717620ff33fd3c717ef0ef  input/iso/alpine-v62.iso' | sha256sum -c -
+      - name: Test first genuine interactive Firefox page from real cold boot
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY'
+          import subprocess,time,json
+          from pathlib import Path
+          from qemu_input_v56 import monitor
+          from frame_stages import profile
+          iso=Path('input/iso/alpine-v62.iso').resolve(strict=True)
+          out=Path('out/vm').resolve()
+          sock=out/'monitor.sock'
+          serial=out/'serial.log'
+          cmd=['qemu-system-x86_64','-machine','pc,accel=kvm','-cpu','host',
+               '-m','1024','-smp','2',
+               '-drive',f'file={iso},if=ide,media=cdrom,id=puppycd,readonly=on',
+               '-boot','order=d','-display','none','-vga','std',
+               '-monitor',f'unix:{sock},server=on,wait=off',
+               '-serial',f'file:{serial}','-nic','none','-no-reboot']
+          report={
+            'measurement':'Host monotonic seconds immediately before QEMU spawned; includes virtual BIOS, ISO menu, kernel, RAM-copy and actual Firefox visible interactive page',
+            'guest_ram_mib':1024,
+            'virtual_cpus':2,
+            'network_available':False,
+            'security_or_real_hardware_certified':False,
+            'same_full_functionality_as_v117':False,
+            'cold_actual_first_interactive_firefox_seconds':None,
+            'source_iso_sha256':'59a83764fbc5935650e2d5248f0ecd63c78e0915dd717620ff33fd3c717ef0ef',
+            'real_xorg_and_firefox_serial_markers_seen':False,
+            'real_ram_copy_and_root_switch_proven':False,
+            'virtual_media_ejected_after_ram_ready':False,
+            'errors':[]}
+          with (out/'qemu.log').open('wb') as log:
+              start=time.monotonic()
+              vm=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT)
+              try:
+                  frame=out/'current.ppm'
+                  next_log=0
+                  while time.monotonic()-start<135 and vm.poll() is None:
+                      elapsed=time.monotonic()-start
+                      if not sock.exists():time.sleep(.15);continue
+                      try:
+                          monitor(sock,'screendump '+str(frame))
+                          d=profile(frame)
+                          # The source v62 DOM has independent bright-yellow
+                          # JS-ready pixels. No fake splash or PID-only success.
+                          ready=d['fractions']['script_ready']>0.012
+                          text=serial.read_text(errors='replace') if serial.exists() else ''
+                          markers=('PUPPY50_WEB_V45_XORG_RUNNING','PUPPY50_WEB_V45_FIREFOX_REQUESTED')
+                          if ready and all(m in text for m in markers):
+                              report['cold_actual_first_interactive_firefox_seconds']=round(time.monotonic()-start,2)
+                              report['first_frame_pixel_profile']=d
+                              report['real_xorg_and_firefox_serial_markers_seen']=True
+                              frame.rename(out/'first_real_firefox.ppm')
+                              print('P50_V119_ALPINE_REAL_FIRST_FRAME',report['cold_actual_first_interactive_firefox_seconds'],flush=True)
+                              break
+                          if int(elapsed/15)>next_log:
+                              next_log=int(elapsed/15)
+                              print('P50_V119_ALPINE_PROGRESS',round(elapsed,2),'JS-ready color fraction',d['fractions']['script_ready'],'markers',[(m,m in text) for m in markers],flush=True)
+                      except Exception as e:
+                          if len(report['errors'])<6: report['errors'].append(repr(e))
+                      time.sleep(.25)
+                  text=serial.read_text(errors='replace') if serial.exists() else ''
+                  ready=('PUPPY50_WEB_V45_RAM_COPY_COMPLETE' in text and
+                         'PUPPY50_WEB_V45_SWITCH_ROOT_RAM_ONLY' in text)
+                  report['real_ram_copy_and_root_switch_proven']=ready
+                  if ready and report['cold_actual_first_interactive_firefox_seconds'] is not None:
+                      try:
+                          before=monitor(sock,'info block puppycd')
+                          eject=monitor(sock,'eject -f puppycd')
+                          after=monitor(sock,'info block puppycd')
+                          report['virtual_media_ejected_after_ram_ready']=(
+                              ('not inserted' in after.lower() or 'no media' in after.lower()) and 'error' not in eject.lower())
+                          report['eject_hmp_response']=eject[-300:]
+                      except Exception as exc:report['errors'].append('ejection: '+repr(exc))
+                  report['qemu_running_at_end']=vm.poll() is None
+                  print('P50_V119_ALPINE_COLD_BOOT_DIAGNOSTIC',json.dumps(report,indent=2),flush=True)
+              finally:
+                  if vm.poll() is None:
+                      vm.terminate()
+                      try:vm.wait(timeout=6)
+                      except subprocess.TimeoutExpired:vm.kill();vm.wait()
+          Path('out/reports/legacy_alpine_cold_boot.json').write_text(json.dumps(report,indent=2)+'\n')
+          if report['cold_actual_first_interactive_firefox_seconds'] is None:
+              raise SystemExit('No actual Firefox JS-ready first frame detected in up to 135s')
+          if not report['real_ram_copy_and_root_switch_proven']:
+              raise SystemExit('Full RAM-first state was not verified')
+          if not report['virtual_media_ejected_after_ram_ready']:
+              raise SystemExit('Virtual boot medium could not safely be ejected')
+          print('P50_V119_ALPINE_OFFLINE_FIRST_FRAME_VERIFIED',report['cold_actual_first_interactive_firefox_seconds'])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v119-legacy-alpine-coldboot-evidence
+          path: |
+            out/reports/
+            out/vm/serial.log
+            out/vm/qemu.log
+            out/vm/first_real_firefox.ppm
+          retention-days: 14
+          if-no-files-found: warn

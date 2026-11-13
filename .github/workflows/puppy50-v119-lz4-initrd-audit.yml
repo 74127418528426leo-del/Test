@@ -1,0 +1,70 @@
+name: Puppy50 v119 - independently reanalyze completed LZ4 initrd boot evidence
+on:
+  push:
+    branches: [puppy50-v119-lz4-bottleneck-experiment]
+    paths: ['.github/workflows/puppy50-v119-lz4-initrd-audit.yml']
+  workflow_dispatch: {}
+permissions:
+  actions: read
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Recover the exact immutable result evidence from four already booted VMs
+        run: |
+          set -euo pipefail
+          mkdir -p input
+          gh run download 43491950347 --repo "$GITHUB_REPOSITORY" \
+            --name puppy50-v119-lz4-initrd-evidence --dir input
+          find input -maxdepth 3 -type f | head -40
+      - name: Correct only report aggregation, not earlier VM measurements
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics,re
+          root=Path('input')
+          names=('base1','lz4_1','lz4_2','base2')
+          data={}
+          for name in names:
+              paths=list(root.rglob(name+'/result.json'))
+              assert len(paths)==1,(name,paths)
+              r=json.loads(paths[0].read_text())
+              assert r['first_home_seen_seconds'] is not None,(name,r)
+              assert r['staged_ram_ready_seconds'] is not None,(name,r)
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(name,r)
+              data[name]=r
+          logs=list(root.rglob('fixture-after.log'))
+          assert len(logs)==1,logs
+          nonce='P50-43491950347'
+          log=logs[0].read_text()
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(receipts)==4,('Missing real HTTP 200 after eject',len(receipts),log[:3000])
+          baseline=statistics.mean(data[n]['first_home_seen_seconds'] for n in ('base1','base2'))
+          candidate=statistics.mean(data[n]['first_home_seen_seconds'] for n in ('lz4_1','lz4_2'))
+          report={
+            'source_run':'https://github.com/74127418528426leo-del/Test/actions/runs/43491950347',
+            'analysis':'independent result-file audit, not a retest or substituted measurement',
+            'kind':'same exact v117 root, different lossless initramfs format, unchanged full-RAM fallback',
+            'baseline_zstd_mean_real_firefox_first_frame_seconds':baseline,
+            'lz4_initramfs_mean_real_firefox_first_frame_seconds':candidate,
+            'mean_gain_seconds':baseline-candidate,
+            'original_initrd_bytes':65934888,
+            'lz4_initrd_bytes':74935562,
+            'real_HTTP_200_receipts_after_verified_ram_and_ejection':len(receipts),
+            'all_four_full_RAM_copy_and_eject_passed':True,
+            'both_candidates_under_3_seconds':all(data[n]['first_home_seen_seconds']<3 for n in ('lz4_1','lz4_2')),
+            'trials':{n:{k:data[n][k] for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for n in names}
+          }
+          Path('v119-initrd-verified.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('P50_V119_LZ4_INITRD_INDEPENDENTLY_VERIFIED',json.dumps(report,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v119-independent-initrd-audit
+          path: v119-initrd-verified.json
+          retention-days: 14
