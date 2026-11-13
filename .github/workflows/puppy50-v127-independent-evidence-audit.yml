@@ -1,0 +1,80 @@
+name: Puppy50 v127 - independently audit four completed cold boots after reporting error
+on:
+  push:
+    branches: [puppy50-v127-parallel-firefox-early-x11]
+    paths: ['.github/workflows/puppy50-v127-independent-evidence-audit.yml']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Retrieve exact four-VM browser evidence captured by original benchmark
+        run: |
+          set -euo pipefail
+          mkdir -p original-run
+          gh run download 43510341496 --repo "$GITHUB_REPOSITORY" \
+            --name puppy50-v127-parallel-firefox-evidence --dir original-run
+          find original-run -maxdepth 4 -type f | head -35
+      - name: Validate real Firefox frames, network HTTP 200 after full RAM-copy and media-ejection
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,statistics
+          p=Path('original-run')
+          names=('old1','direct1','direct2','old2')
+          runs={}
+          serials={}
+          for n in names:
+              matches=list(p.rglob(n+'/result.json'))
+              assert len(matches)==1,(n,matches)
+              r=json.loads(matches[0].read_text())
+              assert r['first_home_seen_seconds'] is not None,(n,r)
+              assert r['staged_ram_ready_seconds'] is not None,(n,r)
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
+              runs[n]=r
+              files=list(p.rglob(n+'/serial.log'))
+              assert len(files)==1,(n,files)
+              serial=files[0].read_text(errors='replace')
+              serials[n]=serial
+              for marker in ('P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED','P50_V123_XORG_START','P50_STAGE_READY'):
+                  assert marker in serial,(n,marker)
+              if n.startswith('direct'):
+                  assert 'P50_V127_FIREFOX_DIRECT_EXEC' in serial,(n,'direct launch marker missing')
+              else:
+                  assert 'P50_V127_FIREFOX_DIRECT_EXEC' not in serial,(n,'baseline contaminated')
+          logs=list(p.rglob('fixture-after.log'))
+          assert len(logs)==1,logs
+          log=logs[0].read_text(errors='replace')
+          nonce='P50-43510341496'
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(receipts)==4,('Missing real authenticated post-ejection HTTP200 responses',len(receipts),log[-600:])
+          base=statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('old1','old2'))
+          direct=statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('direct1','direct2'))
+          data={
+             'original_run':'https://github.com/74127418528426leo-del/Test/actions/runs/43510341496',
+             'nature':'Independent analysis of actual unchanged result.json, guest serial and HTTP logs; NOT a new benchmark',
+             'earlier_failure':'Strict guest-uptime regex missed direct-Firefox marker; source VM boot outcomes retained',
+             'baseline_v126_mean_first_Firefox_frame_s':base,
+             'direct_launch_candidate_mean_first_Firefox_frame_s':direct,
+             'same_host_gain_seconds':base-direct,
+             'both_candidates_under_5_seconds':all(runs[n]['first_home_seen_seconds']<5 for n in ('direct1','direct2')),
+             'post_eject_real_HTTP_200_receipts':len(receipts),
+             'all_four_verified_RAM_and_ejection_pass':True,
+             'physical_i3_540_timing_tested':False,
+             'trials':{n:{k:runs[n][k] for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for n in names},
+             'direct_launch_serial_lines':{n:[line for line in serials[n].splitlines() if 'P50_V127_FIREFOX_DIRECT_EXEC' in line] for n in ('direct1','direct2')}
+          }
+          Path('independent-v127-audit.json').write_text(json.dumps(data,indent=2)+'\n')
+          print('P50_V127_INDEPENDENT_EVIDENCE_AUDIT',json.dumps(data,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v127-independent-audit-results
+          path: independent-v127-audit.json
+          retention-days: 14
