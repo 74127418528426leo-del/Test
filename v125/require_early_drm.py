@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Research-only: initialize QEMU DRM before early Xorg, prevent fallback LightDM.
 
-This is intentionally specific to virtual QEMU std VGA/bochs DRM.
+This is intentionally specific to virtual QEMU std VGA bochs DRM.
 It does NOT prove i915/physical hardware and does NOT relax X auth or Firefox sandbox.
 Apply after the v123 patch and before packing a disposable initrd.
 """
@@ -16,7 +16,7 @@ INSERT='''        # P50_V125_DRM_PREREQ: test only. Without the DRM driver, earl
         [ ! -e "$p50_lightdm" ] && [ ! -L "$p50_lightdm" ] || panic "v125: existing lightdm override"
         ln -s /dev/null "$p50_lightdm" || panic "v125: cannot prevent late LightDM fallback"
         [ -x "$p50_root/usr/sbin/modprobe" ] || { printf 'P50_V125_MODPROBE_NOT_INSTALLED\n' >/dev/ttyS0; panic "v125: missing root modprobe"; }
-        chroot "$p50_root" /usr/sbin/modprobe -q bochs_drm || { printf 'P50_V125_MODPROBE_FAILED\n' >/dev/ttyS0; panic "v125: bochs_drm is unavailable"; }
+        chroot "$p50_root" /usr/sbin/modprobe -q bochs || { printf 'P50_V125_MODPROBE_FAILED\n' >/dev/ttyS0; panic "v125: bochs is unavailable"; }
         printf 'P50_V125_MODPROBE_SUCCEEDED\n' >/dev/ttyS0
         udevadm trigger --subsystem-match=drm >/dev/null 2>&1 || panic "v125: cannot trigger DRM"
         udevadm settle >/dev/null 2>&1 || panic "v125: cannot settle DRM"
