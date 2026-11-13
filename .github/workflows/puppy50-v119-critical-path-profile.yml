@@ -43,6 +43,19 @@ jobs:
               assert z.testzip() is None
           PY
           python3 input/source/web109/boot_bench_staged.py --help | tail -n 12
+      - name: Record Firefox exec immediately on serial (not via delayed child reporter)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web113/boot_experiments.py')
+          s=p.read_text()
+          old=' > /tmp/p50-v113-firefox-exec; firefox-esr file:'
+          new=' > /dev/ttyS0; firefox-esr file:'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new,1))
+          import ast;ast.parse(p.read_text())
+          PY
       - name: Insert temporary guest uptime stamps and systemd critical-chain report in initrd
         run: |
           set -euo pipefail
@@ -128,21 +141,27 @@ jobs:
           hits=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
           assert len(hits)==1,('Expected one post-eject HTTP 200',hits,log[-600:])
           serial=(Path('out/bios/serial.log').read_text(errors='replace')).replace('\r','')
-          markers=['P50_V113_ROOT_HOOK','P50_V113_PREFLIGHT_BEGIN','P50_V113_PREFLIGHT_END','P50_V113_FIREFOX_EXEC','P50_V113_PROFILE_BEGIN','P50_V113_PROFILE_END']
+          markers=['P50_V113_ROOT_HOOK','P50_V113_PREFLIGHT_BEGIN','P50_V113_PREFLIGHT_END','P50_V113_FIREFOX_EXEC']
           for marker in markers:
-              assert marker in serial,('Required profile marker absent',marker,serial[-2000:])
-          start=serial.index('P50_V113_PROFILE_BEGIN')
-          end=serial.index('P50_V113_PROFILE_END',start)+len('P50_V113_PROFILE_END')
-          (Path('out/reports/guest-critical-chain.txt')).write_text(serial[start:end]+'\n')
+              assert marker in serial,('Guest startup marker absent',marker,serial[-2200:])
+          times={}
+          for marker in markers:
+              match=re.search(re.escape(marker)+r' (\d+(?:\.\d+)?)',serial)
+              assert match,('No guest uptime clock',marker,serial[-1800:])
+              times[marker]=float(match.group(1))
+          assert times['P50_V113_ROOT_HOOK']<=times['P50_V113_PREFLIGHT_BEGIN']<=times['P50_V113_PREFLIGHT_END']<=times['P50_V113_FIREFOX_EXEC'],times
           result=json.loads(Path('out/bios/result.json').read_text())
           assert result['first_home_seen_seconds'] and result['staged_ram_ready_seconds'],result
           assert result['media_ejected'] and result['input_sent_after_eject'] and result['qemu_running_at_end'] and not result['errors']
-          print('P50_V119_CRITICAL_PHASES')
-          for line in serial.splitlines():
-              if any(x in line for x in markers):
-                  print(line)
-          print('P50_V119_CRITICAL_CHAIN_FROM_GUEST')
-          print(serial[start:end])
+          report={'guest_uptime_seconds':times,
+                  'time_from_root_to_preflight_s':times['P50_V113_PREFLIGHT_BEGIN']-times['P50_V113_ROOT_HOOK'],
+                  'time_from_preflight_to_firefox_exec_s':times['P50_V113_FIREFOX_EXEC']-times['P50_V113_PREFLIGHT_END'],
+                  'actual_first_frame_host_seconds':result['first_home_seen_seconds'],
+                  'verified_ram_ready_host_seconds':result['staged_ram_ready_seconds'],
+                  'http_200_after_eject':len(hits),
+                  'note':'guest uptime begins at kernel entry, whereas host first-frame clock begins before QEMU process; absolute origins differ'}
+          Path('out/reports/guest-startup-phases.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('P50_V119_PHASE_PROFILE',json.dumps(report,indent=2))
           print('P50_V119_REAL_FIREFOX_FIRST_FRAME',result['first_home_seen_seconds'])
           print('P50_V119_HTTP_200_AFTER_EJECT',len(hits))
           print('P50_V119_PROFILING_COMPLETE')
