@@ -20,7 +20,7 @@ This falsifies any assertion that the previous v123 run successfully accelerated
 
 The [guarded patch](./v125/require_early_drm.py) is applied **only** to a disposable extracted staged boot initrd after early nonroot user precreation and the earlier v123 X11 hook:
 
-1. Attempt QEMU std VGA's `bochs_drm` module and initialize `/dev/dri/card0` before asking Xorg to start. Fail closed if module/device unavailable.
+1. Attempt Linux 6.12's QEMU std VGA `bochs` module and initialize `/dev/dri/card0` before asking Xorg to start. Fail closed if module/device unavailable.
 2. Mask `lightdm.service` in that isolated test overlay so an apparent window rendered by the old session cannot falsely pass.
 3. Retain Xauthority MIT cookie, TCP-disabled Xorg, unprivileged Firefox and original kernel/root/fallback initrd.
 4. Verify the active post-root display process is **`Xorg ... -auth /home/user/.Xauthority`**, and no LightDM is running.
@@ -33,3 +33,6 @@ The [guarded patch](./v125/require_early_drm.py) is applied **only** to a dispos
 The best *same-host matched* v122 six-VM result was a **6.755-second mean** real Firefox first frame for LZ4 plus earlier direct X11, versus **7.955 seconds** for the released v117 ISO. Zstandard early-direct averaged **7.385 seconds** and uses substantially less compressed RAM. This comparison passed six post-media-ejection authenticated HTTP 200 receipts and verified RAM checksum. The v122 published ISO later independently passed BIOS/UEFI browser and safe-RAM smoke tests (which are slower and from different runners). No tested configuration has achieved `<3.00` seconds or been tested on the actual Acer X3950 with i3-540, i915 graphics and Wi-Fi.
 
 **Release gate:** Do not label an ISO "three-second cold Firefox" without repeated physical or matched KVM verification of the actual first Firefox frame and safe networking/RAM operation.
+## Driver name correction
+
+An initial v125 hardware prerequisite test failed before Xorg because it invoked the obsolete module name `bochs_drm`. The current Debian Linux 6.12 DRM_BOCHS driver module is named `bochs`. The current source now explicitly uses `modprobe bochs` with serial breadcrumbs and refuses to claim a real first frame if that fails. It remains **research only** until a completed independent VM benchmark reports the required actual framebuffer and post-eject network/verified-RAM gates.
