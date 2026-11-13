@@ -31,6 +31,17 @@ sleep 11
     printf '\nP50_V120_LOGIN_JOURNAL\n'; journalctl -b -u display-manager.service -u lightdm.service -u live-config.service -u systemd-logind.service --no-pager -o short-monotonic | tail -100 || true
     printf '\nP50_V120_BOOT_BLAME\n'; systemd-analyze blame | head -45 || true
     printf '\nP50_V120_BROWSER_PROCESS\n'; ps -eo pid,ppid,user,comm,args | grep -E '[f]irefox|[o]penbox|[l]ightdm|[X]org|[N]etworkManager' | head -20 || true
+    printf '\nP50_V120_REAL_PROCESS_START_TIMES\n'
+    p50_hz="$(getconf CLK_TCK)"
+    for p50_name in Xorg firefox-esr openbox; do
+        p50_pid="$(pgrep -x "$p50_name" | head -1)"
+        if [ -n "$p50_pid" ] && [ -r "/proc/$p50_pid/stat" ]; then
+            p50_ticks="$(awk '{print $22}' "/proc/$p50_pid/stat")"
+            awk -v n="$p50_name" -v id="$p50_pid" -v ticks="$p50_ticks" -v hz="$p50_hz" 'BEGIN{printf "P50_V120_PROCESS_START name=%s pid=%s guest_uptime_s=%.3f\n",n,id,ticks/hz}'
+        else
+            printf 'P50_V120_PROCESS_NOT_FOUND %s\n' "$p50_name"
+        fi
+    done
     printf 'P50_V120_CRITICAL_END\n'
 } >/dev/ttyS0 2>&1
 exit 0
