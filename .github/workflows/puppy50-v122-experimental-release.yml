@@ -1,0 +1,377 @@
+name: Puppy50 v122 - build smoke test and publish BIOS UEFI experimental ISOs
+on:
+  push:
+    branches: [puppy50-v122-combined-coldboot-gates]
+    paths: ['.github/workflows/puppy50-v122-experimental-release.yml']
+  workflow_dispatch: {}
+permissions: {contents: write}
+jobs:
+  lz4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          path: input/patches
+      - name: Install isolated image and QEMU/KVM test tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 ovmf zip unzip python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/reports out/root out/main-initrd fixture out/check
+      - name: Download and verify immutable released v117 ISO
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 \
+            'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso' \
+            -o input/base.iso
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/base.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/base.iso \
+            -extract /live/filesystem.squashfs out/original.squashfs \
+            -extract /live/initrd.img out/original.initrd \
+            -extract /live/initrd-full.img out/original-full.initrd \
+            -extract /sha256sum.txt out/original.manifest >out/reports/extract.log 2>&1
+          unsquashfs -s out/original.squashfs | tee out/reports/original-squashfs.txt
+          grep -qi zstd out/reports/original-squashfs.txt
+      - name: Rebuild identical extracted root with faster LZ4 compression
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          sudo unsquashfs -no-progress -processors 4 -dest out/root out/original.squashfs >out/reports/unsquashfs.log 2>&1
+          test -f out/root/usr/lib/firefox-esr/libxul.so
+          test -f out/root/usr/local/sbin/puppy50-prepare-session
+          test -f out/root/etc/ssl/certs/ca-certificates.crt
+          sudo mksquashfs out/root out/lz4.squashfs -noappend -no-progress \
+            -comp lz4 -b 262144 -processors 4 >out/reports/mksquashfs.log 2>&1
+          unsquashfs -s out/lz4.squashfs | tee out/reports/lz4-squashfs.txt
+          grep -qi lz4 out/reports/lz4-squashfs.txt
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          src=Path('out/original.squashfs')
+          dst=Path('out/lz4.squashfs')
+          report={'kind':'storage-codec-only experimental candidate',
+                  'root_data_files_preserved_by_unsquashfs_and_mksquashfs':True,
+                  'original_root_bytes':src.stat().st_size,
+                  'lz4_root_bytes':dst.stat().st_size,
+                  'original_root_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),
+                  'lz4_root_sha256':hashlib.sha256(dst.read_bytes()).hexdigest()}
+          print('P50_V119_ROOT_SIZE',json.dumps(report))
+          Path('out/reports/root-size.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - name: Prepare the proven v118 early-user initrd in addition to LZ4 root
+        run: |
+          set -euo pipefail
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main-initrd && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main-initrd/usr/lib/live/boot/9990-main.sh out/main-original.sh
+          sudo python3 input/patches/v118/precreate_user.py out/main-initrd 
+          sudo python3 input/patches/v122/disable_liveconfig.py out/main-initrd
+          sudo python3 input/patches/v120/rapid_direct.py out/main-initrd
+          sudo python3 input/patches/v121/early_start.py out/main-initrd
+          grep -Fq 'P50_V121_EARLY_SESSION_REGISTERED' out/main-initrd/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/main-initrd/usr/lib/live/boot/9990-main.sh
+          sudo diff -u out/main-original.sh out/main-initrd/usr/lib/live/boot/9990-main.sh >out/reports/early-user-only.diff || test "$?" -eq 1
+          (cd out/main-initrd && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+      - name: Repack BIOS and UEFI bootable test ISO with corrected SHA manifest
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          xorriso -indev input/base.iso -outdev out/stage.iso \
+            -map out/lz4.squashfs /live/filesystem.squashfs \
+            -map out/candidate.initrd /live/initrd.img \
+            -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          p=Path('out/original.manifest')
+          source=p.read_text().splitlines()
+          assert len(source)==293
+          targets={'./live/filesystem.squashfs':Path('out/lz4.squashfs'),
+                   './live/initrd.img':Path('out/candidate.initrd'),
+                   './live/initrd.img-6.12.115+deb13.1-amd64':Path('out/candidate.initrd')}
+          digests={k:hashlib.sha256(p.read_bytes()).hexdigest() for k,p in targets.items()}
+          out=[];seen=set()
+          for line in source:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name in digests:seen.add(name)
+              out.append(digests.get(name,m.group(1))+m.group(2)+name)
+          assert seen==set(targets)
+          Path('out/candidate.manifest').write_text('\n'.join(out)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso \
+            -map out/candidate.manifest /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/final-repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso \
+            -extract /live/filesystem.squashfs out/check/root.squashfs \
+            -extract /live/initrd.img out/check/initrd \
+            -extract /live/initrd.img-6.12.115+deb13.1-amd64 out/check/second-initrd \
+            -extract /live/initrd-full.img out/check/full \
+            -extract /sha256sum.txt out/check/manifest >out/reports/recheck.log 2>&1
+          cmp out/lz4.squashfs out/check/root.squashfs
+          cmp out/candidate.initrd out/check/initrd
+          cmp out/candidate.initrd out/check/second-initrd
+          cmp out/original-full.initrd out/check/full
+          cmp out/candidate.manifest out/check/manifest
+          sha256sum input/base.iso out/candidate.iso >out/reports/isohashes.txt
+          echo 'P50_V119_ISO_AUDIT_OK original kernel, both initrds, new LZ4 root with matching manifest'
+      - name: Build additional exact-Zstd-root ISO with SAME early direct-session initrd
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          xorriso -indev input/base.iso -outdev out/zstd-stage.iso \
+            -map out/candidate.initrd /live/initrd.img \
+            -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 \
+            -boot_image any replay -commit -end >out/reports/zstd-stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          lines=Path('out/original.manifest').read_text().splitlines()
+          expected={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          digest=hashlib.sha256(Path('out/candidate.initrd').read_bytes()).hexdigest()
+          output=[];found=set()
+          for line in lines:
+              m=re.fullmatch(r'([a-fA-F0-9]{64})( [ *])(.*)',line)
+              assert m,line
+              name=m.group(3)
+              if name in expected:found.add(name)
+              output.append((digest if name in expected else m.group(1))+m.group(2)+name)
+          assert found==expected
+          Path('out/zstd-direct.manifest').write_text('\n'.join(output)+'\n')
+          PY
+          xorriso -indev out/zstd-stage.iso -outdev out/zstd-direct.iso \
+            -map out/zstd-direct.manifest /sha256sum.txt \
+            -boot_image any replay -commit -end >out/reports/zstd-repack.log 2>&1
+          mkdir -p out/zstd-check
+          xorriso -osirrox on -indev out/zstd-direct.iso \
+            -extract /live/filesystem.squashfs out/zstd-check/root \
+            -extract /live/initrd.img out/zstd-check/main \
+            -extract /live/initrd-full.img out/zstd-check/fallback \
+            -extract /sha256sum.txt out/zstd-check/sha256sum.txt \
+            >out/reports/zstd-recheck.log 2>&1
+          cmp out/original.squashfs out/zstd-check/root
+          cmp out/candidate.initrd out/zstd-check/main
+          cmp out/original-full.initrd out/zstd-check/fallback
+          cmp out/zstd-direct.manifest out/zstd-check/sha256sum.txt
+          sha256sum out/zstd-direct.iso out/candidate.iso >out/reports/both-candidate-ISO-sha256.txt
+          echo 'P50_V122_ZSTD_LZ4_ISOS_SHARE_EXACT_DIRECT_SESSION_INITRD'
+      - name: Keep identical real QEMU AHCI/CD Firefox measurement
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(needle)==1
+          s=s.replace(needle,needle.replace('else .8','else .2'),1)
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':","if True:  # QEMU AHCI CD eject; not unsupported device_del",1)
+          p2=Path('input/source/web109/boot_bench_ahci.py')
+          p2.write_text(s)
+          import ast
+          ast.parse(s)
+          PY
+      - name: Start nonce-scoped local HTTP fixture
+        run: |
+          set -euo pipefail
+          nohup python3 -u input/source/web103/fixture_server.py \
+            --fixture fixture/unused.mp4 --nonce "$P50_NONCE" \
+            --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py \
+            --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time;time.sleep(2);[socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Independently boot exact release candidates in BIOS and UEFI with real HTTP200
+        timeout-minutes: 19
+        run: |
+          set -euo pipefail
+          for sample in zstd_bios lz4_bios zstd_uefi lz4_uefi; do
+            case "$sample" in
+              zstd*) iso=out/zstd-direct.iso ;;
+              lz4*) iso=out/candidate.iso ;;
+              *) exit 1 ;;
+            esac
+            case "$sample" in
+              *_bios) firmware=bios ;;
+              *_uefi) firmware=uefi ;;
+              *) exit 1 ;;
+            esac
+            python3 -u input/source/web109/boot_bench_ahci.py \
+              --iso "$iso" --out "out/$sample" --mode online \
+              --allow-no-startup-probe --wait-ram-ready \
+              --ram 3072 --seconds 190 --firmware "$firmware" \
+              --cpu-model i3-540-conservative --emulate-acer-id \
+              --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,os
+          samples=['zstd_bios','lz4_bios','zstd_uefi','lz4_uefi']
+          data={name:json.loads((Path('out')/name/'result.json').read_text()) for name in samples}
+          for name,r in data.items():
+              assert r['virtual_firmware']==name.split('_')[1],(name,r)
+              assert r['first_home_seen_seconds'] is not None,(name,r)
+              assert r['staged_ram_ready_seconds'] is not None,(name,r)
+              assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(name,r)
+          nonce=os.environ['P50_NONCE']
+          log=Path('out/reports/fixture-after.log').read_text()
+          receipts=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(receipts)==4,('Missing genuine post-eject HTTP200 receipts',len(receipts),log[-1500:])
+          report={'scope':'repeatable BIOS and UEFI VM browser/verified-RAM/HTTP200, NOT a physical Acer cold-boot guarantee',
+                  'source_released_v117_sha256':'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83',
+                  'real_HTTP_200_responses_after_eject':len(receipts),
+                  'full_RAM_recovery_initrd_unchanged':True,
+                  'shift_rescue_menu_access_verified':False,
+                  'three_second_cold_boot_achieved':all(d['first_home_seen_seconds']<3.0 for d in data.values()),
+                  'uefi_and_bios_functional':True,
+                  'physical_acer_tested':False,
+                  'tests':{name:{k:data[name][k] for k in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for name in samples}}
+          Path('out/reports/v122-release-smoke.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('P50_V122_EXACT_ISO_UEFI_BIOS_RELEASE_SMOKE_PASS',json.dumps(report,indent=2))
+          PY
+      - name: Package experimental ISOs and checksums with truthful boot instructions
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          mkdir -p release/LZ4 release/ZSTD
+          cp out/candidate.iso release/LZ4/Puppy50_v122_LZ4_Experimental.iso
+          cp out/zstd-direct.iso release/ZSTD/Puppy50_v122_ZSTD_Experimental.iso
+          cat >release/LZ4/README.txt <<'README'
+          Puppy50 v122 - faster LZ4 root - EXPERIMENTAL, NOT 3-SECOND BOOT
+          ===============================================================
+          This is a Debian Live Firefox ESR research ISO, NOT official Puppy
+          Linux, not a production or verified physical computer operating system.
+
+          On one matched six-VM BIOS/SATA test with 2 virtual CPUs and 3GiB RAM:
+             Released v117 mean Firefox first frame:    7.955 seconds.
+             v122 earlier X11 + ZSTD mean first frame: 7.385 seconds.
+             v122 earlier X11 + LZ4 mean first frame:  6.755 seconds.
+          Matched six-boot test:
+          https://github.com/74127418528426leo-del/Test/actions/runs/43499812972
+          The EXACT ISO in this ZIP is also separately rebuilt and booted by
+          this release's GitHub Actions run in BIOS and UEFI with full verified
+          RAM migration, virtual CD ejection and authenticated HTTP 200 afterward.
+
+          The 3-second cold-start target is NOT achieved on any VM.
+          No guarantee of performance on actual Acer Aspire X3950, real power-on
+          firmware, USB boot, Intel i915, Wi-Fi, dual monitors, 4K video,
+          all remote websites, or performance on limited RAM hardware.
+
+          The LZ4 compressed root is around 919MiB, ~255MiB larger than the
+          corresponding Zstd root. This OS CANNOT run full RAM-only Firefox in
+          384MiB physical memory. At least 3GiB guest RAM was allocated in
+          successful VM testing; for physical testing 4GiB or more is advised.
+
+          IMPORTANT: keep boot USB plugged in until verified GREEN RAM READY.
+          Never unplug before complete verified RAM migration. The original
+          full-RAM fallback archive is unchanged but the BIOS Shift-held
+          boot-menu recovery entry was NOT independently proven accessible.
+          Keep original v115 ISO on SEPARATE working rescue media:
+          https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental
+
+          Check the ISO from the extracted folder with:
+             sha256sum -c SHA256SUMS
+          The ISO can be written to a separate disposable USB; doing so
+          overwrites the USB. Never overwrite your only recovery drive.
+
+          Current v122 engineering:
+          https://github.com/74127418528426leo-del/Test/tree/puppy50-v122-combined-coldboot-gates
+          README
+          cp release/LZ4/README.txt release/ZSTD/README.txt
+          echo 'The ZSTD variant has the smaller ~664MiB compressed root and was slower to render Firefox, but achieved earlier verified RAM READY in the matched test.' >>release/ZSTD/README.txt
+          (cd release/LZ4 && sha256sum Puppy50_v122_LZ4_Experimental.iso > SHA256SUMS && sha256sum -c SHA256SUMS)
+          (cd release/ZSTD && sha256sum Puppy50_v122_ZSTD_Experimental.iso > SHA256SUMS && sha256sum -c SHA256SUMS)
+          (cd release && zip -q -0 -r Puppy50_v122_LZ4_Experimental.zip LZ4)
+          unzip -tqq release/Puppy50_v122_LZ4_Experimental.zip
+          sha256sum release/Puppy50_v122_LZ4_Experimental.zip > release/LZ4_ZIP_SHA256SUMS
+          cp release/LZ4/SHA256SUMS out/reports/v122-LZ4-iso-SHA256SUMS.txt
+          cp release/ZSTD/SHA256SUMS out/reports/v122-ZSTD-iso-SHA256SUMS.txt
+          cp release/LZ4_ZIP_SHA256SUMS out/reports/v122-LZ4-ZIP-SHA256SUMS.txt
+          cat out/reports/v122-*-SHA256SUMS.txt
+          df -h .
+      - name: Publish separate clearly labeled v122 prerelease without overwriting v117
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          tag=puppy50-v122-direct-fast-codec-experimental
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1;then
+              echo 'Release already exists; refuse to overwrite published ISO bytes' >&2
+              exit 1
+          fi
+          cat >release/NOTES.md <<'NOTES'
+          # Puppy50 v122 — experimental earlier Firefox and root codec choices
+
+          **This is NOT a three-second boot. It is an experimental live OS.**
+          The strongest matched six-boot KVM benchmark measured a genuine
+          **6.755-second mean** first Firefox page for earlier nonroot X11 plus
+          LZ4 root, versus **7.955 seconds** on the exact v117 ISO in the
+          same host test. The Zstd variant averaged **7.385 seconds** and
+          retains a compressed root about **255MiB smaller**. All six original
+          test VMs passed the checksum-verified complete root copy to RAM,
+          virtual-media ejection, and authentic post-eject HTTP 200 browser
+          requests. See [test proof](https://github.com/74127418528426leo-del/Test/actions/runs/43499812972).
+
+          This release pipeline rebuilt each shipped ISO and independently
+          tested its exact bytes under **BIOS and UEFI**, with verified root
+          RAM copy, safe virtual-media ejection, and an HTTP 200 from Firefox
+          afterward. Inspect this release's publishing workflow for the
+          fresh four-VM results and SHA-256 digests.
+
+          **NO physical Acer/i915/Wi-Fi/4K/dual-screen certification; NO
+          guaranteed <3-second time on BIOS, UEFI or any physical hardware.**
+          The 384MiB full RAM-only Firefox target is not supported. The
+          built-in Shift-held rescue shortcut is not independently verified;
+          keep a separate [original v115 recovery ISO](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-v114-fast-verification-experimental)
+          and never remove media until green RAM READY.
+
+          The ZIP contains the LZ4 ISO plus its exact SHA256SUMS and detailed
+          README. The Zstd ISO is available separately. Neither is an
+          installation package and neither changes an existing OS by itself.
+          Writing an ISO to USB destroys existing contents on that USB.
+          NOTES
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'Puppy50 v122 — earlier Firefox start (EXPERIMENTAL, not 3 seconds)' \
+            --notes-file release/NOTES.md \
+            --prerelease \
+            release/LZ4/Puppy50_v122_LZ4_Experimental.iso \
+            release/ZSTD/Puppy50_v122_ZSTD_Experimental.iso \
+            release/Puppy50_v122_LZ4_Experimental.zip \
+            release/LZ4_ZIP_SHA256SUMS \
+            release/LZ4/README.txt
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size) bytes"'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-v122-release-evidence
+          path: |
+            out/reports/
+            out/zstd_bios/
+            out/lz4_bios/
+            out/zstd_uefi/
+            out/lz4_uefi/
+          retention-days: 14
+          if-no-files-found: warn

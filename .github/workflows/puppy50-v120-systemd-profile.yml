@@ -1,0 +1,154 @@
+name: Puppy50 v120 - persistent systemd critical path diagnostic
+on:
+  push:
+    branches: [puppy50-v120-direct-session-fastpath]
+    paths: ['.github/workflows/puppy50-v120-systemd-profile.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          path: input/patches
+      - name: Install isolated VM and ISO tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input fixture out/main out/recheck out/reports
+      - name: Download and authenticate exact v115 ISO and evidence source
+        run: |
+          set -euo pipefail
+          base='https://github.com/74127418528426leo-del/Test/releases/download'
+          curl -fL --retry 3 --silent --show-error "$base/puppy50-v117-instant-bios-experimental/Puppy50_v117_Instant_BIOS_EXPERIMENTAL.iso" -o input/base.iso
+          curl -fL --retry 3 --silent --show-error "$base/puppy50-v114-fast-verification-experimental/Puppy50_v115_Test_Evidence.zip" -o input/source.zip
+          echo 'a7fe532f501b9541c3a4fc22455e57ef79b8389eac6561720c25d7e188231b83  input/base.iso' | sha256sum -c -
+          echo '7825360436f14213ae8415e1505a11868f48826a9f4d48f8eb02f1354842ad6b  input/source.zip' | sha256sum -c -
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('input/source.zip') as z:
+              assert z.testzip() is None
+          PY
+          python3 input/source/web109/boot_bench_staged.py --help | tail -n 12
+      - name: Patch only early Live nonroot account creation in experimental initrd
+        run: |
+          set -euo pipefail
+          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/original.squashfs -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          # Exact two-part initrd layout from the original v115 build evidence.
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main/usr/lib/live/boot/9990-main.sh out/main-original.sh
+          sudo python3 input/patches/v118/precreate_user.py out/main
+          sudo python3 input/patches/v120/profile_guest.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo diff -u out/main-original.sh out/main/usr/lib/live/boot/9990-main.sh >out/reports/ONLY_TEST_PROFILE_CHANGE.diff || test "$?" -eq 1
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/modified.cpio
+          zstd -q -3 -T2 -o out/modified.cpio.zst out/modified.cpio
+          cat out/early-prefix out/modified.cpio.zst >out/candidate.initrd
+          cmp -n 36154880 out/original.initrd out/candidate.initrd
+          xorriso -indev input/base.iso -outdev out/stage.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -boot_image any replay -commit -end >out/reports/stage.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          entries=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(entries)==293
+          digest=hashlib.sha256(Path('out/candidate.initrd').read_bytes()).hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          new=[];seen=set()
+          for line in entries:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              new.append((digest if name in changed else m.group(1))+m.group(2)+name)
+          assert changed.issubset(seen),changed-seen
+          Path('out/sha256sum.txt').write_text('\n'.join(new)+'\n')
+          PY
+          xorriso -indev out/stage.iso -outdev out/candidate.iso -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract /live/initrd.img out/recheck/initrd -extract /live/initrd-full.img out/recheck/fallback -extract /live/filesystem.squashfs out/recheck/root -extract /sha256sum.txt out/recheck/sha256sum.txt >out/reports/recheck.log 2>&1
+          cmp out/candidate.initrd out/recheck/initrd
+          cmp out/original-full.initrd out/recheck/fallback
+          cmp out/original.squashfs out/recheck/root
+          cmp out/sha256sum.txt out/recheck/sha256sum.txt
+          sha256sum input/base.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Use identical 0.2s SATA CD optical benchmark on both conditions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          needle="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(needle)==1
+          s=s.replace(needle,needle.replace('else .8','else .2'),1)
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':","if True:  # AHCI CD medium ejection",1)
+          p2=Path('input/source/web109/boot_bench_ahci.py')
+          p2.write_text(s)
+          import ast
+          ast.parse(s)
+          PY
+      - name: Start local offline/online browser fixture
+        env:
+          P50_NONCE: P50-${{ github.run_id }}
+        run: |
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Boot BIOS with real Firefox, verify HTTP 200 and read the persisted systemd timeline
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 -u input/source/web109/boot_bench_ahci.py \
+            --iso out/candidate.iso --out out/bios \
+            --mode online --allow-no-startup-probe --wait-ram-ready \
+            --ram 3072 --seconds 160 --cpu-model i3-540-conservative \
+            --emulate-acer-id --firmware bios --media usb --bandwidth 0
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,os
+          log=Path('out/reports/fixture-after.log').read_text()
+          nonce=os.environ['P50_NONCE']
+          hits=re.findall(r'GET /after\.html\?nonce='+re.escape(nonce)+r' HTTP/1\.1" 200 ',log)
+          assert len(hits)==1,('No real HTTP200 after ISO ejection',log[-1200:])
+          r=json.loads(Path('out/bios/result.json').read_text())
+          assert r['first_home_seen_seconds'] and r['staged_ram_ready_seconds'],r
+          assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],r
+          serial=Path('out/bios/serial.log').read_text(errors='replace').replace('\r','')
+          assert 'P50_V120_CRITICAL_BEGIN' in serial and 'P50_V120_CRITICAL_END' in serial,('systemd reporter never fired',serial[-2400:])
+          start=serial.index('P50_V120_CRITICAL_BEGIN')
+          end=serial.index('P50_V120_CRITICAL_END',start)+len('P50_V120_CRITICAL_END')
+          output=serial[start:end]
+          Path('out/reports/guest-critical-path.txt').write_text(output+'\n')
+          print('P50_V120_REAL_FIRST_FRAME',r['first_home_seen_seconds'])
+          print('P50_V120_GUEST_BOOT_PROFILER_OUTPUT_START')
+          print(output)
+          print('P50_V120_GUEST_BOOT_PROFILER_OUTPUT_END')
+          print('P50_V120_REAL_HTTP200_AND_RAM_READY_PASSED')
+          PY
+      - name: Preserve measurements and diff whether or not tests passed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-v120-systemd-profile-evidence
+          path: |
+            out/reports/
+            out/bios/
+          retention-days: 14
+          if-no-files-found: warn
