@@ -201,7 +201,7 @@ jobs:
           nohup python3 -u input/source/web112/early_fixture.py \
             --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
           python3 -c 'import socket,time;time.sleep(2);[socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
-      - name: Six alternating actual Firefox boots: v117, early-direct Zstd, early-direct LZ4
+      - name: Six cold Firefox boots comparing v117 and early direct Zstd and LZ4
         timeout-minutes: 29
         run: |
           set -euo pipefail
