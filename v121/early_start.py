@@ -9,7 +9,7 @@ import argparse
 
 OLD='After=systemd-logind.service systemd-user-sessions.service\nWants=systemd-logind.service'
 NEW='After=systemd-logind.service\nWants=systemd-logind.service'
-NEEDLE="        printf 'P50_V120_DIRECT_READY %s\\n' \"$(cat /proc/uptime)\" >/dev/ttyS0"
+NEEDLE="printf 'P50_V120_DIRECT_READY %s\\n' \"$(cat /proc/uptime)\" >/dev/ttyS0"
 EARLY=r'''        # P50_V121_BASIC_TARGET: register the nonroot X11 session independently of
         # graphical.target; keep the target's original display-manager Wants as well.
         p50_basic="@{rootmnt}/etc/systemd/system/basic.target.wants"
@@ -31,7 +31,7 @@ def patch(root: Path):
     if 'P50_V120_DIRECT' not in s or 'P50_V118_EARLY_USER' not in s or 'P50_V119_LIVECONFIG_DISABLED' not in s:
         raise ValueError('v121 requires previous guarded staged boot changes')
     if 'P50_V121_BASIC_TARGET' in s or s.count(OLD)!=1 or s.count(NEEDLE)!=1:
-        raise ValueError('Unexpected direct-session source layout or already patched')
+        raise ValueError(f'Unexpected direct-session layout: old_count={s.count(OLD)} needle_count={s.count(NEEDLE)}')
     p.write_text(s.replace(OLD,NEW,1).replace(NEEDLE,EARLY+NEEDLE,1))
     return p
 
