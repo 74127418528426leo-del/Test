@@ -2,7 +2,7 @@ name: Puppy50 v121 - activate nonroot direct Firefox session at basic.target
 on:
   push:
     branches: [puppy50-v121-earliest-user-session]
-    paths: ['.github/workflows/puppy50-v121-early-direct-ab.yml']
+    paths: ['.github/workflows/puppy50-v121-early-direct-ab.yml', 'v121/**']
   workflow_dispatch: {}
 permissions:
   contents: read
