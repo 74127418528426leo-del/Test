@@ -286,10 +286,12 @@ jobs:
                   assert marker in serial,(n,'missing',marker)
               assert 'P50_V127_FIREFOX_DIRECT_EXEC' in serial,(n,'Same v127 direct Firefox launch missing')
               assert 'P50_V127_BROWSER_START_RELOCATED' in serial,(n,'Duplicate autostart still present')
+              assert 'P50_V131_READAHEAD_STARTED' in serial,(n,'Both conditions require libxul prefetch')
+              assert 'P50_V131_READAHEAD_COMPLETE' in serial,(n,'Preload incomplete')
               if n.startswith('cand'):
-                  assert 'P50_V131_READAHEAD_STARTED' in serial,(n,'Libxul-readahead patch did not execute')
+                  assert 'P50_V133_PREFETCH_256MB_STARTED' in serial,(n,'256MiB candidate did not execute')
               else:
-                  assert 'P50_V131_READAHEAD_STARTED' not in serial,(n,'Baseline contaminated')
+                  assert 'P50_V133_PREFETCH_256MB_STARTED' not in serial,(n,'96MiB baseline contaminated')
               crit=serial[serial.index('P50_V124_FORENSICS_START'):serial.index('P50_V124_FORENSICS_END')+len('P50_V124_FORENSICS_END')]
               assert '/usr/sbin/lightdm' not in crit,(n,'Late LightDM fallback')
               assert '/usr/lib/xorg/Xorg :0 -auth /home/user/.Xauthority' in crit,(n,'Not the early authenticated display')
@@ -318,7 +320,7 @@ jobs:
               'full_RAM_at_384MiB_supported':False,
               'trials':{n:{key:data[n][key] for key in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for n in names}
           }
-          Path('out/reports/v131-no-settle-comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          Path('out/reports/v133-prefetch-depth-comparison.json').write_text(json.dumps(report,indent=2)+'\n')
           print('P50_V133_FOUR_BOOT_RESULT',json.dumps(report,indent=2))
           PY
       - name: Preserve diagnostic serial if a VM failed before validation
