@@ -1,0 +1,101 @@
+name: Puppy50 public preview - browser TLS and font checks
+on:
+  push:
+    branches: [puppy50-public-preview-candidate-20261114]
+    paths: ['.github/workflows/puppy50-public-preview-security.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-SECURITY-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          path: input/preview
+      - uses: actions/checkout@v4
+        with:
+          ref: a9e73787e1dca62e9b733e36b8fe2dabfa985f05
+          path: input/retry
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-public-preview-candidate
+          path: input/candidate
+          run-id: 43605045266
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install QEMU and verify the exact candidate
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          echo 'b61773cc0894e9e7021ea773ea99152bc5dc506fa852ddd863976b260878bd7e  input/candidate/candidate.iso' | sha256sum -c -
+          mkdir -p out/reports fixture
+      - name: Prepare temporary browser fixtures and capture checks
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/retry/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          p=Path('input/source/web109/boot_bench_ahci.py')
+          s=p.read_text()
+          marker="                    result['screenshots'].append('external_https.png')\n"
+          assert s.count(marker)==1
+          extra='''                    for address, filename in (
+                        ('https://expired.badssl.com/', 'expired_certificate.png'),
+                        ('http://10.0.2.2:8767/cjk.html', 'cjk.png'),
+                        ('about:support', 'firefox_support.png'),
+                        ('file:///proc/version', 'kernel_version.png')):
+                        navigate(monitor, address)
+                        time.sleep(14 if address.startswith('https:') else 7)
+                        capture(monitor, out, filename)
+                        result['screenshots'].append(filename)
+'''
+          s=s.replace(marker,marker+extra,1)
+          ast.parse(s)
+          p.write_text(s)
+          Path('fixture/cjk.html').write_text('''<!doctype html><html><meta charset="utf-8"><title>CJK font test</title><body style="font-family:sans-serif;font-size:40px"><p>简体中文：系统启动成功</p><p>繁體中文：系統啟動成功</p><p>日本語：こんにちは世界</p><p>한국어: 안녕하세요</p></body></html>''')
+          PY
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          nohup python3 -u -m http.server 8767 --bind 127.0.0.1 --directory fixture >out/reports/fixture-cjk.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for port in (8765,8766,8767):
+              for attempt in range(25):
+                  try:
+                      socket.create_connection(('127.0.0.1',port),timeout=1).close()
+                      break
+                  except OSError: time.sleep(.2)
+              else: raise RuntimeError(f'fixture {port} did not start')
+          PY
+      - name: Boot and collect browser verification screenshots
+        run: |
+          set -euo pipefail
+          python3 -u input/source/web109/boot_bench_ahci.py --iso input/candidate/candidate.iso --out out/guest --mode online --allow-no-startup-probe --ram 3072 --seconds 220 --cpu-model i3-540-conservative --emulate-acer-id --firmware bios --media usb
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/guest/result.json').read_text())
+          assert r.get('post_eject_browser_http200_confirmed') and r.get('early_js_response_seconds') and not r['errors'],r
+          for name in ['external_https.png','expired_certificate.png','cjk.png','firefox_support.png','kernel_version.png']:
+              assert (Path('out/guest')/name).is_file(),name
+          print('Screenshots saved; visual review is required to establish their contents.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-browser-security-evidence
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
