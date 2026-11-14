@@ -35,13 +35,7 @@ def main():
     original = original.replace(pause, pause.replace('else .8', 'else .2'), 1)
     original = patch_harness(original)
     early = src/'web112/early_probe.py'
-    revised = replace_function(early.read_text(), 'page_color_visible', '''def page_color_visible(image, color):
-    image = image.convert('RGB')
-    width, height = image.size
-    points = [(0.1, 0.5), (0.5, 0.5), (0.85, 0.5), (0.2, 0.8), (0.8, 0.8)]
-    return all(all(abs(image.getpixel((int(width*x), int(height*y)))[i]-color[i]) <= 5
-                   for i in range(3)) for x,y in points)
-''')
+    revised = replace_function(early.read_text(), 'page_color_visible', (a.preview/'page_detector.py').read_text())
     ast.parse(revised)
     early.write_text(revised)
     staged = src/'web109/boot_bench_ahci.py'
