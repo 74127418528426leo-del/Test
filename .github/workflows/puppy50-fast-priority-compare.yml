@@ -1,0 +1,138 @@
+name: Puppy50 research - reproduce fastest priority with actual browsing
+on:
+  push:
+    branches: [puppy50-fast-reliability-research-20261114]
+    paths: ['.github/workflows/puppy50-fast-priority-compare.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-PRIORITY-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install tools and run patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s input/research/fast_research -v
+          mkdir -p input fixture out/main out/reports out/verify
+      - name: Download the exact fast baseline
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v159-verified-browser-httpsafe-experimental/Puppy50_v159_WebRender_Nice10_EXPERIMENTAL.iso' -o input/base.iso
+          echo 'ffe1792d02b3906bbcf8b52b9a5e203916c7d1e063e159e36478805653d622cd  input/base.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+      - name: Build isolated priority-only candidate
+        run: |
+          set -euo pipefail
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main/usr/lib/live/boot/9990-main.sh out/original-main.sh
+          sudo python3 input/research/fast_research/priority_patch.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo diff -u out/original-main.sh out/main/usr/lib/live/boot/9990-main.sh >out/reports/priority-only.diff || test "$?" -eq 1
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/candidate.cpio
+          zstd -q -3 -T2 -o out/candidate.cpio.zst out/candidate.cpio
+          cat out/early-prefix out/candidate.cpio.zst >out/candidate.initrd
+          python3 - <<'PY'
+          import hashlib,re
+          from pathlib import Path
+          lines=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(lines)==293
+          digest=hashlib.file_digest(open('out/candidate.initrd','rb'),'sha256').hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          output=[];seen=set()
+          for line in lines:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              output.append((digest if name in changed else m.group(1))+m.group(2)+name)
+          assert changed.issubset(seen)
+          Path('out/sha256sum.txt').write_text('\n'.join(output)+'\n')
+          PY
+          xorriso -indev input/base.iso -outdev out/candidate.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/verify >out/reports/verify-extract.log 2>&1
+          (cd out/verify && sha256sum -c --quiet sha256sum.txt) >out/reports/manifest-check.log 2>&1
+          sha256sum input/base.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Prepare guest browser and verified network test
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          p=Path('input/source/web109/boot_bench_staged.py');s=p.read_text()
+          old="time.sleep(.05 if args.select_fullram_fallback and not result['fullram_fallback_selected'] else .8)"
+          assert s.count(old)==1;s=s.replace(old,old.replace('else .8','else .2'),1)
+          old="cmd += ['-device', 'qemu-xhci,id=xhci', '-device', 'usb-storage,drive=livecd,id=bootusb,bootindex=1']"
+          new="cmd += ['-device', 'ich9-ahci,id=ahci', '-device', 'ide-cd,drive=livecd,bus=ahci.0,id=bootusb,bootindex=1']"
+          assert s.count(old)==1;s=s.replace(old,new,1)
+          assert s.count("if args.media == 'optical':")==1
+          s=s.replace("if args.media == 'optical':", "if True:  # AHCI CD ejection",1)
+          ast.parse(s);Path('input/source/web109/boot_bench_ahci.py').write_text(s)
+          PY
+          python3 input/research/v159/verify_real_http_with_retry.py input/source/web109/boot_bench_ahci.py
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Matched baseline and fast candidate plus BIOS and UEFI verification
+        run: |
+          set -euo pipefail
+          for sample in base1 cand1 cand2 base2 cand_bios cand_uefi; do
+            iso=out/candidate.iso; [[ "$sample" == base* ]] && iso=input/base.iso
+            firmware=bios; [[ "$sample" == cand_uefi ]] && firmware=uefi
+            python3 -u input/source/web109/boot_bench_ahci.py --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 90 --cpu-model i3-540-conservative --emulate-acer-id --firmware "$firmware" --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics
+          names=['base1','cand1','cand2','base2','cand_bios','cand_uefi'];data={}
+          for name in names:
+              r=json.loads((Path('out')/name/'result.json').read_text());data[name]=r
+              assert r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None,(name,r)
+              assert r['media_ejected'] and r['post_eject_browser_http200_confirmed'] and not r['errors'],(name,r)
+              serial=(Path('out')/name/'serial.log').read_text(errors='replace')
+              for marker in ('P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED','P50_V127_FIREFOX_DIRECT_EXEC','P50_STAGE_READY'):
+                  assert marker in serial,(name,marker)
+          report={'conditions':'Same GitHub runner, BIOS A-B-B-A, i3 feature mask, 3GiB, two vCPUs, virtual AHCI; first frame and RAM readiness are distinct',
+                  'baseline_mean_first_frame':statistics.mean(data[x]['first_home_seen_seconds'] for x in ['base1','base2']),
+                  'candidate_mean_first_frame':statistics.mean(data[x]['first_home_seen_seconds'] for x in ['cand1','cand2']),
+                  'runs':{n:{k:data[n].get(k) for k in ['first_home_seen_seconds','staged_ram_ready_seconds','post_eject_browser_http200_confirmed','post_eject_navigation_attempts','virtual_firmware']} for n in names},
+                  'physical_hardware_tested':False,'current_security_updates_included':False}
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve evidence even if a trial fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-fast-priority-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/cand_bios/
+            out/cand_uefi/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Preserve the experimental candidate for further work
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-fast-priority-candidate-insecure-experimental
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
