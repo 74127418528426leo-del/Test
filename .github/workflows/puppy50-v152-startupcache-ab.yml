@@ -388,6 +388,16 @@ jobs:
           sudo mkdir -p out/seedroot/dev out/seedroot/proc out/seedroot/run/user/1000 \
             out/seedroot/home/user/.mozilla/firefox/p50-default \
             out/seedroot/home/user/.cache/fontconfig out/seedroot/home/user/.cache/mozilla/firefox
+          # The immutable SquashFS root starts without a UID 1000 account:
+          # v118 normally creates it only inside the live initramfs.
+          # Add that disposable BUILD-ONLY account so DBus can resolve UID.
+          if ! sudo grep -qE '^user:[^:]*:1000:1000:' out/seedroot/etc/passwd; then
+              printf 'user:x:1000:1000:Puppy50 ephemeral seed:/home/user:/bin/sh\n' | sudo tee -a out/seedroot/etc/passwd >/dev/null
+          fi
+          if ! sudo grep -qE '^user:[^:]*:1000:' out/seedroot/etc/group; then
+              printf 'user:x:1000:\n' | sudo tee -a out/seedroot/etc/group >/dev/null
+          fi
+          sudo chroot out/seedroot /usr/bin/getent passwd 1000
           sudo chown -R 1000:1000 out/seedroot/home/user/.mozilla out/seedroot/home/user/.cache out/seedroot/run/user/1000
           sudo chmod 0700 out/seedroot/run/user/1000 out/seedroot/home/user/.mozilla/firefox/p50-default
           Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac >out/reports/v152-Xvfb.log 2>&1 &
