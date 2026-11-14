@@ -1,0 +1,176 @@
+name: Puppy50 research - fast staged boot on updated Firefox and kernel
+on:
+  push:
+    branches: [puppy50-fast-reliability-research-20261114]
+    paths: ['.github/workflows/puppy50-updated-staged-boot.yml']
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-UPDATED-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-public-preview-candidate-20261114
+          path: input/preview
+      - name: Install tools and verify patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s input/research/fast_research -v
+          mkdir -p input out/old out/new out/config out/reports fixture
+          df -h .
+      - name: Fetch and checksum the current public preview and old fast reference
+        run: |
+          set -euo pipefail
+          base=https://github.com/74127418528426leo-del/Test/releases/download
+          curl -fLsS --retry 3 "$base/puppy50-browser-live-public-preview-20261114/Puppy50_Browser_Live_Public_Preview.iso" -o input/preview.iso
+          curl -fLsS --retry 3 "$base/puppy50-v159-verified-browser-httpsafe-experimental/Puppy50_v159_WebRender_Nice10_EXPERIMENTAL.iso" -o input/v159.iso
+          echo 'b61773cc0894e9e7021ea773ea99152bc5dc506fa852ddd863976b260878bd7e  input/preview.iso' | sha256sum -c -
+          echo 'ffe1792d02b3906bbcf8b52b9a5e203916c7d1e063e159e36478805653d622cd  input/v159.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/preview.iso -extract /live/initrd.img out/preview.initrd -extract /isolinux/isolinux.cfg out/config/isolinux.cfg -extract /isolinux/live.cfg out/config/live.cfg -extract /boot/grub/config.cfg out/config/config.cfg -extract /boot/grub/grub.cfg out/config/grub.cfg -extract /sha256sum.txt out/original.manifest >out/reports/preview-extract.log 2>&1
+          xorriso -osirrox on -indev input/v159.iso -extract /live/initrd.img out/v159.initrd >out/reports/old-extract.log 2>&1
+      - name: Port staged live-boot code onto byte-matching updated initramfs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          old=Path('out/v159.initrd').read_bytes();new=Path('out/preview.initrd').read_bytes()
+          assert old[36154880:36154884]==bytes.fromhex('28b52ffd')
+          assert new[45302784:45302787]==bytes.fromhex('1f8b08')
+          Path('out/preview-prefix').write_bytes(new[:45302784])
+          Path('out/old-compressed').write_bytes(old[36154880:])
+          Path('out/new-compressed').write_bytes(new[45302784:])
+          PY
+          zstd -q -dc out/old-compressed >out/old.cpio
+          gzip -dc out/new-compressed >out/new.cpio
+          (cd out/old && sudo cpio -idm --quiet --no-absolute-filenames <../old.cpio)
+          (cd out/new && sudo cpio -idm --quiet --no-absolute-filenames <../new.cpio)
+          sudo python3 input/research/fast_research/port_staged.py out/old out/new
+          sudo cp -a out/old/usr/lib/p50-stage out/new/usr/lib/
+          sudo sh -n out/new/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/new/usr/lib/live/boot/9990-misc-helpers.sh
+          (cd out/new && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/ported.cpio
+          gzip -1 -n <out/ported.cpio >out/ported.cpio.gz
+          cat out/preview-prefix out/ported.cpio.gz >out/ported.initrd
+          python3 - <<'PY'
+          from pathlib import Path
+          d=Path('out/config')
+          def once(path,old,new):
+              s=path.read_text();assert s.count(old)==1,(path,old,s.count(old));path.write_text(s.replace(old,new,1))
+          once(d/'isolinux.cfg','timeout 50\n','timeout 20\n')
+          once(d/'config.cfg','set timeout=5\n','set timeout=2\n')
+          p=d/'live.cfg';s=p.read_text()
+          old='append boot=live components toram quiet locales=en_US.UTF-8';assert s.count(old)==2
+          s=s.replace(old,'append boot=live components quiet locales=en_US.UTF-8',1)
+          p.write_text(s.replace('Start Puppy50 (copy to RAM)','Experimental staged startup (keep USB connected)',1))
+          p=d/'grub.cfg';s=p.read_text();old='linux /live/vmlinuz boot=live components toram quiet'
+          assert s.count(old)==1;s=s.replace(old,'linux /live/vmlinuz boot=live components quiet',1)
+          p.write_text(s.replace('Start Puppy50 (copy to RAM)','Experimental staged startup (keep USB connected)',1))
+          PY
+      - name: Build matched 2-second-menu control and staged candidate
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,re
+          from pathlib import Path
+          lines=Path('out/original.manifest').read_text().splitlines();assert len(lines)==293
+          cfg={'./isolinux/isolinux.cfg':'out/config/isolinux.cfg','./isolinux/live.cfg':'out/config/live.cfg','./boot/grub/config.cfg':'out/config/config.cfg','./boot/grub/grub.cfg':'out/config/grub.cfg'}
+          for label in ('control','candidate'):
+              replace=dict(cfg)
+              if label=='candidate':replace['./live/initrd.img']='out/ported.initrd'
+              result=[];seen=set()
+              for line in lines:
+                  m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+                  path=m.group(3);assert path not in seen;seen.add(path)
+                  digest=m.group(1)
+                  if path in replace:
+                      with open(replace[path],'rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
+                  result.append(digest+m.group(2)+path)
+              assert set(replace).issubset(seen)
+              Path('out/'+label+'.manifest').write_text('\n'.join(result)+'\n')
+          PY
+          for label in control candidate; do
+            args=()
+            [[ "$label" == candidate ]] && args+=(-map out/ported.initrd /live/initrd.img)
+            xorriso -indev input/preview.iso -outdev "out/$label.iso" -map out/config/isolinux.cfg /isolinux/isolinux.cfg -map out/config/live.cfg /isolinux/live.cfg -map out/config/config.cfg /boot/grub/config.cfg -map out/config/grub.cfg /boot/grub/grub.cfg -map "out/$label.manifest" /sha256sum.txt "${args[@]}" -boot_image any replay -commit -end >"out/reports/$label-repack.log" 2>&1
+            mkdir -p "out/verify-$label"
+            xorriso -osirrox on -indev "out/$label.iso" -extract / "out/verify-$label" >"out/reports/$label-extract.log" 2>&1
+            (cd "out/verify-$label" && sha256sum -c --quiet sha256sum.txt) >"out/reports/$label-manifest-check.log" 2>&1
+            rm -rf "out/verify-$label"
+          done
+          sha256sum input/preview.iso out/control.iso out/candidate.iso >out/reports/iso-sha256.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Matched control versus updated staged build and graphics fallbacks
+        run: |
+          set -euo pipefail
+          for sample in base1 cand1 cand2 base2 cand_uefi cand_cirrus; do
+            iso=out/candidate.iso; script=input/source/web109/boot_bench_ahci.py; firmware=bios; args=(--wait-ram-ready)
+            if [[ "$sample" == base* ]]; then iso=out/control.iso; args=(); fi
+            [[ "$sample" == cand_uefi ]] && firmware=uefi
+            [[ "$sample" == cand_cirrus ]] && script=input/source/web109/boot_bench_cirrus_public.py
+            python3 -u "$script" --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe --ram 3072 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --firmware "$firmware" --media usb --bandwidth 0 "${args[@]}"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics
+          names=['base1','cand1','cand2','base2','cand_uefi','cand_cirrus'];runs={}
+          for n in names:
+              r=json.loads((Path('out')/n/'result.json').read_text());runs[n]=r
+              assert r['first_home_seen_seconds'] is not None and r.get('early_js_response_seconds') is not None,(n,r)
+              assert r['media_ejected'] and r.get('post_eject_browser_http200_confirmed') and not r['errors'],(n,r)
+              if n.startswith('cand'):
+                  assert r['staged_ram_ready_seconds'] is not None,(n,r)
+                  t=(Path('out')/n/'serial.log').read_text(errors='replace');assert 'P50_STAGE_READY' in t
+                  if n=='cand_cirrus':assert 'P50_FAST_GPU_GUARD_STANDARD_DESKTOP' in t and 'P50_V125_DRM_GATE_START' not in t
+                  else:assert 'P50_V125_EARLY_DRM_READY' in t,(n,'fast graphics did not run')
+          report={'conditions':'same runner BIOS A-B-B-A, equal 2-second menu, 3 GiB; candidate uses staged RAM, updated Firefox and kernel',
+                  'control_mean_first_frame':statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('base1','base2')),
+                  'candidate_mean_first_frame':statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('cand1','cand2')),
+                  'runs':{n:{k:runs[n].get(k) for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds','post_eject_browser_http200_confirmed','post_eject_navigation_attempts')} for n in names},
+                  'physical_hardware_tested':False,'full_ram_384mib_supported':False}
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve test evidence even if a trial fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-updated-staged-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/cand_uefi/
+            out/cand_cirrus/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Preserve candidate for independent verification
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-updated-staged-candidate-experimental
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
