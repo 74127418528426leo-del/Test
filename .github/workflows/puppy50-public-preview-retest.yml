@@ -1,0 +1,133 @@
+name: Puppy50 public preview - retest exact built ISO
+'on':
+  push:
+    branches:
+    - puppy50-public-preview-candidate-20261114
+    paths:
+    - .github/workflows/puppy50-public-preview-retest.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: '12'
+    strategy:
+      fail-fast: 'false'
+      matrix:
+        include:
+        - label: bios1
+          firmware: bios
+          media: ahci
+          memory: '3072'
+          mode: normal
+        - label: bios2
+          firmware: bios
+          media: ahci
+          memory: '3072'
+          mode: normal
+        - label: uefi1
+          firmware: uefi
+          media: ahci
+          memory: '3072'
+          mode: normal
+        - label: uefi2
+          firmware: uefi
+          media: ahci
+          memory: '3072'
+          mode: normal
+        - label: usb30
+          firmware: bios
+          media: usb
+          memory: '3072'
+          mode: capped
+        - label: cirrus
+          firmware: bios
+          media: cirrus
+          memory: '3072'
+          mode: normal
+        - label: virtio
+          firmware: bios
+          media: virtio
+          memory: '3072'
+          mode: normal
+        - label: basic_graphics
+          firmware: bios
+          media: usb
+          memory: '3072'
+          mode: fallback
+        - label: bios4g
+          firmware: bios
+          media: ahci
+          memory: '4096'
+          mode: normal
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-PREVIEW-${{ github.run_id }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+        path: input/source
+    - uses: actions/checkout@v4
+      with:
+        path: input/preview
+    - uses: actions/checkout@v4
+      with:
+        ref: a9e73787e1dca62e9b733e36b8fe2dabfa985f05
+        path: input/retry
+    - uses: actions/download-artifact@v4
+      with:
+        name: puppy50-public-preview-candidate
+        path: input/candidate
+        run-id: '43605045266'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Install QEMU and verify the exact build artifact
+      env:
+        EXPECTED: b61773cc0894e9e7021ea773ea99152bc5dc506fa852ddd863976b260878bd7e
+      run: 'set -euo pipefail
+
+        sudo apt-get update -qq
+
+        sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil
+
+        test -c /dev/kvm
+
+        sudo chmod a+rw /dev/kvm
+
+        test "$(sha256sum input/candidate/candidate.iso | cut -d '' '' -f1)" = "$EXPECTED"
+
+        mkdir -p out/reports fixture
+
+        lscpu >out/reports/host-cpu.txt
+
+        '
+    - name: Prepare framebuffer and real guest HTTP checks
+      run: "set -euo pipefail\npython3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry\
+        \ input/retry/v159/verify_real_http_with_retry.py\nnohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce \"\
+        $P50_NONCE\" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &\nnohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log\
+        \ 2>&1 </dev/null &\npython3 - <<'PY'\nimport socket,time\nfor port in (8765,8766):\n    for attempt in range(25):\n        try:\n            socket.create_connection(('127.0.0.1',port),timeout=1).close()\n\
+        \            break\n        except OSError:\n            time.sleep(.2)\n    else: raise RuntimeError(f'fixture {port} failed')\nPY\n"
+    - name: Boot, exercise JavaScript, eject VM media and check real browser HTTP
+      env:
+        P50_MEDIA: ${{ matrix.media }}
+        P50_MODE: ${{ matrix.mode }}
+        P50_FW: ${{ matrix.firmware }}
+        P50_MEMORY: ${{ matrix.memory }}
+      run: "set -euo pipefail\nscript=input/source/web109/boot_bench_ahci.py\ncase \"$P50_MEDIA\" in\n  usb) script=input/source/web109/boot_bench_usb_public.py;;\n\
+        \  cirrus) script=input/source/web109/boot_bench_cirrus_public.py;;\n  virtio) script=input/source/web109/boot_bench_virtio_public.py;;\nesac\n\
+        args=()\nif [[ \"$P50_MODE\" == capped ]]; then args+=(--bandwidth 31457280); fi\nif [[ \"$P50_MODE\" == fallback ]]; then args+=(--select-fullram-fallback);\
+        \ fi\npython3 -u \"$script\" --iso input/candidate/candidate.iso --out out/guest --mode online --allow-no-startup-probe --ram \"$P50_MEMORY\" --seconds\
+        \ 220 --cpu-model i3-540-conservative --emulate-acer-id --firmware \"$P50_FW\" --media usb \"${args[@]}\"\npython3 - <<'PY'\nimport json,os\nfrom\
+        \ pathlib import Path\nr=json.loads(Path('out/guest/result.json').read_text())\nassert r['first_home_seen_seconds'] is not None,r\nassert r.get('early_js_response_seconds')\
+        \ is not None,r\nassert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'],r\nassert r.get('post_eject_browser_http200_confirmed')\
+        \ and not r['errors'],r\nif os.environ['P50_MODE']=='fallback': assert r['fullram_fallback_selected'],r\nexpected='GET /after.html?nonce='+os.environ['P50_NONCE']+'\
+        \ HTTP/1.1\" 200 '\nassert expected in Path('out/reports/fixture-after.log').read_text(),r\nprint('CANDIDATE_VM_TEST_PASS',json.dumps(r,indent=2))\n\
+        PY\n"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: preview-test-${{ matrix.label }}
+        path: out/
+        retention-days: '14'
+        if-no-files-found: warn
