@@ -484,7 +484,7 @@ jobs:
               'full_RAM_at_384MiB_supported':False,
               'trials':{n:{key:data[n][key] for key in ('first_home_seen_seconds','staged_ram_ready_seconds','media_ejected')} for n in names}
           }
-          Path('out/reports/v147-defer-openbox-comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          Path('out/reports/v149-software-webrender-comparison.json').write_text(json.dumps(report,indent=2)+'\n')
           print('P50_V149_FOUR_BOOT_RESULT',json.dumps(report,indent=2))
           PY
       - name: Independent exact-compound-candidate BIOS and UEFI screen RAM networking and priority check
@@ -504,7 +504,7 @@ jobs:
           fw=('bios','uefi')
           runs={}
           for f in fw:
-              name='v147_'+f
+              name='v149_'+f
               r=json.loads((Path('out')/name/'result.json').read_text())
               assert r['virtual_firmware']==f,(name,r)
               assert r['first_home_seen_seconds'] is not None,(name,r)
@@ -526,7 +526,7 @@ jobs:
                   'all_six_complete_verified_RAM_before_eject':True,
                   'physical_Acer_tested':False,
                   'five_seconds_achieved_in_both':all(runs[f]['first_home_seen_seconds']<5 for f in fw)}
-          Path('out/reports/v147-independent-BIOS-UEFI.json').write_text(json.dumps(report,indent=2)+'\n')
+          Path('out/reports/v149-independent-BIOS-UEFI.json').write_text(json.dumps(report,indent=2)+'\n')
           print('P50_V149_INDEPENDENT_SHIPPING_FIRMWARE_PASS',json.dumps(report,indent=2))
           PY
       - name: Preserve diagnostic serial if a VM failed before validation
@@ -554,7 +554,7 @@ jobs:
             out/base2/
             out/cand1/
             out/cand2/
-            out/v147_bios/
-            out/v147_uefi/
+            out/v149_bios/
+            out/v149_uefi/
           retention-days: 14
           if-no-files-found: warn
