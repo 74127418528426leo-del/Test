@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools qemu-system-x86 ovmf python3-pil xvfb xdotool
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools qemu-system-x86 ovmf python3-pil xvfb xdotool openbox
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           mkdir -p input fixture out/main out/recheck out/reports
@@ -404,6 +404,9 @@ jobs:
           xvfb_pid=$!
           sleep 2
           test -S /tmp/.X11-unix/X99
+          DISPLAY=:99 openbox >out/reports/v152-openbox.log 2>&1 &
+          openbox_pid=$!
+          sleep 2
           sudo mount --bind /dev out/seedroot/dev
           sudo mount -t proc proc out/seedroot/proc
           sudo mount --bind /tmp/.X11-unix out/seedroot/tmp/.X11-unix
@@ -411,6 +414,7 @@ jobs:
             sudo umount out/seedroot/tmp/.X11-unix || true
             sudo umount out/seedroot/proc || true
             sudo umount out/seedroot/dev || true
+            kill "$openbox_pid" 2>/dev/null || true
             kill "$xvfb_pid" 2>/dev/null || true
           }
           trap cleanup EXIT
@@ -435,8 +439,12 @@ jobs:
           firefox_window="$(xdotool search --onlyvisible --class 'Firefox|firefox-esr' 2>/dev/null | head -1)"
           if [[ -n "$firefox_window" ]]; then
               echo "P50_V152_GRAPHICAL_FIREFOX_WINDOW_PRESENT $firefox_window" | tee -a out/reports/v152-headless-first-boot.log
-              xdotool windowfocus --sync "$firefox_window" || true
-              xdotool key --clearmodifiers ctrl+q || true
+              xdotool windowactivate --sync "$firefox_window" || true
+              xdotool key --window "$firefox_window" --clearmodifiers ctrl+q || true
+              sleep 4
+              if kill -0 "$firefox_pid" 2>/dev/null; then
+                  xdotool key --window "$firefox_window" --clearmodifiers alt+F4 || true
+              fi
           else
               echo P50_V152_NO_FIREFOX_WINDOW | tee -a out/reports/v152-headless-first-boot.log
           fi
