@@ -20,16 +20,19 @@ GUARD = '''\t# P50_FAST_GPU_GUARD: unverified GPUs must retain normal LightDM.
 '''
 
 
-def patch_file(path):
-    p=Path(path)
-    if p.is_symlink() or not p.is_file():raise ValueError('Expected extracted boot script')
-    s=p.read_text()
+def guard_text(s):
     if s.count(MARKER)!=1 or 'P50_FAST_GPU_GUARD' in s:
         raise ValueError('Unexpected source or already patched')
     prefix,tail=s.split(MARKER,1)
     if not tail.startswith(OLD):raise ValueError('Unexpected early display condition')
     guarded=OLD.replace(' ]; then',' ] && [ "$p50_fast_gpu" = 1 ]; then')
-    p.write_text(prefix+GUARD+MARKER+guarded+tail[len(OLD):])
+    return prefix+GUARD+MARKER+guarded+tail[len(OLD):]
+
+
+def patch_file(path):
+    p=Path(path)
+    if p.is_symlink() or not p.is_file():raise ValueError('Expected extracted boot script')
+    p.write_text(guard_text(p.read_text()))
 
 
 if __name__=='__main__':
