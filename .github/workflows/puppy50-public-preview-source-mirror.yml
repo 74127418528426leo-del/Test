@@ -1,0 +1,63 @@
+name: Puppy50 public preview - mirror exact source packages
+on:
+  push:
+    branches: [puppy50-public-preview-candidate-20261114]
+    paths: ['.github/workflows/puppy50-public-preview-source-mirror.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-source-inventory
+          path: input
+          run-id: 43605045266
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify the exact package-source index
+        run: |
+          set -euo pipefail
+          echo '771eb6c9fbb60fce166d01eb2537fac8ac9bd1dfcfb2b0f2081688cc810ededa  input/SOURCE_INDEX.json' | sha256sum -c -
+          df -h .
+      - name: Fetch and verify all indexed Debian source files
+        run: |
+          set -euo pipefail
+          python3 -u public_release/bundle_sources.py input/SOURCE_INDEX.json output
+          cp input/SOURCE_INDEX.json output/
+          ls -lh output
+          df -h .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-source-part-01
+          path: output/Puppy50_Debian_Sources_Part_01.zip
+          compression-level: 0
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-source-part-02
+          path: output/Puppy50_Debian_Sources_Part_02.zip
+          compression-level: 0
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-source-part-03
+          path: output/Puppy50_Debian_Sources_Part_03.zip
+          compression-level: 0
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-source-part-04
+          path: output/Puppy50_Debian_Sources_Part_04.zip
+          compression-level: 0
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-source-metadata
+          path: |
+            output/SOURCE_INDEX.json
+            output/SOURCE_FILE_DETAILS.json
+          retention-days: 2
