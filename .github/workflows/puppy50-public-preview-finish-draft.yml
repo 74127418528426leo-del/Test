@@ -1,0 +1,68 @@
+name: Finish verified Puppy50 public preview draft
+on:
+  push:
+    branches: [puppy50-public-preview-candidate-20261114]
+    paths: ['.github/workflows/puppy50-public-preview-finish-draft.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  finish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: puppy50-browser-live-public-preview-20261114
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify uploaded draft and publish only complete matching assets
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            state=$(gh run view 43641574266 --repo "$GITHUB_REPOSITORY" --json status --jq .status)
+            if [[ "$state" == completed ]]; then break; fi
+            sleep 10
+          done
+          test "$state" = completed
+          for run in 43605886048 43605888472 43641165806 43641205666; do
+            gh run view "$run" --repo "$GITHUB_REPOSITORY" --json status,conclusion | jq -e '.status == "completed" and .conclusion == "success"'
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/43641574266/jobs?per_page=100" | jq -e '[.jobs[].steps[] | select(.name == "Assemble source, test evidence, and downloadable ISO ZIP" and .conclusion == "success")] | length == 1'
+          gh api "repos/$GITHUB_REPOSITORY/releases/445594031" > release-metadata.json
+          mkdir -p audit
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern ALL_ASSETS_SHA256SUMS.txt --pattern SHA256SUMS --dir audit
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          meta=json.loads(Path('release-metadata.json').read_text())
+          assert meta['id']==445594031 and meta['tag_name']=='puppy50-browser-live-public-preview-20261114'
+          assert meta['target_commitish']=='395a859a96f6d7221057bc5507c5a8c96e283531' and meta['prerelease']
+          assets={a['name']:a for a in meta['assets']}
+          expected={'ALL_ASSETS_SHA256SUMS.txt','INSTALLED_PACKAGES.tsv','PROJECT_SOURCES.zip',
+                    'Puppy50_Browser_Live_Public_Preview.iso','Puppy50_Browser_Live_Public_Preview.zip',
+                    'README.md','SHA256SUMS','SOURCE_FILE_DETAILS.json','SOURCE_INDEX.json',
+                    'TEST_EVIDENCE.zip','TEST_RESULTS.md'}
+          expected.update(f'Puppy50_Debian_Sources_Part_{n:02}.zip' for n in range(1,5))
+          assert set(assets)==expected,(sorted(assets),sorted(expected))
+          sums={}
+          for line in Path('audit/ALL_ASSETS_SHA256SUMS.txt').read_text().splitlines():
+              digest,name=line.split('  ',1)
+              assert name not in sums
+              sums[name]=digest
+          for name in expected:
+              a=assets[name]
+              assert a['state']=='uploaded' and a['size']>0,name
+              if name in ('ALL_ASSETS_SHA256SUMS.txt','SHA256SUMS'):
+                  digest=hashlib.sha256((Path('audit')/name).read_bytes()).hexdigest()
+              else:
+                  digest=sums[name]
+              assert a['digest']=='sha256:'+digest,(name,a['digest'],digest)
+          iso='Puppy50_Browser_Live_Public_Preview.iso'
+          assert sums[iso]=='b61773cc0894e9e7021ea773ea99152bc5dc506fa852ddd863976b260878bd7e'
+          assert Path('audit/SHA256SUMS').read_text().strip()==sums[iso]+'  '+iso
+          print('Verified all',len(assets),'server asset digests; draft:',meta['draft'])
+          PY
+          if [[ "$(jq -r .draft release-metadata.json)" == true ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease,assets | jq -e '.isDraft == false and .isPrerelease == true'
