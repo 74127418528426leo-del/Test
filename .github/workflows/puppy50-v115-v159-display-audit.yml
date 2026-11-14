@@ -1,0 +1,70 @@
+name: Puppy50 independent graphics and boot compatibility audit
+on:
+  push:
+    branches: [puppy50-public-compatibility-audit-20261114]
+    paths: ['.github/workflows/puppy50-v115-v159-display-audit.yml']
+permissions: {contents: read}
+jobs:
+  display:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        iso: [v115, v159]
+        graphics: [std, cirrus]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - name: Install VM dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out
+      - name: Download exact published ISO
+        env:
+          IMAGE: ${{ matrix.iso }}
+        run: |
+          set -euo pipefail
+          if [[ "$IMAGE" == v115 ]]; then
+            url='https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso'
+            sum='d697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a'
+          else
+            url='https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v159-verified-browser-httpsafe-experimental/Puppy50_v159_WebRender_Nice10_EXPERIMENTAL.iso'
+            sum='ffe1792d02b3906bbcf8b52b9a5e203916c7d1e063e159e36478805653d622cd'
+          fi
+          curl -fLsS --retry 3 "$url" -o input/test.iso
+          printf '%s  input/test.iso\n' "$sum" | sha256sum -c -
+      - name: Boot in controlled VM graphics mode
+        env:
+          GRAPHICS: ${{ matrix.graphics }}
+          PYTHONPATH: input/source
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,ast
+          p=Path('input/source/web109/boot_bench_staged.py')
+          s=p.read_text()
+          a="'-display', 'none', '-vga', 'std',"
+          assert s.count(a)==1
+          s=s.replace(a,"'-display', 'none', '-vga', '"+os.environ['GRAPHICS']+"',",1)
+          ast.parse(s)
+          Path('input/source/web109/display_audit.py').write_text(s)
+          PY
+          python3 -u input/source/web109/display_audit.py --iso input/test.iso --out out/guest --mode offline --wait-ram-ready --ram 3072 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --media optical
+          result=$?
+          printf '%s\n' "$result" >out/exit-code.txt
+          exit "$result"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: display-audit-${{ matrix.iso }}-${{ matrix.graphics }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
