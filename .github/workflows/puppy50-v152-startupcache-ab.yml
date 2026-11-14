@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools qemu-system-x86 ovmf python3-pil
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools qemu-system-x86 ovmf python3-pil xvfb
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           mkdir -p input fixture out/main out/recheck out/reports
@@ -377,35 +377,44 @@ jobs:
           cmp out/v149.manifest out/v149-check/manifest
           sha256sum out/v147.iso out/v149.iso >out/reports/v149-ISO-sha256.txt
           echo 'P50_V149_SOFTWARE_WEBRENDER_ONE_PROFILE_PREF_ONLY_KERNEL_ROOT_AND_RECOVERY_UNCHANGED'
-      - name: Generate fresh ANONYMOUS Firefox startupCache using exact immutable root Firefox ESR
+      - name: Generate anonymous Firefox startupCache on exact-version real Xvfb with writable font dirs
         timeout-minutes: 13
         run: |
           set -euo pipefail
           sudo unsquashfs -no-progress -processors 4 -dest out/seedroot out/original.squashfs >out/reports/v152-unsquashfs.log 2>&1
           test -x out/seedroot/usr/lib/firefox-esr/firefox-esr
           test -f out/seedroot/usr/share/puppy50web/index.html
-          sudo mkdir -p out/seedroot/dev out/seedroot/proc out/seedroot/run/user/1000 out/seedroot/home/user/.mozilla/firefox/p50-default
-          sudo chown -R 1000:1000 out/seedroot/home/user/.mozilla out/seedroot/run/user/1000
+          mkdir -p out/seedroot/tmp/.X11-unix
+          sudo mkdir -p out/seedroot/dev out/seedroot/proc out/seedroot/run/user/1000 \
+            out/seedroot/home/user/.mozilla/firefox/p50-default \
+            out/seedroot/home/user/.cache/fontconfig out/seedroot/home/user/.cache/mozilla/firefox
+          sudo chown -R 1000:1000 out/seedroot/home/user/.mozilla out/seedroot/home/user/.cache out/seedroot/run/user/1000
           sudo chmod 0700 out/seedroot/run/user/1000 out/seedroot/home/user/.mozilla/firefox/p50-default
+          Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac >out/reports/v152-Xvfb.log 2>&1 &
+          xvfb_pid=$!
+          sleep 2
+          test -S /tmp/.X11-unix/X99
           sudo mount --bind /dev out/seedroot/dev
           sudo mount -t proc proc out/seedroot/proc
+          sudo mount --bind /tmp/.X11-unix out/seedroot/tmp/.X11-unix
           cleanup() {
+            sudo umount out/seedroot/tmp/.X11-unix || true
             sudo umount out/seedroot/proc || true
             sudo umount out/seedroot/dev || true
+            kill "$xvfb_pid" 2>/dev/null || true
           }
           trap cleanup EXIT
           set +e
-          sudo timeout 60s unshare --net -- chroot --userspec=1000:1000 out/seedroot \
+          sudo timeout 24s unshare --net -- chroot --userspec=1000:1000 out/seedroot \
             /usr/bin/env HOME=/home/user XDG_RUNTIME_DIR=/run/user/1000 \
-              MOZ_HEADLESS=1 MOZ_CRASHREPORTER_DISABLE=1 \
-              /usr/bin/firefox-esr --headless --no-remote \
+              DISPLAY=:99 GDK_BACKEND=x11 MOZ_CRASHREPORTER_DISABLE=1 \
+              /usr/bin/firefox-esr --no-remote --new-instance \
               --profile /home/user/.mozilla/firefox/p50-default \
-              --screenshot /tmp/p50-offline-seed.png \
               file:///usr/share/puppy50web/index.html \
               >out/reports/v152-headless-first-boot.log 2>&1
           code="$?"
           set -e
-          echo "P50_V152_SEED_HEADLESS_EXIT=$code" | tee -a out/reports/v152-headless-first-boot.log
+          echo "P50_V152_XVFB_FIRST_RUN_EXIT=$code" | tee -a out/reports/v152-headless-first-boot.log
           cleanup
           trap - EXIT
           python3 - <<'PY'
@@ -415,20 +424,20 @@ jobs:
           candidates=sorted(p for p in root.rglob('startupCache') if p.is_dir() and not p.is_symlink())
           info=[{'path':str(p.relative_to(root)), 'size':sum(f.stat().st_size for f in p.rglob('*') if f.is_file())} for p in candidates]
           print('P50_V152_GENERATED_STARTUPCACHE_LOCATIONS',json.dumps(info))
-          assert info,'Exact-version Firefox did not create a startupCache; do NOT invent one'
+          assert info,'Actual Xvfb Firefox did not produce startupCache; never synthesize'
           chosen=max(candidates,key=lambda p:sum(f.stat().st_size for f in p.rglob('*') if f.is_file()))
           files=[f for f in chosen.rglob('*') if f.is_file()]
-          assert files,'No startupCache payload to seed'
+          assert files,'No genuine cached startup payload'
           size=sum(f.stat().st_size for f in files)
           assert 1024<=size<=32*1024*1024,size
-          assert all(not f.is_symlink() for f in chosen.rglob('*')),'Refuse symlink in untrusted startup cache'
+          assert all(not f.is_symlink() for f in chosen.rglob('*')),'Never ship symlink cache'
           rel=chosen.relative_to(root)
           assert str(rel).startswith(('.cache/mozilla/firefox/','.mozilla/firefox/')),rel
           with tarfile.open('out/v152-startupcache.tar','w') as tar:
               for p in sorted([chosen]+list(chosen.rglob('*'))):
                   if p.is_file() or p.is_dir():
                       tar.add(p,arcname=str(p.relative_to(root)),recursive=False)
-          meta={'only_anonymous_cache':True,'original_source':str(rel),
+          meta={'only_offline_anonymous_startupCache':True,'original_source':str(rel),
                 'payload_uncompressed_bytes':size,'file_count':len(files),
                 'sha256':hashlib.sha256(Path('out/v152-startupcache.tar').read_bytes()).hexdigest()}
           Path('out/reports/v152-anonymous-cache-audit.json').write_text(json.dumps(meta,indent=2)+'\n')
