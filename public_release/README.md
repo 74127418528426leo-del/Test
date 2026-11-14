@@ -31,6 +31,8 @@ The image was built from signed Debian repositories and contains Firefox ESR 153
 
 VM testing covered boot, Firefox interaction, JavaScript, local network requests after virtual-media removal, a valid public HTTPS site, and the browser warning on an expired certificate. It did not establish a guarantee for every site or machine. Tests measured startup from the virtual machine process start, not physical power-on, and do not establish a sub-seven-second boot.
 
+In additional VM checks, GitHub, CNN and YouTube pages loaded. CNN's live stream requested DRM, which was not verified, and YouTube requested a sign-in/bot check before the selected test video would play. Video playback and 4K performance are therefore unverified; website prompts can vary by network and account.
+
 ## Source and notices
 
 The release includes build and test evidence, the project's scripts, an installed package inventory and a source-package index. Four source ZIPs mirror the Debian Snapshot files listed in that index; their contents are identified by hashes. On Linux, download the four ZIPs, `SOURCE_INDEX.json`, `SOURCE_FILE_DETAILS.json` and `PROJECT_SOURCES.zip` into one directory, extract the project scripts, and run `python3 restore_sources.py <release-directory> <output-directory>` to reconstruct the Debian source-package files. Original Debian copyright notices are available in the running system at `/usr/share/doc/<package>/copyright`.
