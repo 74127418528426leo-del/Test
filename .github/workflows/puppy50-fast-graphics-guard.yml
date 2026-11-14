@@ -1,0 +1,122 @@
+name: Puppy50 research - guarded fast graphics compatibility
+on:
+  push:
+    branches: [puppy50-fast-reliability-research-20261114]
+    paths: ['.github/workflows/puppy50-fast-graphics-guard.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-PRIORITY-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-public-preview-candidate-20261114
+          path: input/preview
+      - name: Install tools and run patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s input/research/fast_research -v
+          mkdir -p input fixture out/main out/reports out/verify
+      - name: Download the exact fast baseline
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v159-verified-browser-httpsafe-experimental/Puppy50_v159_WebRender_Nice10_EXPERIMENTAL.iso' -o input/base.iso
+          echo 'ffe1792d02b3906bbcf8b52b9a5e203916c7d1e063e159e36478805653d622cd  input/base.iso' | sha256sum -c -
+          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+      - name: Build guarded early-graphics candidate
+        run: |
+          set -euo pipefail
+          head -c 36154880 out/original.initrd >out/early-prefix
+          tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
+          (cd out/main && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp out/main/usr/lib/live/boot/9990-main.sh out/original-main.sh
+          sudo python3 input/research/fast_research/hardware_guard.py out/main
+          sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
+          sudo diff -u out/original-main.sh out/main/usr/lib/live/boot/9990-main.sh >out/reports/graphics-guard.diff || test "$?" -eq 1
+          (cd out/main && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/candidate.cpio
+          zstd -q -3 -T2 -o out/candidate.cpio.zst out/candidate.cpio
+          cat out/early-prefix out/candidate.cpio.zst >out/candidate.initrd
+          python3 - <<'PY'
+          import hashlib,re
+          from pathlib import Path
+          lines=Path('out/original.sha256sum.txt').read_text().splitlines()
+          assert len(lines)==293
+          digest=hashlib.file_digest(open('out/candidate.initrd','rb'),'sha256').hexdigest()
+          changed={'./live/initrd.img','./live/initrd.img-6.12.115+deb13.1-amd64'}
+          output=[];seen=set()
+          for line in lines:
+              m=re.fullmatch(r'([0-9a-fA-F]{64})( [ *])(.*)',line);assert m,line
+              name=m.group(3);assert name not in seen;seen.add(name)
+              output.append((digest if name in changed else m.group(1))+m.group(2)+name)
+          assert changed.issubset(seen)
+          Path('out/sha256sum.txt').write_text('\n'.join(output)+'\n')
+          PY
+          xorriso -indev input/base.iso -outdev out/candidate.iso -map out/candidate.initrd /live/initrd.img -map out/candidate.initrd /live/initrd.img-6.12.115+deb13.1-amd64 -map out/sha256sum.txt /sha256sum.txt -boot_image any replay -commit -end >out/reports/repack.log 2>&1
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/verify >out/reports/verify-extract.log 2>&1
+          (cd out/verify && sha256sum -c --quiet sha256sum.txt) >out/reports/manifest-check.log 2>&1
+          sha256sum input/base.iso out/candidate.iso >out/reports/iso-hashes.txt
+      - name: Prepare multi-resolution graphics and real-browser test harnesses
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Verify fast path and fallback on four simulated hardware variants
+        run: |
+          set -euo pipefail
+          for sample in std_bios std_uefi cirrus virtio; do
+            firmware=bios; script=input/source/web109/boot_bench_ahci.py
+            [[ "$sample" == std_uefi ]] && firmware=uefi
+            [[ "$sample" == cirrus ]] && script=input/source/web109/boot_bench_cirrus_public.py
+            [[ "$sample" == virtio ]] && script=input/source/web109/boot_bench_virtio_public.py
+            python3 -u "$script" --iso out/candidate.iso --out "out/$sample" --mode online --allow-no-startup-probe --wait-ram-ready --ram 3072 --seconds 120 --cpu-model i3-540-conservative --emulate-acer-id --firmware "$firmware" --media usb --bandwidth 0
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          names=('std_bios','std_uefi','cirrus','virtio');report={}
+          for name in names:
+              r=json.loads((Path('out')/name/'result.json').read_text())
+              assert r['first_home_seen_seconds'] is not None and r['staged_ram_ready_seconds'] is not None,(name,r)
+              assert r['media_ejected'] and r.get('post_eject_browser_http200_confirmed') and not r['errors'],(name,r)
+              serial=(Path('out')/name/'serial.log').read_text(errors='replace')
+              assert 'P50_STAGE_READY' in serial,(name,'RAM readiness missing')
+              if name.startswith('std_'):
+                  assert 'P50_V125_EARLY_DRM_READY' in serial,(name,'not fast path')
+              else:
+                  assert 'P50_FAST_GPU_GUARD_STANDARD_DESKTOP' in serial,(name,'not fallback')
+                  assert 'P50_V125_DRM_GATE_START' not in serial,(name,'unsafe bochs gate triggered')
+              report[name]={k:r.get(k) for k in ('first_home_seen_seconds','staged_ram_ready_seconds','early_js_response_seconds','post_eject_browser_http200_confirmed','post_eject_navigation_attempts')}
+          Path('out/reports/graphics-compatibility.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve test evidence whether or not successful
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-graphics-guard-evidence
+          path: |
+            out/reports/
+            out/std_bios/
+            out/std_uefi/
+            out/cirrus/
+            out/virtio/
+          retention-days: 14
+          if-no-files-found: warn
