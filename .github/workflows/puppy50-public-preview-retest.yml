@@ -11,55 +11,55 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: '12'
+    timeout-minutes: 12
     strategy:
-      fail-fast: 'false'
+      fail-fast: false
       matrix:
         include:
         - label: bios1
           firmware: bios
           media: ahci
-          memory: '3072'
+          memory: 3072
           mode: normal
         - label: bios2
           firmware: bios
           media: ahci
-          memory: '3072'
+          memory: 3072
           mode: normal
         - label: uefi1
           firmware: uefi
           media: ahci
-          memory: '3072'
+          memory: 3072
           mode: normal
         - label: uefi2
           firmware: uefi
           media: ahci
-          memory: '3072'
+          memory: 3072
           mode: normal
         - label: usb30
           firmware: bios
           media: usb
-          memory: '3072'
+          memory: 3072
           mode: capped
         - label: cirrus
           firmware: bios
           media: cirrus
-          memory: '3072'
+          memory: 3072
           mode: normal
         - label: virtio
           firmware: bios
           media: virtio
-          memory: '3072'
+          memory: 3072
           mode: normal
         - label: basic_graphics
           firmware: bios
           media: usb
-          memory: '3072'
+          memory: 3072
           mode: fallback
         - label: bios4g
           firmware: bios
           media: ahci
-          memory: '4096'
+          memory: 4096
           mode: normal
     env:
       PYTHONPATH: input/source
