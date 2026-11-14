@@ -1,0 +1,201 @@
+name: Puppy50 public preview - build and independently test candidate
+on:
+  push:
+    branches: [puppy50-public-preview-candidate-20261114]
+    paths: ['.github/workflows/puppy50-public-preview-candidate.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      iso_sha256: ${{ steps.identity.outputs.iso_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/preview
+      - name: Install image build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio
+          mkdir -p input out
+          df -h .
+      - name: Fetch exact v115 reference ISO
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 'https://github.com/74127418528426leo-del/Test/releases/download/puppy50-v114-fast-verification-experimental/Puppy50_v115_Font_Cache_EXPERIMENTAL.iso' -o input/base.iso
+          echo 'd697081adf836b7c8b75fe352964764e082b0214a262c8d9895eb9388c3e825a  input/base.iso' | sha256sum -c -
+      - name: Rebuild with signed security updates and standard live boot
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          bash input/preview/public_preview/build_public_iso.sh input/base.iso out/build input/preview/public_preview
+      - name: Record candidate identity
+        id: identity
+        run: |
+          set -euo pipefail
+          sum=$(sha256sum out/build/candidate.iso | cut -d ' ' -f1)
+          printf 'iso_sha256=%s\n' "$sum" >> "$GITHUB_OUTPUT"
+          cat out/build/reports/security-versions.txt out/build/reports/kernel-release.txt
+          sha256sum out/build/candidate.iso
+      - name: Print relevant build logs on failure
+        if: failure()
+        run: |
+          for f in out/build/reports/apt-update.log out/build/reports/apt-upgrade.log out/build/reports/apt-install.log out/build/reports/update-initramfs.log out/build/reports/xorriso.log out/build/reports/manifest-check.txt; do
+            if test -f "$f"; then printf '\n--- %s ---\n' "$f"; tail -60 "$f"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: puppy50-public-preview-candidate
+          path: |
+            out/build/candidate.iso
+            out/build/reports/
+            out/build/filesystem.packages
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: puppy50-public-preview-build-failure
+          path: out/build/reports/
+          retention-days: 14
+          if-no-files-found: warn
+  test:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {label: bios1, firmware: bios, media: ahci, memory: 3072, mode: normal}
+          - {label: bios2, firmware: bios, media: ahci, memory: 3072, mode: normal}
+          - {label: uefi1, firmware: uefi, media: ahci, memory: 3072, mode: normal}
+          - {label: uefi2, firmware: uefi, media: ahci, memory: 3072, mode: normal}
+          - {label: usb30, firmware: bios, media: usb, memory: 3072, mode: capped}
+          - {label: cirrus, firmware: bios, media: cirrus, memory: 3072, mode: normal}
+          - {label: virtio, firmware: bios, media: virtio, memory: 3072, mode: normal}
+          - {label: basic_graphics, firmware: bios, media: usb, memory: 3072, mode: fallback}
+          - {label: bios4g, firmware: bios, media: ahci, memory: 4096, mode: normal}
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-PREVIEW-${{ github.run_id }}-${{ matrix.label }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          path: input/preview
+      - uses: actions/checkout@v4
+        with:
+          ref: a9e73787e1dca62e9b733e36b8fe2dabfa985f05
+          path: input/retry
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-public-preview-candidate
+          path: input/candidate
+      - name: Install QEMU and verify the exact build artifact
+        env:
+          EXPECTED: ${{ needs.build.outputs.iso_sha256 }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test "$(sha256sum input/candidate/candidate.iso | cut -d ' ' -f1)" = "$EXPECTED"
+          mkdir -p out/reports fixture
+          lscpu >out/reports/host-cpu.txt
+      - name: Prepare framebuffer and real guest HTTP checks
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/retry/v159/verify_real_http_with_retry.py
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 - <<'PY'
+          import socket,time
+          for port in (8765,8766):
+              for attempt in range(25):
+                  try:
+                      socket.create_connection(('127.0.0.1',port),timeout=1).close()
+                      break
+                  except OSError:
+                      time.sleep(.2)
+              else: raise RuntimeError(f'fixture {port} failed')
+          PY
+      - name: Boot, exercise JavaScript, eject VM media and check real browser HTTP
+        env:
+          P50_MEDIA: ${{ matrix.media }}
+          P50_MODE: ${{ matrix.mode }}
+          P50_FW: ${{ matrix.firmware }}
+          P50_MEMORY: ${{ matrix.memory }}
+        run: |
+          set -euo pipefail
+          script=input/source/web109/boot_bench_ahci.py
+          case "$P50_MEDIA" in
+            usb) script=input/source/web109/boot_bench_usb_public.py;;
+            cirrus) script=input/source/web109/boot_bench_cirrus_public.py;;
+            virtio) script=input/source/web109/boot_bench_virtio_public.py;;
+          esac
+          args=()
+          if [[ "$P50_MODE" == capped ]]; then args+=(--bandwidth 31457280); fi
+          if [[ "$P50_MODE" == fallback ]]; then args+=(--select-fullram-fallback); fi
+          python3 -u "$script" --iso input/candidate/candidate.iso --out out/guest --mode online --allow-no-startup-probe --ram "$P50_MEMORY" --seconds 220 --cpu-model i3-540-conservative --emulate-acer-id --firmware "$P50_FW" --media usb "${args[@]}"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.loads(Path('out/guest/result.json').read_text())
+          assert r['first_home_seen_seconds'] is not None,r
+          assert r.get('early_js_response_seconds') is not None,r
+          assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'],r
+          assert r.get('post_eject_browser_http200_confirmed') and not r['errors'],r
+          if os.environ['P50_MODE']=='fallback': assert r['fullram_fallback_selected'],r
+          expected='GET /after.html?nonce='+os.environ['P50_NONCE']+' HTTP/1.1" 200 '
+          assert expected in Path('out/reports/fixture-after.log').read_text(),r
+          print('CANDIDATE_VM_TEST_PASS',json.dumps(r,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-test-${{ matrix.label }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
+  sources:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/preview
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-public-preview-candidate
+          path: input/candidate
+      - name: Resolve exact source-package versions to Debian snapshot files
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 input/preview/public_preview/source_inventory.py input/candidate/reports/dpkg-status out/SOURCE_INDEX.json | tee out/source-resolution.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('out/SOURCE_INDEX.json').read_text())
+          bad=[r for r in data['source_packages'] if 'error' in r]
+          if bad: raise SystemExit(f'{len(bad)} exact sources could not be resolved')
+          print('Resolved exact source versions:',len(data['source_packages']))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-source-inventory
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
