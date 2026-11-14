@@ -51,16 +51,15 @@ jobs:
           s=p.read_text()
           marker="                    result['screenshots'].append('external_https.png')\n"
           assert s.count(marker)==1
-          extra='''                    for address, filename in (
-                        ('https://expired.badssl.com/', 'expired_certificate.png'),
-                        ('http://10.0.2.2:8767/cjk.html', 'cjk.png'),
-                        ('about:support', 'firefox_support.png'),
-                        ('file:///proc/version', 'kernel_version.png')):
-                        navigate(monitor, address)
-                        time.sleep(14 if address.startswith('https:') else 7)
-                        capture(monitor, out, filename)
-                        result['screenshots'].append(filename)
-'''
+          extra=("                    for address, filename in (\n"
+                 "                        ('https://expired.badssl.com/', 'expired_certificate.png'),\n"
+                 "                        ('http://10.0.2.2:8767/cjk.html', 'cjk.png'),\n"
+                 "                        ('about:support', 'firefox_support.png'),\n"
+                 "                        ('file:///proc/version', 'kernel_version.png')):\n"
+                 "                        navigate(monitor, address)\n"
+                 "                        time.sleep(14 if address.startswith('https:') else 7)\n"
+                 "                        capture(monitor, out, filename)\n"
+                 "                        result['screenshots'].append(filename)\n")
           s=s.replace(marker,marker+extra,1)
           ast.parse(s)
           p.write_text(s)
