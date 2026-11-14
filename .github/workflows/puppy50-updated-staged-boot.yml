@@ -111,7 +111,7 @@ jobs:
             mkdir -p "out/verify-$label"
             xorriso -osirrox on -indev "out/$label.iso" -extract / "out/verify-$label" >"out/reports/$label-extract.log" 2>&1
             (cd "out/verify-$label" && sha256sum -c --quiet sha256sum.txt) >"out/reports/$label-manifest-check.log" 2>&1
-            rm -rf "out/verify-$label"
+            sudo rm -rf "out/verify-$label"
           done
           sha256sum input/preview.iso out/control.iso out/candidate.iso >out/reports/iso-sha256.txt
       - name: Prepare real Firefox JS and network tests
