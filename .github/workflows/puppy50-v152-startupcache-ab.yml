@@ -384,7 +384,7 @@ jobs:
           sudo unsquashfs -no-progress -processors 4 -dest out/seedroot out/original.squashfs >out/reports/v152-unsquashfs.log 2>&1
           test -x out/seedroot/usr/lib/firefox-esr/firefox-esr
           test -f out/seedroot/usr/share/puppy50web/index.html
-          mkdir -p out/seedroot/tmp/.X11-unix
+          sudo mkdir -p out/seedroot/tmp/.X11-unix
           sudo mkdir -p out/seedroot/dev out/seedroot/proc out/seedroot/run/user/1000 \
             out/seedroot/home/user/.mozilla/firefox/p50-default \
             out/seedroot/home/user/.cache/fontconfig out/seedroot/home/user/.cache/mozilla/firefox
