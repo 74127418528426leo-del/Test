@@ -1,0 +1,113 @@
+name: Publish Puppy50 Browser Live public preview
+on:
+  push:
+    branches: [puppy50-public-preview-candidate-20261114]
+    paths: ['.github/workflows/puppy50-public-preview-publish.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: puppy50-browser-live-public-preview-20261114
+      ISO_SHA256: b61773cc0894e9e7021ea773ea99152bc5dc506fa852ddd863976b260878bd7e
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful independent tests and source mirror
+        run: |
+          set -euo pipefail
+          for run in 43605886048 43605888472 43641165806 43641205666; do
+            gh run view "$run" --repo "$GITHUB_REPOSITORY" --json status,conclusion | jq -e '.status == "completed" and .conclusion == "success"'
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/43605045266/jobs?per_page=100" | jq -e '[.jobs[] | select((.name == "build" or .name == "sources") and .conclusion == "success")] | length == 2'
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Release already exists; stopping to avoid overwriting it.' >&2
+            exit 1
+          fi
+      - name: Download the exact built image and its independently verified sources
+        run: |
+          set -euo pipefail
+          mkdir -p input/candidate assets evidence/vm evidence/browser evidence/sites
+          gh run download 43605045266 --repo "$GITHUB_REPOSITORY" --name puppy50-public-preview-candidate --dir input/candidate
+          echo "$ISO_SHA256  input/candidate/candidate.iso" | sha256sum -c -
+          for part in 01 02 03 04; do
+            gh run download 43641205666 --repo "$GITHUB_REPOSITORY" --name "puppy50-source-part-$part" --dir assets
+          done
+          gh run download 43641205666 --repo "$GITHUB_REPOSITORY" --name puppy50-source-metadata --dir assets
+          gh run download 43605886048 --repo "$GITHUB_REPOSITORY" --pattern 'preview-test-*' --dir evidence/vm
+          gh run download 43605888472 --repo "$GITHUB_REPOSITORY" --name preview-browser-security-evidence --dir evidence/browser
+          gh run download 43641165806 --repo "$GITHUB_REPOSITORY" --name preview-browser-sites-evidence --dir evidence/sites
+          cp -a input/candidate/reports evidence/build
+          cp input/candidate/filesystem.packages assets/INSTALLED_PACKAGES.tsv
+          cp public_release/README.md assets/README.md
+          echo '771eb6c9fbb60fce166d01eb2537fac8ac9bd1dfcfb2b0f2081688cc810ededa  assets/SOURCE_INDEX.json' | sha256sum -c -
+          mv input/candidate/candidate.iso assets/Puppy50_Browser_Live_Public_Preview.iso
+      - name: Assemble source, test evidence, and downloadable ISO ZIP
+        run: |
+          set -euo pipefail
+          python3 public_release/restore_sources.py assets input/restored-source
+          rm -rf input/restored-source
+          mkdir project
+          cp public_release/restore_sources.py public_release/bundle_sources.py public_release/README.md project/
+          cp -a public_preview project/
+          cp .github/workflows/puppy50-public-preview-{candidate,retest,security,sites,source-mirror,publish}.yml project/
+          (cd project && zip -qr ../assets/PROJECT_SOURCES.zip .)
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('evidence/vm')
+          names=['bios1','bios2','uefi1','uefi2','usb30','cirrus','virtio','basic_graphics','bios4g']
+          lines=['# VM test results', '', 'Elapsed seconds are from QEMU process start to the first observed Firefox home frame and to a tested JavaScript response. They do not include physical firmware startup and are not a performance guarantee.', '', '| Configuration | First home frame (s) | JavaScript response (s) | Guest HTTP after virtual-media removal |', '|---|---:|---:|---|']
+          for name in names:
+              f=root/('preview-test-'+name)/'guest/result.json'
+              r=json.loads(f.read_text())
+              assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None
+              assert r['media_ejected'] and r['post_eject_browser_http200_confirmed'] and not r['errors']
+              lines.append(f"| {name} | {r['first_home_seen_seconds']:.2f} | {r['early_js_response_seconds']:.2f} | passed |")
+          lines += ['', 'Most configurations use 3 GiB guest RAM; bios4g uses 4 GiB. usb30 simulates a storage-read cap of 30 MiB/s. BIOS, UEFI, Cirrus, VirtIO, and basic-graphics configurations are virtualized; they are not physical hardware tests.', '', 'The build job and source-inventory job succeeded in run 43605045266. That original run had a test harness nonce error; the corrected, independently executed full matrix is run 43605886048. Screenshots and logs are included for inspection.', '']
+          Path('assets/TEST_RESULTS.md').write_text('\n'.join(lines))
+          PY
+          (cd assets && sha256sum Puppy50_Browser_Live_Public_Preview.iso > SHA256SUMS)
+          (cd assets && zip -0 -q Puppy50_Browser_Live_Public_Preview.zip Puppy50_Browser_Live_Public_Preview.iso README.md SHA256SUMS)
+          zip -qr assets/TEST_EVIDENCE.zip evidence
+          (cd assets && sha256sum Puppy50_Browser_Live_Public_Preview.iso Puppy50_Browser_Live_Public_Preview.zip Puppy50_Debian_Sources_Part_*.zip SOURCE_INDEX.json SOURCE_FILE_DETAILS.json INSTALLED_PACKAGES.tsv PROJECT_SOURCES.zip TEST_EVIDENCE.zip TEST_RESULTS.md README.md > ALL_ASSETS_SHA256SUMS.txt)
+          cat assets/TEST_RESULTS.md
+          ls -lh assets
+          df -h .
+      - name: Create draft, upload all files, and verify server asset metadata
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --title 'Puppy50 Browser Live — Public Preview (2026-11-14)' --notes-file assets/README.md
+          for file in assets/*; do
+            uploaded=0
+            for attempt in 1 2 3; do
+              if gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY" --clobber; then uploaded=1; break; fi
+              sleep $((attempt * 5))
+            done
+            test "$uploaded" = 1
+          done
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release-metadata.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          m=json.loads(Path('release-metadata.json').read_text())
+          assert m['draft'] and m['prerelease']
+          remote={x['name']:x for x in m['assets']}
+          local={x.name:x for x in Path('assets').iterdir() if x.is_file()}
+          assert set(remote)==set(local),(set(remote),set(local))
+          for name,p in local.items():
+              r=remote[name]
+              assert r['state']=='uploaded' and r['size']==p.stat().st_size,name
+              if r.get('digest'):
+                  with p.open('rb') as f: h=hashlib.file_digest(f,'sha256').hexdigest()
+                  assert r['digest']=='sha256:'+h,name
+          print('Draft release assets and server metadata verified:',len(local))
+          PY
+      - name: Publish the verified public preview
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease,assets | jq -e '.isDraft == false and .isPrerelease == true'
