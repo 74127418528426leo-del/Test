@@ -1,0 +1,34 @@
+# Docker Compose for a GPU operator-owned host. No public listening socket.
+# Requires NVIDIA container runtime, a GPU with sufficient VRAM, and an
+# operator-supplied P50_QWEN_API_KEY in a local .env file (never commit it).
+services:
+  qwen:
+    image: vllm/vllm-openai:v0.28.0
+    gpus: all
+    ipc: host
+    restart: "no"
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      VLLM_API_KEY: "${P50_QWEN_API_KEY:?Set P50_QWEN_API_KEY in the local .env}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - qwen-hf-cache:/root/.cache/huggingface
+      - qwen-vllm-cache:/root/.cache/vllm
+    command:
+      - "--model"
+      - "Qwen/Qwen3.8-27B-FP8"
+      - "--max-model-len"
+      - "8192"
+      - "--max-num-seqs"
+      - "4"
+      - "--gpu-memory-utilization"
+      - "0.85"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser"
+      - "qwen3_coder"
+      - "--reasoning-parser"
+      - "qwen3"
+volumes:
+  qwen-hf-cache:
+  qwen-vllm-cache:
