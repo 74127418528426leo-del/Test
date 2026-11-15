@@ -18,7 +18,7 @@ def api(method, body=None):
     repo=os.environ["GITHUB_REPOSITORY"]
     if not token: raise RuntimeError("GitHub token missing")
     url=f"https://api.github.com/repos/{repo}/contents/{STATE_PATH}"
-    if method=="GET": url+="?ref=main"
+    if method=="GET": url+="?ref=puppy50-autolab-state"
     data=None if body is None else json.dumps(body).encode()
     request=urllib.request.Request(url,method=method,data=data,headers={
         "Authorization":f"Bearer {token}","Accept":"application/vnd.github+json",
@@ -37,7 +37,7 @@ def load_state():
 def save_state(state,sha):
     content=base64.b64encode((json.dumps(state,indent=2,sort_keys=True)+"\n").encode()).decode()
     obj={"message":"autolab: record real VM experiment [skip ci]",
-         "content":content,"branch":"main"}
+         "content":content,"branch":"puppy50-autolab-state"}
     if sha: obj["sha"]=sha
     api("PUT",obj)
 
