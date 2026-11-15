@@ -159,7 +159,7 @@ def ai_hypotheses(provider,tasks,taken,history,max_new,max_calls,max_parallel):
         return task,validate(response)
     # Rotate specialties across cycles; no cycle exhausts the same role repeatedly.
     offset = len(taken) % len(tasks)
-    active = [tasks[(offset + i*16) % len(tasks)] for i in range(budget)]
+    active = [tasks[(offset + i*17) % len(tasks)] for i in range(budget)]
     with ThreadPoolExecutor(max_workers=max_parallel) as pool:
         futs=[pool.submit(propose,t) for t in active]
         for fut in as_completed(futs):
@@ -171,29 +171,35 @@ def ai_hypotheses(provider,tasks,taken,history,max_new,max_calls,max_parallel):
                 proposals.append((task,p))
             except Exception as e:
                 errors.append(str(e)[:200])
-    # Critique each unique candidate. The worst-case call count is 2*budget.
+    # Review as a separate bounded parallel stage (no arbitrary code execution).
+    # The maximum total calls is 2*budget <= max_calls.
     accepted=[]
-    for task,p in proposals:
-        if len(accepted)>=max_new: break
-        try:
-            critique=provider.call(
-                "Act as an independent OS-experiment safety reviewer. Return only "
-                "JSON with boolean 'approve' and short string 'reason'. "
-                "Reject any non-allowlisted parameters, unsubstantiated speed claims, "
-                "sandbox weakening, recovery removal or uncontrolled expense.",
-                json.dumps({"candidate":p,"security_gates":STRICT_GATES}),max_tokens=230)
-            if critique.get("approve") is not True:
-                errors.append(p["id"]+": rejected by critic: "+
-                              str(critique.get("reason",""))[:130])
-                continue
-            if candidate_key(p) in {candidate_key(x) for x in accepted}:
-                continue
-            p.update({"source":"openai_model", "role":task["role"],
-                      "critic":str(critique.get("reason","Approved"))[:180]})
-            accepted.append(p)
-        except Exception as e:
-            errors.append(p["id"]+": review error: "+str(e)[:150])
-    return accepted,errors
+    def review(pair):
+        task,p=pair
+        result=provider.call(
+            "Act as an independent OS-experiment safety reviewer. Return only "
+            "JSON with boolean 'approve' and short string 'reason'. "
+            "Reject non-allowlisted parameters, unsupported speed claims, "
+            "sandbox weakening, recovery removal or uncontrolled expense.",
+            json.dumps({"candidate":p,"security_gates":STRICT_GATES}),max_tokens=230)
+        return task,p,result
+    with ThreadPoolExecutor(max_workers=max_parallel) as pool:
+        futs=[pool.submit(review,pair) for pair in proposals[:budget]]
+        for fut in as_completed(futs):
+            try:
+                task,p,critique=fut.result()
+                if critique.get("approve") is not True:
+                    errors.append(p["id"]+": rejected by critic: "+
+                                  str(critique.get("reason",""))[:130])
+                    continue
+                if candidate_key(p) in {candidate_key(x) for x in accepted}:
+                    continue
+                p.update({"source":"openai_model","role":task["role"],
+                          "critic":str(critique.get("reason","Approved"))[:180]})
+                accepted.append(p)
+            except Exception as e:
+                errors.append("review error: "+str(e)[:150])
+    return accepted[:max_new],errors
 
 def merge_queue(previous,new):
     existing=[validate(p) | {
@@ -216,7 +222,7 @@ def main():
     a.add_argument("--parallel",type=int,default=4)
     a.add_argument("--ai-enabled",action="store_true")
     opt=a.parse_args()
-    if not 1<=opt.max_new<=16 or not 0<=opt.max_model_calls<=16 or not 1<=opt.parallel<=4:
+    if not 1<=opt.max_new<=64 or not 0<=opt.max_model_calls<=128 or not 1<=opt.parallel<=16:
         raise SystemExit("unsafe experiment/request limits")
     queue=read_json(opt.queue,{"schema":1,"candidates":[]})
     state=read_json(opt.history,{"history":[]})
