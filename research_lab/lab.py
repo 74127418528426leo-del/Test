@@ -12,6 +12,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
+import ipaddress
 import sys
 import urllib.error
 import urllib.request
@@ -71,6 +73,9 @@ def validate(obj):
 
 def parse_model_json(text):
     text=text.strip()
+    # Some open-weight thinking models put reasoning in a separate marked span.
+    if text.startswith("<think>") and "</think>" in text:
+        text=text.split("</think>",1)[1].strip()
     if text.startswith("```"):
         lines=text.splitlines()
         if len(lines)>2 and lines[-1].strip()=="```":
@@ -108,6 +113,65 @@ class OpenAI:
         if not output:
             raise RuntimeError("model returned no usable output text")
         return parse_model_json("\n".join(output))
+
+class QwenCompatibleChat:
+    """Open-weight Qwen via a separately hosted HTTPS OpenAI-compatible endpoint.
+
+    This does NOT run or install a model on GitHub CPU runners.
+    Requires P50_QWEN_ENDPOINT (HTTPS base URL ending /v1).
+    """
+    def __init__(self, model, key, endpoint):
+        if not endpoint:
+            raise ValueError("Qwen enabled but P50_QWEN_ENDPOINT missing")
+        parts=urlsplit(endpoint.strip())
+        if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
+            raise ValueError("Qwen endpoint must use HTTPS without embedded credentials")
+        if parts.query or parts.fragment or not parts.path.rstrip("/").endswith("/v1"):
+            raise ValueError("Qwen endpoint must be an HTTPS /v1 API base URL")
+        host=parts.hostname.lower()
+        if host in ("localhost","metadata.google.internal") or host.endswith((".localhost",".local",".internal")):
+            raise ValueError("Qwen requires a remotely reachable HTTPS endpoint")
+        try:
+            addr=ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            if not addr.is_global:
+                raise ValueError("Qwen endpoint must not point to private or loopback IP")
+        if not key:
+            raise ValueError("Qwen enabled but P50_QWEN_API_KEY missing")
+        if not isinstance(model,str) or not model.strip():
+            raise ValueError("Qwen model ID required")
+        self.model=model.strip()
+        self.key=key
+        self.url=endpoint.rstrip("/")+"/chat/completions"
+
+    def call(self, instructions, prompt, max_tokens=500):
+        data=json.dumps({
+            "model":self.model,
+            "messages":[{"role":"system","content":instructions},
+                        {"role":"user","content":prompt}],
+            "max_tokens":max_tokens,
+            "stream":False
+        }).encode()
+        req=urllib.request.Request(self.url,data=data,method="POST",
+            headers={"Authorization":"Bearer "+self.key,
+                     "Content-Type":"application/json",
+                     "User-Agent":"Puppy50-ResearchLab/1"})
+        try:
+            with urllib.request.urlopen(req,timeout=70) as response:
+                obj=json.load(response)
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"Qwen model HTTP {e.code}") from None
+        choices=obj.get("choices",[])
+        if not choices or not isinstance(choices[0],dict):
+            raise RuntimeError("Qwen model returned no choices")
+        content=choices[0].get("message",{}).get("content","")
+        if isinstance(content,list):
+            content="\n".join(str(x.get("text","")) for x in content if isinstance(x,dict))
+        if not isinstance(content,str) or not content.strip():
+            raise RuntimeError("Qwen model returned no usable content")
+        return parse_model_json(content)
 
 INSTRUCTIONS = """You are a specialized Puppy50 OS research agent.
 Return ONLY a JSON object with integer 'nice' (one of -10,-9,-11,-8,-12,-7,-13,-6,-5),
@@ -230,8 +294,17 @@ def main():
     taken={candidate_key(validate(x)) for x in queue.get("candidates",[])}
     tasks=task_grid()
     if opt.ai_enabled:
-        provider=OpenAI(os.getenv("P50_OPENAI_MODEL","gpt-6-luna"),
-                        os.getenv("P50_OPENAI_API_KEY"))
+        provider_name=os.getenv("P50_MODEL_PROVIDER","qwen_compatible").strip().lower()
+        if provider_name=="qwen_compatible":
+            provider=QwenCompatibleChat(
+                os.getenv("P50_QWEN_MODEL","Qwen/Qwen3.8-27B"),
+                os.getenv("P50_QWEN_API_KEY"),
+                os.getenv("P50_QWEN_ENDPOINT"))
+        elif provider_name=="openai":
+            provider=OpenAI(os.getenv("P50_OPENAI_MODEL","gpt-6-luna"),
+                            os.getenv("P50_OPENAI_API_KEY"))
+        else:
+            raise ValueError("unsupported P50_MODEL_PROVIDER")
         new,errors=ai_hypotheses(provider,tasks,taken,history,opt.max_new,
                                   opt.max_model_calls,opt.parallel)
         mode="live_ai_model_calls"
@@ -248,6 +321,7 @@ def main():
         "task_slots_planned":len(tasks),
         "real_ai_agent_sessions_confirmed":0 if not opt.ai_enabled else None,
         "max_model_calls_this_run":requests_budget,
+        "model_provider":(os.getenv("P50_MODEL_PROVIDER","qwen_compatible") if opt.ai_enabled else "none"),
         "new_safe_hypotheses":len(new),
         "queue_total":len(merged["candidates"]),
         "real_VM_boots_executed_by_this_workflow":0,
