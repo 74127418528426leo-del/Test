@@ -592,6 +592,12 @@ jobs:
         with:
           name: puppy50-autolab-four-boot-evidence
           path: downloaded
+      - name: Recover partial VM frame timings and failure diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 research_lab/collect_vm_evidence.py \
+            --source downloaded --output recorded/partial-vm.json
       - name: Record actual VM result and stop after TWO independent verified batches
         env:
           GH_TOKEN: ${{ github.token }}
@@ -606,4 +612,5 @@ jobs:
           if [ "$COMPARE_STATUS" = "success" ]; then success=true; fi
           python3 experiments/puppy50-autolab/controller.py record \
             --candidate "$CANDIDATE_ID" --run-id "$RUN_ID" \
-            --success "$success" --report "$report"
+            --success "$success" --report "$report" \
+            --partial recorded/partial-vm.json
