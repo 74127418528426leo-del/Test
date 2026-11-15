@@ -582,6 +582,46 @@ jobs:
             'physical_Acer_i3_540_tested':False,
             'full_RAM_in_384MiB_possible':False
           }
+          if os.environ['P50_PREFETCH_MIB']!='256':
+              controls={}
+              paired={}
+              for n in names:
+                  cn='matched_'+n
+                  cr=json.loads((Path('out')/cn/'result.json').read_text())
+                  assert cr['virtual_firmware']==n.rstrip('12'),(cn,'wrong firmware')
+                  assert cr['first_home_seen_seconds'] is not None,(cn,'missing actual frame')
+                  assert cr['staged_ram_ready_seconds'] is not None,(cn,'missing RAM READY')
+                  assert cr.get('post_eject_browser_http200_confirmed') is True,(cn,'missing browser HTTP200')
+                  assert cr['media_ejected'] and cr['qemu_running_at_end'] and not cr['errors'],(cn,'broken control')
+                  serial=(Path('out')/cn/'serial.log').read_text(errors='replace')
+                  assert 'P50_V133_PREFETCH_256MB_STARTED' in serial,(cn,'not actual 256MiB baseline')
+                  controls[n]=cr
+                  paired[n]=round(cr['first_home_seen_seconds']-d[n]['first_home_seen_seconds'],3)
+              ctl=Path('out/matched-control.iso')
+              cmeans=[controls[n]['first_home_seen_seconds'] for n in names]
+              ameans=[d[n]['first_home_seen_seconds'] for n in names]
+              matched={
+                'scope':'one host, alternating 4+4 genuine QEMU cold boots, two BIOS and two UEFI per condition',
+                'reference_prefetch_mib':256,
+                'candidate_prefetch_mib':int(os.environ['P50_PREFETCH_MIB']),
+                'fixed_firefox_nice':int(os.environ['P50_NICE']),
+                'fixed_zstd_level':int(os.environ['P50_ZSTD_LEVEL']),
+                'reference_iso_sha256':hashlib.sha256(ctl.read_bytes()).hexdigest(),
+                'candidate_iso_sha256':report['sha256'],
+                'control_frame_seconds':{n:controls[n]['first_home_seen_seconds'] for n in names},
+                'candidate_frame_seconds':report['first_visible_Firefox_frame_seconds'],
+                'matched_control_minus_candidate_seconds':paired,
+                'mean_control_seconds':round(statistics.mean(cmeans),3),
+                'mean_candidate_seconds':round(statistics.mean(ameans),3),
+                'mean_control_minus_candidate_seconds':round(statistics.mean(cmeans)-statistics.mean(ameans),3),
+                'control_and_candidate_functional':True,
+                'not_five_second_certification':True,
+                'not_randomized_across_hosts':True,
+                'interpretation':'Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required.'
+              }
+              report['matched_prefetch_control']=matched
+              Path('out/reports/matched-prefetch-AB.json').write_text(json.dumps(matched,indent=2)+'\n')
+              print('P50_SAME_HOST_MATCHED_PREFETCH_AB',json.dumps(matched,indent=2))
           Path('out/reports/v159-exact-ISO-release-smoke.json').write_text(json.dumps(report,indent=2)+'\n')
           print('P50_V159_EXACT_ISO_RELEASE_GATE_PASS',json.dumps(report,indent=2))
           PY
@@ -595,6 +635,10 @@ jobs:
             out/uefi1/
             out/bios2/
             out/uefi2/
+            out/matched_bios1/
+            out/matched_uefi1/
+            out/matched_bios2/
+            out/matched_uefi2/
           retention-days: 7
           if-no-files-found: warn
 
