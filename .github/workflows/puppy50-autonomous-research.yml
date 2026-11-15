@@ -22,6 +22,7 @@ jobs:
       candidate_id: ${{ steps.plan.outputs.candidate_id }}
       nice: ${{ steps.plan.outputs.nice }}
       zstd: ${{ steps.plan.outputs.zstd }}
+      prefetch: ${{ steps.plan.outputs.prefetch }}
     steps:
       - uses: actions/checkout@v4
       - name: Select next unverified candidate from persistent history
@@ -39,8 +40,12 @@ jobs:
       P50_NONCE: P50-${{ github.run_id }}
       P50_NICE: ${{ needs.plan.outputs.nice }}
       P50_ZSTD_LEVEL: ${{ needs.plan.outputs.zstd }}
+      P50_PREFETCH_MIB: ${{ needs.plan.outputs.prefetch }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: lab-control
       - uses: actions/checkout@v4
         with:
           ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
@@ -424,6 +429,7 @@ jobs:
           p.write_text(s)
           print('P50_AUTOLAB_PRIORITY',nice)
           PY
+          sudo --preserve-env=P50_PREFETCH_MIB python3 lab-control/research_lab/patch_libxul_prefetch.py out/main
           sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
           grep -Fq 'P50_V149_WEBRENDER_USERJS_READY' out/main/usr/lib/live/boot/9990-main.sh
           grep -Fq 'P50_V146_HIGHER_FIREFOX_PRIORITY_REQUESTED' out/main/usr/lib/live/boot/9990-main.sh
@@ -534,7 +540,7 @@ jobs:
                              'P50_V137_OPENBOX_DEFERRED',
                              'P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED',
                              'P50_V127_FIREFOX_DIRECT_EXEC','P50_V131_READAHEAD_COMPLETE',
-                             'P50_V133_PREFETCH_256MB_STARTED','P50_V144_XORG_VT7_SELECTED',
+                             f'P50_V133_PREFETCH_{int(os.environ["P50_PREFETCH_MIB"])}MB_STARTED','P50_V144_XORG_VT7_SELECTED',
                              'P50_STAGE_COPY_VERIFIED','P50_STAGE_READY'):
                   assert marker in serial,(n,'boot prerequisite',marker)
               crit=serial[serial.index('P50_V124_FORENSICS_START'):serial.index('P50_V124_FORENSICS_END')+len('P50_V124_FORENSICS_END')]
