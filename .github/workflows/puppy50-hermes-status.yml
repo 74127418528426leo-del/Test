@@ -1,0 +1,47 @@
+name: Puppy50 Hermes WhatsApp Status Readonly Smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/puppy50-hermes-status.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  phone-status:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify status and VM safety regressions offline
+        run: python3 -m unittest discover -s research_lab -p 'test_progress_and_vm.py' -v
+      - name: Query ACTUAL public GitHub VM/research status without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p status-proof
+          python3 research_lab/hermes_skills/puppy50-progress/scripts/status.py progress \
+            --json > status-proof/live-status.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('status-proof/live-status.json'))
+          assert d['source_repository']=='74127418528426leo-del/Test'
+          assert isinstance(d['vm_goal_verified'],bool)
+          assert d['vm_experiments_recorded']>=0
+          assert d['physical_acer_power_on_to_browser_tested'] is False
+          print("PUPPY50_READONLY_LIVE_PHONE_STATUS_OK")
+          print('Strict VM five seconds independently verified:',d['vm_goal_verified'])
+          print('Experiment history entries:',d['vm_experiments_recorded'])
+          print('Current VM run:',d['latest_workflow_runs'].get(
+            'Puppy50 autonomous guarded VM experimentation',{}))
+          PY
+          python3 research_lab/hermes_skills/puppy50-progress/scripts/status.py latest
+          python3 research_lab/hermes_skills/puppy50-progress/scripts/status.py fastest
+      - name: Publish read-only live status evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-hermes-whatsapp-readonly-status-proof
+          path: status-proof/live-status.json
+          retention-days: 7
+          if-no-files-found: warn
