@@ -9,6 +9,23 @@ from lab import task_grid,parse_model_json,validate
 
 URL="http://127.0.0.1:8080/v1/chat/completions"
 MODEL="Qwen3.5-0.8B-Q4_K_M.gguf"
+# llama.cpp supports a constrained JSON-schema response format. This is a
+# generation constraint, not permission to trust a model's reasoning.
+PROPOSAL_SCHEMA={
+    "type":"json_schema",
+    "json_schema":{
+        "name":"puppy50_candidate","strict":True,
+        "schema":{
+            "type":"object","additionalProperties":False,
+            "properties":{
+                "nice":{"type":"integer","enum":[-10,-9,-11,-8,-12,-7,-13,-6,-5]},
+                "zstd":{"type":"integer","enum":[3,2,4,1,5,6,7,8]},
+                "hypothesis":{"type":"string","minLength":12,"maxLength":125}
+            },
+            "required":["nice","zstd","hypothesis"]
+        }
+    }
+}
 SYSTEM=("You are one of 128 independent Puppy50 research task workers. "
         "Return ONLY one JSON object with integer nice from [-10,-9,-11,-8,-12,-7,-13,-6,-5], "
         "integer zstd from [3,2,4,1,5,6,7,8], and hypothesis of 8-150 characters. "
@@ -16,7 +33,8 @@ SYSTEM=("You are one of 128 independent Puppy50 research task workers. "
 def send(task):
     start=time.monotonic()
     payload={
-        "model":MODEL,"temperature":0,"max_tokens":130,"stream":False,
+        "model":MODEL,"temperature":0,"max_tokens":220,"stream":False,
+        "response_format":PROPOSAL_SCHEMA,
         "chat_template_kwargs":{"enable_thinking":False},
         "messages":[{"role":"system","content":SYSTEM},
                     {"role":"user","content":
@@ -54,6 +72,7 @@ def main():
     p.add_argument("--parallel",type=int,default=4)
     p.add_argument("--shard-index",type=int,default=0)
     p.add_argument("--shard-count",type=int,default=1)
+    p.add_argument("--limit",type=int,default=0,help="Nonzero bounded smoke limit")
     p.add_argument("--output",default="cpu-smoke-results/batch128.json")
     a=p.parse_args()
     if not 1<=a.parallel<=4:raise SystemExit("parallel capped at four CPU request slots")
@@ -62,6 +81,8 @@ def main():
     if not 1<=a.shard_count<=8 or not 0<=a.shard_index<a.shard_count:
         raise SystemExit("invalid bounded worker shard")
     tasks=all_tasks[a.shard_index::a.shard_count]
+    if not 0<=a.limit<=32:raise SystemExit("smoke limit must be between 0 and 32")
+    if a.limit:tasks=tasks[:a.limit]
     started=time.monotonic()
     with ThreadPoolExecutor(max_workers=a.parallel) as pool:
         records=list(pool.map(send,tasks))
