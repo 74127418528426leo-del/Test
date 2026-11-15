@@ -1,0 +1,58 @@
+name: Puppy50 128-Worker CPU Micro-Lab
+
+on:
+  push:
+    branches:
+      - puppy50-128-worker-microlab-20261115
+    paths:
+      - '.github/workflows/puppy50-128-worker-microlab.yml'
+      - 'experiments/puppy50-128-worker/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  microbenchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          command -v gzip
+          command -v xz
+          command -v zstd
+      - name: Execute 128 verified CPU tasks (4 worker slots)
+        run: |
+          python3 experiments/puppy50-128-worker/experiment.py \
+            --output ./puppy50-128-results --slots 4 --mib 1
+      - name: Assert 128 tasks verified
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('puppy50-128-results/summary.json'))
+          assert d['submitted_tasks']==128
+          assert d['completed_tasks']==128
+          assert d['verified_tasks']==128
+          assert d['failed_tasks']==0
+          print('All 128 independent CPU experiments verified.')
+          PY
+      - name: Publish result summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f puppy50-128-results/REPORT.md ]; then
+            cat puppy50-128-results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-128-task-evidence
+          path: puppy50-128-results/
+          if-no-files-found: warn
+          retention-days: 14
