@@ -14,6 +14,7 @@ def load(name,path):
 
 status=load("p50_status",ROOT/"hermes_skills/puppy50-progress/scripts/status.py")
 partial=load("p50_partial",ROOT/"collect_vm_evidence.py")
+prefetch=load("p50_prefetch",ROOT/"patch_libxul_prefetch.py")
 
 class StatusTests(unittest.TestCase):
     def test_successful_ci_is_not_five_second_os(self):
@@ -89,6 +90,40 @@ class CollectTests(unittest.TestCase):
             self.assertFalse(out["verified_under_five_seconds"])
             self.assertEqual(out["four_frame_mean_seconds"],4.1)
             self.assertEqual(len(out["vm_failures"]),4)
+
+class PrefetchTests(unittest.TestCase):
+    def sample_boot(self,path):
+        target=Path(path)/"usr/lib/live/boot/9990-main.sh"
+        target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_text("""#!/bin/sh
+# P50_V131_LIBXUL_READAHEAD
+# P50_V127_FIREFOX_DIRECT_EXEC
+# P50_V149_WEBRENDER_USERJS_READY
+printf 'P50_V133_PREFETCH_256MB_STARTED %s\\n' "$(cat /proc/uptime)" >/dev/ttyS0
+            nice -n 10 dd if="$p50_lib" of=/dev/null bs=1048576 count=256 2>/dev/null
+""")
+        return target
+
+    def test_all_allowed_depths_preserve_bounded_change(self):
+        for size in prefetch.ALLOWED:
+            with tempfile.TemporaryDirectory() as tmp:
+                target=self.sample_boot(tmp)
+                original=target.read_text()
+                prefetch.patch(tmp,size)
+                modified=target.read_text()
+                self.assertIn(f"P50_V133_PREFETCH_{size}MB_STARTED",modified)
+                self.assertIn("P50_V127_FIREFOX_DIRECT_EXEC",modified)
+                self.assertIn("P50_V149_WEBRENDER_USERJS_READY",modified)
+                self.assertNotEqual(original,modified)
+                self.assertRaises(ValueError,prefetch.patch,tmp,size)
+                if size==0:self.assertNotIn("dd if=",modified)
+                else:self.assertIn(f"count={size}",modified)
+
+    def test_reject_host_and_bad_depths(self):
+        self.assertRaises(ValueError,prefetch.patch,"/",32)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.sample_boot(tmp)
+            self.assertRaises(ValueError,prefetch.patch,tmp,999)
 
 if __name__=="__main__":
     unittest.main()
