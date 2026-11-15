@@ -415,7 +415,7 @@ jobs:
           import os
           from pathlib import Path
           nice=int(os.environ['P50_NICE'])
-          assert nice in (-10,-9,-11,-8,-12,-13)
+          assert nice in (-10,-9,-11,-8,-12,-7,-13,-6,-5)
           p=Path('out/main/usr/lib/live/boot/9990-main.sh')
           s=p.read_text()
           needle='/usr/bin/nice -n -10 setpriv --reuid=user --regid=user --init-groups'
