@@ -19,7 +19,7 @@ services:
       - "--model"
       - "Qwen/Qwen3.8-27B-FP8"
       - "--max-model-len"
-      - "8192"
+      - "65536"
       - "--max-num-seqs"
       - "4"
       - "--gpu-memory-utilization"
