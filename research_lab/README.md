@@ -2,6 +2,21 @@
 
 An operational, **bounded** GitHub Actions research scheduler that connects the existing Puppy50 guarded QEMU/Firefox optimization workflow to a persistent queue of peer-reviewed hypotheses.
 
+## Qwen / Hermes / OpenClaude (new open-weight backend)
+
+The default **optional** model backend is now `qwen_compatible`,
+using Qwen3.8-27B through an independently hosted **HTTPS**
+OpenAI-compatible inference server (for example vLLM). Model use is
+**disabled by default** and requires an accessible endpoint, an API
+secret and explicit opt-in. Qwen model weights are not downloaded onto
+GitHub's ordinary CPU runners.
+
+See [Qwen + Hermes setup](QWEN_HERMES_SETUP.md) and
+[shared agent instructions](AGENTS.md). Hermes Agent and OpenClaude
+are **documented external worker integrations**, not installed cloud
+services. Real GPU hosting and model invocation have not been proven
+by the offline CI tests.
+
 ## Live architecture
 
 ```
