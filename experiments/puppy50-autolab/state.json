@@ -1,0 +1,17 @@
+{
+  "history": [
+    {
+      "at": "2026-11-15T22:12:47.773835+00:00",
+      "candidate_id": "nice-10_zstd3",
+      "frames": null,
+      "iso_sha256": null,
+      "reason": "build/VM tests failed",
+      "run_id": "43767678695",
+      "vm_passed": false
+    }
+  ],
+  "schema": 1,
+  "started": "2026-11-15T22:12:47.773577+00:00",
+  "vm_goal_candidate": null,
+  "vm_goal_verified": false
+}
