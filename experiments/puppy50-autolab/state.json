@@ -76,6 +76,23 @@
       "run_id": "43775888656",
       "vm_diagnostics": {},
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-15T23:52:09.645442+00:00",
+      "candidate_id": "nice-10_zstd3_prefetch32",
+      "frames": {},
+      "iso_sha256": null,
+      "post_eject_http200_by_boot": {},
+      "ram_ready_seconds": {},
+      "reason": "build/VM tests failed",
+      "run_id": "43776829751",
+      "vm_diagnostics": {
+        "bios1": "no QEMU result.json collected",
+        "bios2": "no QEMU result.json collected",
+        "uefi1": "no QEMU result.json collected",
+        "uefi2": "no QEMU result.json collected"
+      },
+      "vm_passed": false
     }
   ],
   "schema": 1,
