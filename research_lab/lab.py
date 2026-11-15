@@ -17,6 +17,7 @@ import ipaddress
 import sys
 import urllib.error
 import urllib.request
+from quality_gate import assess as assess_scientific_quality
 
 ROLES = (
     "kernel-critical-path", "initramfs-and-compression", "firefox-startup",
@@ -229,12 +230,19 @@ def ai_hypotheses(provider,tasks,taken,history,max_new,max_calls,max_parallel):
             f"Research role: {task['role']}; task {task['task_id']}. "
             f"Latest verified baseline: v159, NOT under five seconds. "
             f"Current candidates already queued: {sorted(ident(*k) for k in taken)[:50]}. "
-            f"Return a creative but safe distinct compression / niceness hypothesis; "
-            f"add a separate unexecuted architectural idea if useful. "
+            f"Return a detailed, falsifiable compression/niceness hypothesis of 100-500 characters, "
+            f"as a complete sentence ending in a period. Specify a causal startup stage, "
+            f"real first visible Firefox frame outcome, matched same-host BIOS/UEFI baseline, "
+            f"and independent safety gates. Firefox niceness cannot influence earlier initramfs. "
+            f"Use architecture_idea for explicit recovery and sandbox preservation plans. "
             f"Observed prior verified VM ledger (failures included): {json.dumps(recent,sort_keys=True)}. "
             f"Use the ledger as feedback and NEVER claim a result that has not passed independently. "
             f"Never assert benchmark results."))
-        return task,validate(response)
+        proposal=validate(response)
+        quality=assess_scientific_quality(proposal)
+        if not quality["admit"]:
+            raise ValueError("Scientific quality rejected: " + "; ".join(quality["errors"]))
+        return task,proposal
     # Rotate specialties across cycles; no cycle exhausts the same role repeatedly.
     offset = len(taken) % len(tasks)
     active = [tasks[(offset + i*17) % len(tasks)] for i in range(budget)]
