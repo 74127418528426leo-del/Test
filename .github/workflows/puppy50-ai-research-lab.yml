@@ -15,6 +15,21 @@ on:
         type: boolean
         required: false
         default: false
+      max_model_calls:
+        description: 'Maximum API calls (0–128); 8 is the recommended pilot'
+        type: number
+        required: false
+        default: 8
+      parallel:
+        description: 'Maximum concurrent model calls (1–16)'
+        type: number
+        required: false
+        default: 4
+      max_new:
+        description: 'Maximum new accepted hypotheses (1–64)'
+        type: number
+        required: false
+        default: 8
 permissions:
   contents: write
 concurrency:
@@ -47,7 +62,9 @@ jobs:
             --queue lab-state/research_lab/queue.json
             --history lab-state/experiments/puppy50-autolab/state.json
             --output lab-results
-            --max-new 8 --max-model-calls 8 --parallel 4
+            --max-new "${{ inputs.max_new || 8 }}"
+            --max-model-calls "${{ inputs.max_model_calls || 8 }}"
+            --parallel "${{ inputs.parallel || 4 }}"
           )
           if [[ "$AI_ENABLED" == "true" ]]; then
             test -n "$P50_OPENAI_API_KEY" || { echo 'AI opt-in requires P50_OPENAI_API_KEY secret'; exit 1; }
