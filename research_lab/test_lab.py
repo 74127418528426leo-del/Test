@@ -23,6 +23,39 @@ class LabTests(unittest.TestCase):
         self.assertRaises(ValueError,lab.validate,{"nice":-10,"zstd":3,
             "hypothesis":"valid string","architecture_idea":"x"*701})
 
+    def test_qwen_https_endpoint_validation(self):
+        self.assertRaises(ValueError,lab.QwenCompatibleChat,
+                          "Qwen/Qwen3.8-27B","token","http://gpu.example.com/v1")
+        self.assertRaises(ValueError,lab.QwenCompatibleChat,
+                          "Qwen/Qwen3.8-27B","token","https://127.0.0.1/v1")
+        self.assertRaises(ValueError,lab.QwenCompatibleChat,
+                          "Qwen/Qwen3.8-27B","token","https://gpu.example.com/metadata")
+        self.assertRaises(ValueError,lab.QwenCompatibleChat,
+                          "Qwen/Qwen3.8-27B",None,"https://gpu.example.com/v1")
+        model=lab.QwenCompatibleChat("Qwen/Qwen3.8-27B","token","https://gpu.example.com/v1")
+        self.assertEqual(model.url,"https://gpu.example.com/v1/chat/completions")
+
+    def test_qwen_response_shape_without_network(self):
+        from io import BytesIO
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*args):return False
+            def read(self,*args):return self.blob.read(*args)
+            def __init__(self,blob):self.blob=BytesIO(blob)
+        blob=json.dumps({"choices":[{"message":{"content":"<think>internal reasoning</think>\\n{\\\"nice\\\":-10,\\\"zstd\\\":3,\\\"hypothesis\\\":\\\"Test actual BIOS and UEFI boots.\\\"}"}}]}).encode()
+        requests=[]
+        def fake_open(req,timeout):
+            requests.append(req)
+            return Response(blob)
+        m=lab.QwenCompatibleChat("Qwen/Qwen3.8-27B","token","https://gpu.example.com/v1")
+        with patch.object(lab.urllib.request,"urlopen",side_effect=fake_open):
+            proposal=m.call("safe system","test",max_tokens=250)
+        self.assertEqual(proposal["nice"],-10)
+        payload=json.loads(requests[0].data.decode())
+        self.assertEqual(payload["model"],"Qwen/Qwen3.8-27B")
+        self.assertEqual(payload["max_tokens"],250)
+        self.assertEqual(requests[0].full_url,"https://gpu.example.com/v1/chat/completions")
+
     def test_no_automatic_llm_connection(self):
         with patch.dict("os.environ",{},clear=True):
             self.assertRaises(ValueError,lab.OpenAI,"gpt-6-luna",None)
