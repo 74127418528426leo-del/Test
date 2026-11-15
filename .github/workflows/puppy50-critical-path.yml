@@ -1,0 +1,51 @@
+name: Puppy50 Real Boot Critical Path Audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/puppy50-critical-path.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze-real-boot-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch immutable four-boot QEMU evidence from successful guarded runner
+        uses: actions/download-artifact@v4
+        with:
+          name: puppy50-autolab-four-boot-evidence
+          run-id: 43769060622
+          github-token: ${{ github.token }}
+          path: evidence
+      - name: Distinguish guest critical-path timing from host first-frame times
+        run: |
+          set -euo pipefail
+          python3 research_lab/critical_path.py --source evidence --output reports/critical-path.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('reports/critical-path.json'))
+          assert d['boot_count']==4
+          assert d['cross_clock_subtraction_is_invalid'] is True
+          for b in d['boots']:
+            assert b['host_monotonic_from_qemu_launch_seconds']['first_visible_firefox_frame']>5
+            assert b['post_eject_browser_http200_confirmed'] is True
+          dmean=d['guest_stage_delta_seconds']['drm_to_xorg']['mean']
+          assert d['guest_stage_delta_seconds']['drm_to_xorg']['n']==4
+          assert 0.8<=dmean<=1.5
+          print('P50_REAL_VM_CRITICAL_PATH_AUDIT_PASS')
+          print('Guest DRM-to-Xorg mean seconds',dmean)
+          print('Host BIOS/UEFI first frame mean:',d['host_mean_first_frame_seconds'])
+          print('These are NOT five-second results')
+          PY
+      - name: Store independent critical-path evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-verified-boot-critical-path-analysis
+          path: reports/critical-path.json
+          retention-days: 14
+          if-no-files-found: warn
