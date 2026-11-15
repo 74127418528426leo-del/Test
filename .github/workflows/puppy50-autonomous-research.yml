@@ -411,7 +411,7 @@ jobs:
           set -euo pipefail
           sudo python3 input/patches/v151/nice_minus10.py out/main
           # Experiment changes only the process niceness of nonroot Firefox.
-          sudo python3 - <<'PY'
+          sudo --preserve-env=P50_NICE python3 - <<'PY'
           import os
           from pathlib import Path
           nice=int(os.environ['P50_NICE'])
