@@ -152,7 +152,10 @@ class QwenCompatibleChat:
             "messages":[{"role":"system","content":instructions},
                         {"role":"user","content":prompt}],
             "max_tokens":max_tokens,
-            "stream":False
+            "stream":False,
+            "temperature":0.2,
+            "response_format":{"type":"json_object"},
+            "chat_template_kwargs":{"enable_thinking":False}
         }).encode()
         req=urllib.request.Request(self.url,data=data,method="POST",
             headers={"Authorization":"Bearer "+self.key,
