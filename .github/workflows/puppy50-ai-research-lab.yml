@@ -1,0 +1,80 @@
+name: Puppy50 AI Research Laboratory
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'research_lab/**'
+      - '.github/workflows/puppy50-ai-research-lab.yml'
+  schedule:
+    # Bounded recurrent planning; the separate VM workflow executes candidates.
+    - cron: '43 3,9,15,21 * * *'
+  workflow_dispatch:
+    inputs:
+      enable_ai:
+        description: 'Opt into paid model API requests for this single run'
+        type: boolean
+        required: false
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: puppy50-research-lab-state-writer
+  cancel-in-progress: false
+jobs:
+  research:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      P50_OPENAI_API_KEY: ${{ secrets.P50_OPENAI_API_KEY }}
+      P50_OPENAI_MODEL: ${{ vars.P50_OPENAI_MODEL || 'gpt-6-luna' }}
+      # Scheduled model billing remains OFF until the owner explicitly opts in.
+      AI_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.enable_ai) || vars.P50_ENABLE_AI == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout durable experiment history and proposal queue
+        uses: actions/checkout@v4
+        with:
+          ref: puppy50-autolab-state
+          path: lab-state
+          fetch-depth: 0
+      - name: Run architecture and safety regression checks
+        run: python3 -m unittest discover -s research_lab -p 'test_*.py' -v
+      - name: Coordinate 128 research slots and prepare bounded proposals
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --queue lab-state/research_lab/queue.json
+            --history lab-state/experiments/puppy50-autolab/state.json
+            --output lab-results
+            --max-new 8 --max-model-calls 8 --parallel 4
+          )
+          if [[ "$AI_ENABLED" == "true" ]]; then
+            test -n "$P50_OPENAI_API_KEY" || { echo 'AI opt-in requires P50_OPENAI_API_KEY secret'; exit 1; }
+            args+=(--ai-enabled)
+          fi
+          python3 research_lab/lab.py "${args[@]}"
+      - name: Persist only validated candidate data to isolated history branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p lab-state/research_lab
+          cp lab-results/queue.json lab-state/research_lab/queue.json
+          git -C lab-state config user.name 'github-actions[bot]'
+          git -C lab-state config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C lab-state add research_lab/queue.json
+          if git -C lab-state diff --cached --quiet; then
+            echo 'No proposal queue changes'
+          else
+            git -C lab-state commit -m 'research: append bounded validated hypothesis queue [skip ci]'
+            # Refuse overwriting concurrent changes; a later run can retry.
+            git -C lab-state push origin HEAD:puppy50-autolab-state
+          fi
+      - name: Upload research evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-research-lab-outputs
+          path: lab-results/
+          retention-days: 14
+          if-no-files-found: warn
