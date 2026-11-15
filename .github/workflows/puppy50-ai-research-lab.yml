@@ -42,6 +42,12 @@ jobs:
     env:
       P50_OPENAI_API_KEY: ${{ secrets.P50_OPENAI_API_KEY }}
       P50_OPENAI_MODEL: ${{ vars.P50_OPENAI_MODEL || 'gpt-6-luna' }}
+      # Default model provider is self-hosted Qwen3.8. No inference server is
+      # provisioned and no model calls occur unless AI_ENABLED is true.
+      P50_MODEL_PROVIDER: ${{ vars.P50_MODEL_PROVIDER || 'qwen_compatible' }}
+      P50_QWEN_ENDPOINT: ${{ vars.P50_QWEN_ENDPOINT }}
+      P50_QWEN_MODEL: ${{ vars.P50_QWEN_MODEL || 'Qwen/Qwen3.8-27B' }}
+      P50_QWEN_API_KEY: ${{ secrets.P50_QWEN_API_KEY }}
       # Scheduled model billing remains OFF until the owner explicitly opts in.
       AI_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.enable_ai) || vars.P50_ENABLE_AI == 'true' }}
     steps:
@@ -67,7 +73,17 @@ jobs:
             --parallel "${{ inputs.parallel || 4 }}"
           )
           if [[ "$AI_ENABLED" == "true" ]]; then
-            test -n "$P50_OPENAI_API_KEY" || { echo 'AI opt-in requires P50_OPENAI_API_KEY secret'; exit 1; }
+            case "$P50_MODEL_PROVIDER" in
+              qwen_compatible)
+                test -n "$P50_QWEN_ENDPOINT" && test -n "$P50_QWEN_API_KEY" ||
+                  { echo 'Qwen needs an HTTPS GPU inference endpoint plus P50_QWEN_API_KEY secret'; exit 1; }
+                ;;
+              openai)
+                test -n "$P50_OPENAI_API_KEY" ||
+                  { echo 'OpenAI backend requires P50_OPENAI_API_KEY secret'; exit 1; }
+                ;;
+              *) echo 'Unsupported model provider' >&2; exit 1 ;;
+            esac
             args+=(--ai-enabled)
           fi
           python3 research_lab/lab.py "${args[@]}"
