@@ -12,9 +12,13 @@ chmod 700 "$HERMES_DIR"
 cat > "$HERMES_DIR/config.yaml" <<'YAML'
 model:
   default: Qwen/Qwen3.8-27B-FP8
-  provider: custom
-  base_url: http://127.0.0.1:8000/v1
-  api_key: "${HERMES_MODEL_API_KEY}"
+  provider: custom:puppy50
+providers:
+  puppy50:
+    api: http://127.0.0.1:8000/v1
+    key_env: P50_QWEN_API_KEY
+    transport: chat_completions
+    context_length: 65536
 toolsets:
   - safe
 agent:
@@ -33,7 +37,7 @@ echo "Puppy50 Hermes research-only one-shot (actual Qwen GPU must be serving)."
 docker run --rm --network host --cpus 4 --memory 8g \
   --security-opt no-new-privileges:true \
   -e PUID="$(id -u)" -e PGID="$(id -g)" \
-  -e HERMES_MODEL_API_KEY="$P50_QWEN_API_KEY" \
+  -e P50_QWEN_API_KEY="$P50_QWEN_API_KEY" \
   -v "$HERMES_DIR:/opt/data" \
   nousresearch/hermes-agent:stable \
   -z 'Read-only research task: analyze why a browser-first Linux could fail post-eject HTTP checks. Propose TWO specific falsifiable hypotheses and validation steps. Do not execute tools, code, or edit files. Never claim unobserved benchmark results.'
