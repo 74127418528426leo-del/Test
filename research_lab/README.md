@@ -9,9 +9,9 @@ An operational, **bounded** GitHub Actions research scheduler that connects the 
       │
       ├── Default/offline scheduler — zero LLM/API calls, selects 8 allowlisted ideas
       │
-      └── Opt-in AI mode — at most 8 model requests per scheduled run:
-             up to 4 specialist research proposals (parallel limit: 4)
-             up to 4 separate independent AI safety critiques
+      └── Opt-in AI mode — at most 8 model requests per scheduled run (manually scalable to 128):
+             up to 4 specialist research proposals (manual maximum 64 proposals, parallel limit 16)
+             up to 4 separate independent AI safety critiques (manual maximum 64 critiques)
       │
       ↓ Strict numeric validator: Firefox nice / final-initramfs zstd
       ↓ Durable candidate queue (branch puppy50-autolab-state)
@@ -23,7 +23,7 @@ An operational, **bounded** GitHub Actions research scheduler that connects the 
 
 ## Proof of deployment
 
-- The model-free workflow boots automatically on every lab-code change and on a four-times-per-day GitHub Actions schedule (UTC 03:43, 09:43, 15:43, 21:43).
+- The model-free workflow starts on lab-code changes and on a four-times-per-day GitHub Actions schedule (UTC 03:43, 09:43, 15:43, 21:43).
 - `research_lab/test_lab.py` verifies 128 distinct task identifiers, numeric allowlists, no-AI cost separation, queue deduplication, and per-run model-call budget.
 - The actual QEMU workflow is `.github/workflows/puppy50-autonomous-research.yml`. This lab itself runs **zero** QEMU boots. No code supplied by an AI model is executed on a runner.
 - Queue: branch `puppy50-autolab-state`, file `research_lab/queue.json`. The QEMU controller prioritizes valid queued parameters, independently tests them, and records results.
@@ -39,7 +39,7 @@ The model interface uses **OpenAI Responses API**. GitHub Models was discontinue
 4. For **one manually approved run**, choose Actions → Puppy50 AI Research Laboratory → Run workflow → check `enable_ai`. The default is **false**.
 5. Only if you explicitly want *recurring paid model requests*, add repository **variable** `P50_ENABLE_AI` set to `true`. Set it to `false` to stop recurring model requests.
 
-**Model-call limit:** 8 total Responses requests per workflow, maximum 4 concurrent. The API provider may bill for input/output tokens. The eight-call limit **is not a monetary cap**; configure spending ceilings and alerts with your API provider before enabling recurring model use.
+**Model-call limit:** 8 total Responses requests per scheduled workflow, maximum 4 concurrent. A manually initiated, explicitly AI-enabled run can request up to **128 model calls**, at most **16 concurrent**, and up to **64 new hypotheses**. The API provider may bill for input/output tokens. The eight-call limit **is not a monetary cap**; configure spending ceilings and alerts with your API provider before enabling recurring model use.
 
 ## Supported science / guardrails
 
