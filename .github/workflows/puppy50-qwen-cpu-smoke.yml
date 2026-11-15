@@ -52,7 +52,7 @@ jobs:
           else:
               raise RuntimeError('Local Qwen did not become healthy')
           PY
-      - name: Perform TWO real Qwen model requests: researcher and independent critic
+      - name: 'Perform TWO real Qwen model requests: researcher and independent critic'
         shell: bash
         run: |
           set -euo pipefail
