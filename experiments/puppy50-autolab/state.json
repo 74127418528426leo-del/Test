@@ -8,6 +8,20 @@
       "reason": "build/VM tests failed",
       "run_id": "43768886593",
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-15T22:35:10.549754+00:00",
+      "candidate_id": "nice-10_zstd3",
+      "frames": {
+        "bios1": 10.31,
+        "bios2": 8.65,
+        "uefi1": 21.03,
+        "uefi2": 12.89
+      },
+      "iso_sha256": "c1ddeadf9f46231a053a59092beaa7f3ad8f3a4acd15772f1cba575283b68f84",
+      "reason": "not all four Firefox frames strictly below five seconds",
+      "run_id": "43769060622",
+      "vm_passed": false
     }
   ],
   "schema": 1,
