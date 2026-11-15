@@ -1,0 +1,8 @@
+.env
+.env.*
+!example.env
+*.key
+*.pem
+*.secret
+hf-cache/
+vllm-cache/
