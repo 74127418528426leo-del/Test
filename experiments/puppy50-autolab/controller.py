@@ -101,6 +101,7 @@ def main():
     p.add_argument("--run-id",default=os.getenv("GITHUB_RUN_ID",""))
     p.add_argument("--success",default="false",choices=("true","false"))
     p.add_argument("--report",default="")
+    p.add_argument("--partial",default="")
     a=p.parse_args()
     state,sha=load_state()
     if a.mode=="plan":
@@ -121,10 +122,23 @@ def main():
         else:
             try: report=json.loads(Path(a.report).read_text())
             except (OSError,ValueError): report=None
+            try: partial=json.loads(Path(a.partial).read_text())
+            except (OSError,ValueError): partial=None
             passed,reason=verify(report) if a.success=="true" else (False,"build/VM tests failed")
+            # Partial results provide useful failure feedback; they NEVER confer pass.
+            if not passed and isinstance(partial,dict):
+                obs=partial.get("observed_frames",{})
+                if isinstance(obs,dict) and obs:
+                    reason="VM evidence: "+str(len(obs))+"/4 Firefox frames; "+
+                        str(len(partial.get("vm_failures",{})))+" diagnostic failures"
             entry={"at":utc(),"run_id":str(a.run_id),"candidate_id":a.candidate,
                    "vm_passed":passed,"reason":reason,
-                   "frames":report.get("first_visible_Firefox_frame_seconds") if isinstance(report,dict) else None,
+                   "frames":(report.get("first_visible_Firefox_frame_seconds")
+                             if isinstance(report,dict) else
+                             (partial.get("observed_frames") if isinstance(partial,dict) else None)),
+                   "vm_diagnostics":(partial.get("vm_failures") if isinstance(partial,dict) else None),
+                   "ram_ready_seconds":(partial.get("ram_ready_seconds") if isinstance(partial,dict) else None),
+                   "post_eject_http200_by_boot":(partial.get("post_eject_http200_by_boot") if isinstance(partial,dict) else None),
                    "iso_sha256":report.get("sha256") if isinstance(report,dict) else None}
             state["history"].append(entry)
             successes=[x for x in trials(state,a.candidate) if x["vm_passed"]]
