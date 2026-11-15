@@ -129,8 +129,8 @@ def main():
             if not passed and isinstance(partial,dict):
                 obs=partial.get("observed_frames",{})
                 if isinstance(obs,dict) and obs:
-                    reason="VM evidence: "+str(len(obs))+"/4 Firefox frames; "+
-                        str(len(partial.get("vm_failures",{})))+" diagnostic failures"
+                    reason=("VM evidence: "+str(len(obs))+"/4 Firefox frames; "+
+                            str(len(partial.get("vm_failures",{})))+" diagnostic failures")
             entry={"at":utc(),"run_id":str(a.run_id),"candidate_id":a.candidate,
                    "vm_passed":passed,"reason":reason,
                    "frames":(report.get("first_visible_Firefox_frame_seconds")
