@@ -9,6 +9,7 @@ import argparse
 import base64
 import json
 import math
+import os
 from collections import Counter
 from datetime import datetime, timezone
 from urllib import error, request
@@ -33,10 +34,16 @@ def fetch_json(path):
     if "://" in path or ".." in path or path.startswith("//"):
         raise ValueError("unsafe API path")
     url=BASE+path
-    req=request.Request(url,headers={
+    headers={
         "Accept":"application/vnd.github+json",
         "User-Agent":"Puppy50-Hermes-ReadOnly/1",
-        "X-GitHub-Api-Version":"2022-11-28"})
+        "X-GitHub-Api-Version":"2022-11-28"
+    }
+    # Optional, scoped READ-ONLY credential for a private/rate-limited repo.
+    # Never print or include it in GitHub logs or phone replies.
+    token=os.environ.get("P50_GH_READONLY_TOKEN","").strip()
+    if token:headers["Authorization"]="Bearer "+token
+    req=request.Request(url,headers=headers)
     with request.urlopen(req,timeout=12) as response:
         return json.load(response)
 
@@ -166,9 +173,11 @@ def main():
         print(json.dumps(result,indent=2) if args.json else format_text(result,args.command))
         return 0
     except (error.HTTPError,error.URLError,TimeoutError,OSError,ValueError,KeyError) as exc:
-        # Do not silently fill unknown live state with fictional success.
-        print("Puppy50 live status unavailable; inspect "+BASE.replace("api.github.com/repos/","github.com/")+
-              "/actions . Reason: "+type(exc).__name__)
+        # Never turn a failed live read into a fictional success or leak credentials.
+        detail=("HTTP "+str(exc.code) if isinstance(exc,error.HTTPError)
+                else type(exc).__name__)
+        print("Puppy50 live status unavailable; inspect "+
+              "https://github.com/"+REPOSITORY+"/actions . Reason: "+detail)
         return 2
 
 if __name__=="__main__":
