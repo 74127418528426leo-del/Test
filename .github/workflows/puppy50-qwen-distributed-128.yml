@@ -1,0 +1,98 @@
+name: Puppy50 Qwen 128 Tasks Across Four Servers
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/puppy50-qwen-distributed-128.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-qwen-distributed-128
+  cancel-in-progress: true
+jobs:
+  model-shard:
+    name: "Qwen CPU server ${{ matrix.shard }} / 4"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0,1,2,3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate exact Qwen GGUF checkpoint checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          curl --fail --location --retry 3 --connect-timeout 25 --max-time 420 \
+            "https://huggingface.co/axteam/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf" \
+            -o models/Qwen3.5-0.8B-Q4_K_M.gguf
+          echo 'b4e71cb32694733ba40c69e595a0524dfbc2cabe3c28fb7fef99eed4cf8730bf  models/Qwen3.5-0.8B-Q4_K_M.gguf' | sha256sum -c -
+      - name: Launch bounded REAL CPU inference server
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/ggml-org/llama.cpp:server
+          docker run -d --name puppy50-qwen-shard --network host \
+            --memory 5g --cpus 3 \
+            -v "$PWD/models:/models:ro" \
+            ghcr.io/ggml-org/llama.cpp:server \
+            -m /models/Qwen3.5-0.8B-Q4_K_M.gguf \
+            --host 127.0.0.1 --port 8080 --ctx-size 4096 \
+            --threads 2 --parallel 1 --jinja --n-gpu-layers 0
+      - name: Execute 32 REAL model tasks from unique shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,time,urllib.request
+          deadline=time.monotonic()+100
+          while time.monotonic()<deadline:
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3) as res:
+                      if json.load(res).get('status')=='ok':break
+              except Exception:time.sleep(2)
+          else:raise RuntimeError('Qwen server failed health check')
+          PY
+          python3 research_lab/qwen_128_batch.py \
+            --shard-index "${{ matrix.shard }}" --shard-count 4 \
+            --parallel 4 --output evidence/batch128.json
+      - name: Attach exact model-call evidence for this server
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-qwen-shard-${{ matrix.shard }}
+          path: evidence/batch128.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Destroy isolated inference server
+        if: always()
+        run: docker rm -f puppy50-qwen-shard 2>/dev/null || true
+  verify-128:
+    name: Verify all four independent servers
+    needs: model-shard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: puppy50-qwen-shard-*
+          path: evidence
+          merge-multiple: false
+      - name: Verify each model response and all 128 task identifiers
+        run: python3 research_lab/aggregate_128.py --root evidence --output final/verified128.json
+      - name: Publish immutable evidence, no unverified ISO claims
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-four-servers-128-verified-results
+          path: final/verified128.json
+          retention-days: 14
+      - name: Display audit results
+        shell: bash
+        run: |
+          echo '## Puppy50 Qwen distributed CPU proof' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Four separate GitHub CPUs, 128 distinct model requests. No GPU and no ISO optimization claim.' >> "$GITHUB_STEP_SUMMARY"
+          cat final/verified128.json >> "$GITHUB_STEP_SUMMARY"
