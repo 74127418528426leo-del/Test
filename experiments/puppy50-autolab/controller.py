@@ -7,7 +7,15 @@ from pathlib import Path
 STATE_PATH = "experiments/puppy50-autolab/state.json"
 NICE = [-10,-9,-11,-8,-12,-7,-13,-6,-5]
 ZSTD = [3,2,4,1,5,6,7,8]
+# Prioritize a small *structural* experiment before sweeping many numeric knobs.
+# Same Firefox priority and Zstd settings; only the libxul read-ahead depth varies.
+PREFETCH_LEVELS=(0,32,64,96,128)
+PREFETCH_CANDIDATES=[
+    {"id":f"nice-10_zstd3_prefetch{mib}", "nice":-10, "zstd":3, "prefetch":mib}
+    for mib in PREFETCH_LEVELS
+]
 CANDIDATES = [{"id": f"nice{n}_zstd{z}", "nice": n, "zstd": z} for n in NICE for z in ZSTD]
+CANDIDATES.extend(PREFETCH_CANDIDATES)
 BOOTS = {"bios1","uefi1","bios2","uefi2"}
 
 def utc():
@@ -53,7 +61,8 @@ def queued_candidates():
         if e.code==404: return []
         raise
     found=[]
-    allowed={(c["nice"],c["zstd"]):c for c in CANDIDATES}
+    allowed={(c["nice"],c["zstd"]):c for c in CANDIDATES
+             if "prefetch" not in c}
     for candidate in data.get("candidates",[]):
         if not isinstance(candidate,dict):continue
         n,z=candidate.get("nice"),candidate.get("zstd")
@@ -67,6 +76,11 @@ def choose(state):
     for c in CANDIDATES:
         t=trials(state,c["id"])
         if len(t)==1 and t[0]["vm_passed"]: return c,"repeat promising result on independent run"
+    # Test one-variable prefetch hypotheses once each before broad numeric sweeps.
+    # Failed hypotheses are not automatically repeated unless they passed once.
+    for c in PREFETCH_CANDIDATES:
+        if not trials(state,c["id"]):
+            return c,"isolated structural libxul prefetch experiment"
     # AI-proposed numeric parameters receive priority, but still obey all VM gates.
     for c in queued_candidates():
         if len(trials(state,c["id"]))<2:
@@ -110,7 +124,8 @@ def main():
               "prior_experiments":len(state["history"])}
         output={"should_run":str(bool(c)).lower(),
                 "candidate_id":c["id"] if c else "none",
-                "nice":c["nice"] if c else -10,"zstd":c["zstd"] if c else 3}
+                "nice":c["nice"] if c else -10,"zstd":c["zstd"] if c else 3,
+                "prefetch":c.get("prefetch",256) if c else 256}
         with open(os.environ["GITHUB_OUTPUT"],"a") as out:
             for k,v in output.items(): print(f"{k}={v}",file=out)
     else:
