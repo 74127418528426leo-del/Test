@@ -47,6 +47,25 @@ class StatusTests(unittest.TestCase):
         self.assertIn("No complete four-boot",status.format_text(got,"fastest"))
         self.assertIn("9.75s",status.format_text(got,"latest"))
 
+    def test_real_matched_control_exposed_without_claiming_five_seconds(self):
+        matched={
+          "reference_prefetch_mib":256,"candidate_prefetch_mib":0,
+          "mean_control_seconds":12.0,"mean_candidate_seconds":9.4,
+          "mean_control_minus_candidate_seconds":2.6
+        }
+        state={"vm_goal_verified":False,"history":[{
+          "candidate_id":"nice-10_zstd3_prefetch0",
+          "vm_passed":False,"frames":{"bios1":8.8,"uefi1":10.8,
+                                   "bios2":7.5,"uefi2":10.6},
+          "matched_prefetch_control":matched}]}
+        data=status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})
+        t=status.format_text(data,"comparison")
+        self.assertIn("256 MiB",t)
+        self.assertIn("0 MiB",t)
+        self.assertIn("2.6s",t)
+        self.assertIn("NOT certified",t)
+        self.assertFalse(data["vm_goal_verified"])
+
     def test_live_http_requests_must_use_fixed_github_host(self):
         for path in ("http://evil.invalid","//evil.invalid","/x/../y"):
             with self.assertRaises(ValueError):
