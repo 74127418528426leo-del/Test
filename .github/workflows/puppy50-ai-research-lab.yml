@@ -58,6 +58,10 @@ jobs:
           ref: puppy50-autolab-state
           path: lab-state
           fetch-depth: 0
+      - name: Validate Qwen3.8 GPU deployment manifest without starting paid GPUs
+        env:
+          P50_QWEN_API_KEY: local-ci-syntax-test-not-a-secret
+        run: docker compose -f research_lab/gpu_server/compose.yaml config -q
       - name: Run architecture and safety regression checks
         run: python3 -m unittest discover -s research_lab -p 'test_*.py' -v
       - name: Coordinate 128 research slots and prepare bounded proposals
