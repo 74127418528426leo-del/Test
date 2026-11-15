@@ -148,7 +148,20 @@ def main():
     try:
         state=read_branch_file(STATE)
         queue=read_branch_file(QUEUE)
-        runs=fetch_json("/actions/runs?per_page=60")
+        # Each workflow is queried directly so GitHub Pages builds cannot
+        # push actual VM results out of a generic recent-runs list.
+        files=(
+            "puppy50-autonomous-research.yml",
+            "puppy50-ai-research-lab.yml",
+            "puppy50-qwen-distributed-128.yml",
+            "puppy50-qwen-4b-pilot.yml",
+        )
+        combined=[]
+        for wf in files:
+            obj=fetch_json("/actions/workflows/"+wf+"/runs?per_page=1")
+            items=obj.get("workflow_runs",[])
+            if isinstance(items,list):combined.extend(items[:1])
+        runs={"workflow_runs":combined}
         result=snapshot(state,queue,runs)
         print(json.dumps(result,indent=2) if args.json else format_text(result,args.command))
         return 0
