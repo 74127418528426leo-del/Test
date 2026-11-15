@@ -20,7 +20,7 @@ BASE = "https://api.github.com/repos/" + REPOSITORY
 STATE = "experiments/puppy50-autolab/state.json"
 QUEUE = "research_lab/queue.json"
 BRANCH = "puppy50-autolab-state"
-ALLOWED_COMMANDS = ("progress","latest","fastest","failures","help")
+ALLOWED_COMMANDS = ("progress","latest","fastest","failures","comparison","help")
 WORKFLOWS = (
     "Puppy50 autonomous guarded VM experimentation",
     "Puppy50 AI Research Laboratory",
@@ -90,6 +90,9 @@ def snapshot(state,queue,runs):
     # never cherry-pick a single BIOS result.
     best=min(all_four,key=lambda p:max(v for _,v in p[1])) if all_four else None
     latest=history[-1] if history else {}
+    matched_reports=[x.get("matched_prefetch_control") for x in history
+                     if isinstance(x.get("matched_prefetch_control"),dict)]
+    latest_matched=matched_reports[-1] if matched_reports else None
     candidate_count=len(queue.get("candidates",[])) if isinstance(queue.get("candidates"),list) else 0
     return {
       "checked_utc":datetime.now(timezone.utc).isoformat(),
@@ -102,6 +105,7 @@ def snapshot(state,queue,runs):
       "latest_result_reason":str(latest.get("reason","no VM results"))[:240],
       "latest_observed_frames":dict(numeric_frames(latest)),
       "latest_vm_passed":latest.get("vm_passed") is True,
+      "latest_same_host_comparison":latest_matched,
       "best_complete_4boot_candidate":(
          {"candidate":best[0].get("candidate_id"),
           "frames":dict(best[1]),
@@ -117,9 +121,22 @@ def snapshot(state,queue,runs):
 
 def format_text(data,command):
     if command=="help":
-        return ("Puppy50 status commands: progress, latest, fastest, failures, help. "
+        return ("Puppy50 status commands: progress, latest, fastest, failures, comparison, help. "
             "Read-only reports: no builds are started or stopped.")
     vm="VERIFIED" if data["vm_goal_verified"] else "NOT VERIFIED"
+    if command=="comparison":
+        matched=data.get("latest_same_host_comparison")
+        if not isinstance(matched,dict):
+            return "No independently documented same-host prefetch comparison yet."
+        return (
+            f"Latest same-host QEMU prefetch comparison: "
+            f"control {matched.get('reference_prefetch_mib')} MiB mean "
+            f"{matched.get('mean_control_seconds')}s vs candidate "
+            f"{matched.get('candidate_prefetch_mib')} MiB mean "
+            f"{matched.get('mean_candidate_seconds')}s. "
+            f"Control minus candidate: {matched.get('mean_control_minus_candidate_seconds')}s. "
+            f"One four-pair exploratory batch only; 5s and physical Acer goals NOT certified."
+        )
     if command=="latest":
         f=data["latest_observed_frames"]
         frames=", ".join(f"{k} {v:.2f}s" for k,v in f.items()) or "not recorded"
