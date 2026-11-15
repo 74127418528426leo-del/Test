@@ -157,8 +157,11 @@ def ai_hypotheses(provider,tasks,taken,history,max_new,max_calls,max_parallel):
             f"add a separate unexecuted architectural idea if useful. "
             f"Never assert benchmark results."))
         return task,validate(response)
+    # Rotate specialties across cycles; no cycle exhausts the same role repeatedly.
+    offset = len(taken) % len(tasks)
+    active = [tasks[(offset + i*16) % len(tasks)] for i in range(budget)]
     with ThreadPoolExecutor(max_workers=max_parallel) as pool:
-        futs=[pool.submit(propose,t) for t in tasks[:budget]]
+        futs=[pool.submit(propose,t) for t in active]
         for fut in as_completed(futs):
             try:
                 task,p=fut.result()
