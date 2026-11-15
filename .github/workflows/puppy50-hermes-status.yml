@@ -7,6 +7,7 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
+  actions: read
 jobs:
   phone-status:
     runs-on: ubuntu-24.04
@@ -15,7 +16,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify status and VM safety regressions offline
         run: python3 -m unittest discover -s research_lab -p 'test_progress_and_vm.py' -v
-      - name: Query ACTUAL public GitHub VM/research status without credentials
+      - name: Query ACTUAL live GitHub state with read-only workflow token
+        env:
+          P50_GH_READONLY_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
