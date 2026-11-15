@@ -30,7 +30,7 @@ WORKFLOWS = (
 def fetch_json(path):
     if not isinstance(path,str) or not path.startswith("/"):
         raise ValueError("invalid GitHub API path")
-    if "://" in path or ".." in path:
+    if "://" in path or ".." in path or path.startswith("//"):
         raise ValueError("unsafe API path")
     url=BASE+path
     req=request.Request(url,headers={
