@@ -1,0 +1,70 @@
+name: Puppy50 Qwen JSON Schema Pilot
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/puppy50-qwen-schema-pilot.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-qwen-json-schema-pilot
+  cancel-in-progress: true
+jobs:
+  small-model-format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate Qwen 0.8B GGUF exact weights
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          curl -fL --retry 3 --connect-timeout 25 --max-time 420 \
+            "https://huggingface.co/axteam/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf" \
+            -o models/Qwen3.5-0.8B-Q4_K_M.gguf
+          echo 'b4e71cb32694733ba40c69e595a0524dfbc2cabe3c28fb7fef99eed4cf8730bf  models/Qwen3.5-0.8B-Q4_K_M.gguf' | sha256sum -c -
+      - name: Launch real model server, isolated localhost
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/ggml-org/llama.cpp:server
+          docker run -d --name puppy50-qwen-schema --network host --memory 5g --cpus 3 \
+            -v "$PWD/models:/models:ro" ghcr.io/ggml-org/llama.cpp:server \
+            -m /models/Qwen3.5-0.8B-Q4_K_M.gguf --host 127.0.0.1 \
+            --port 8080 --ctx-size 4096 --threads 2 --parallel 1 \
+            --jinja --n-gpu-layers 0
+      - name: Verify 4 real strictly schema constrained Qwen completions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import time,json,urllib.request
+          deadline=time.monotonic()+100
+          while time.monotonic()<deadline:
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8080/health",timeout=3) as r:
+                      if json.load(r).get("status")=="ok":break
+              except Exception:time.sleep(2)
+          else:raise RuntimeError("Model failed health")
+          PY
+          python3 research_lab/qwen_128_batch.py \
+            --shard-index 0 --shard-count 4 --limit 4 --parallel 2 \
+            --output pilot/structured4.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("pilot/structured4.json"))
+          print("Returned",d["model_responses_received"],"of 4 genuine model responses")
+          print("Strictly valid",d["safe_strict_json_responses"],"of 4 proposals")
+          assert d["model_responses_received"]==4
+          assert d["safe_strict_json_responses"]==4, "Schema pilot did not yield four safe JSON proposals"
+          PY
+      - name: Save real responses, including failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-qwen-schema-pilot-evidence
+          path: pilot/structured4.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Destroy model server
+        if: always()
+        run: docker rm -f puppy50-qwen-schema 2>/dev/null || true
