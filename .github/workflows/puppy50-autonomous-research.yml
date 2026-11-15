@@ -476,7 +476,12 @@ jobs:
       - name: Build checksum-audited same-host 256 MiB control ISO for structural trials
         if: env.P50_PREFETCH_MIB != '256'
         timeout-minutes: 8
-        run: bash lab-control/research_lab/build_matched_control.sh
+        run: |
+          set -euo pipefail
+          test -f out/matched-control-hook.sh
+          grep -Fq 'out/matched-control-hook.sh' lab-control/research_lab/build_matched_control.sh
+          bash -n lab-control/research_lab/build_matched_control.sh
+          bash lab-control/research_lab/build_matched_control.sh
       - name: Use identical 0.2s SATA CD optical benchmark on both conditions
         run: |
           set -euo pipefail
