@@ -15,7 +15,7 @@ permissions:
   contents: read
 concurrency:
   group: puppy50-real-qwen-cpu-smoke
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   qwen_cpu:
     runs-on: ubuntu-24.04
