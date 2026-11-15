@@ -42,7 +42,7 @@ class LabTests(unittest.TestCase):
             def __exit__(self,*args):return False
             def read(self,*args):return self.blob.read(*args)
             def __init__(self,blob):self.blob=BytesIO(blob)
-        blob=json.dumps({"choices":[{"message":{"content":"<think>internal reasoning</think>\\n{\\\"nice\\\":-10,\\\"zstd\\\":3,\\\"hypothesis\\\":\\\"Test actual BIOS and UEFI boots.\\\"}"}}]}).encode()
+        blob=json.dumps({"choices":[{"message":{"content":'<think>internal reasoning</think>\n{"nice":-10,"zstd":3,"hypothesis":"Test actual BIOS and UEFI boots."}'}}]}).encode()
         requests=[]
         def fake_open(req,timeout):
             requests.append(req)
