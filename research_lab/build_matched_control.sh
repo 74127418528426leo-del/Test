@@ -8,18 +8,18 @@ set -euo pipefail
 : "${P50_ZSTD_LEVEL:?P50_ZSTD_LEVEL required}"
 test "$P50_PREFETCH_MIB" != "256" || { echo "No separate control needed"; exit 0; }
 
-test -f out/control-hook.sh
+test -f out/matched-control-hook.sh
 test -f out/v151.iso
 test -f out/v149.iso
 test -f out/v149.manifest
 test -f out/early-prefix
 test -f out/original-full.initrd
 test -f out/original.squashfs
-sudo cp out/control-hook.sh out/main/usr/lib/live/boot/9990-main.sh
+sudo cp out/matched-control-hook.sh out/main/usr/lib/live/boot/9990-main.sh
 sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
-grep -Fq 'P50_V133_PREFETCH_256MB_STARTED' out/control-hook.sh
-grep -Fq 'count=256' out/control-hook.sh
-grep -Fq 'P50_V149_WEBRENDER_USERJS_READY' out/control-hook.sh
+grep -Fq 'P50_V133_PREFETCH_256MB_STARTED' out/matched-control-hook.sh
+grep -Fq 'count=256' out/matched-control-hook.sh
+grep -Fq 'P50_V149_WEBRENDER_USERJS_READY' out/matched-control-hook.sh
 
 (cd out/main && sudo find . -print0 | LC_ALL=C sort -z |
   sudo cpio -o --null -H newc --quiet) >out/matched-control.cpio
