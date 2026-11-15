@@ -144,8 +144,13 @@ def main():
             if not passed and isinstance(partial,dict):
                 obs=partial.get("observed_frames",{})
                 if isinstance(obs,dict) and obs:
-                    reason=("VM evidence: "+str(len(obs))+"/4 Firefox frames; "+
-                            str(len(partial.get("vm_failures",{})))+" diagnostic failures")
+                    vals=[float(v) for v in obs.values()
+                          if type(v) in (int,float) and 0<float(v)<600]
+                    if vals:
+                        reason=(reason+"; observed "+str(len(vals))+"/4 frames, "+
+                                "worst "+str(round(max(vals),3))+"s; "+
+                                str(len(partial.get("vm_failures",{})))+
+                                " functional diagnostics; NOT a passing VM experiment")
             entry={"at":utc(),"run_id":str(a.run_id),"candidate_id":a.candidate,
                    "vm_passed":passed,"reason":reason,
                    "frames":(report.get("first_visible_Firefox_frame_seconds")
