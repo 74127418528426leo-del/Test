@@ -93,6 +93,23 @@
         "uefi2": "no QEMU result.json collected"
       },
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-15T23:55:12.530693+00:00",
+      "candidate_id": "nice-10_zstd3_prefetch64",
+      "frames": {},
+      "iso_sha256": null,
+      "post_eject_http200_by_boot": {},
+      "ram_ready_seconds": {},
+      "reason": "build/VM tests failed",
+      "run_id": "43776869904",
+      "vm_diagnostics": {
+        "bios1": "no QEMU result.json collected",
+        "bios2": "no QEMU result.json collected",
+        "uefi1": "no QEMU result.json collected",
+        "uefi2": "no QEMU result.json collected"
+      },
+      "vm_passed": false
     }
   ],
   "schema": 1,
