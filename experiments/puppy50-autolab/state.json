@@ -22,6 +22,33 @@
       "reason": "not all four Firefox frames strictly below five seconds",
       "run_id": "43769060622",
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-15T23:38:09.981560+00:00",
+      "candidate_id": "nice-10_zstd2",
+      "frames": {
+        "bios1": 9.42,
+        "bios2": 8.65,
+        "uefi1": 13.33,
+        "uefi2": 13.54
+      },
+      "iso_sha256": "83ba436268295aec192cbd8efc4ffb7d1e9c3aad6720d1d8d390b773679b6db9",
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.64,
+        "bios2": 15.87,
+        "uefi1": 21.05,
+        "uefi2": 20.26
+      },
+      "reason": "VM evidence: 4/4 Firefox frames; 0 diagnostic failures",
+      "run_id": "43775273900",
+      "vm_diagnostics": {},
+      "vm_passed": false
     }
   ],
   "schema": 1,
