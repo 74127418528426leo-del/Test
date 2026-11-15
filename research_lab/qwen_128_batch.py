@@ -4,11 +4,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from datetime import datetime,timezone
 from pathlib import Path
-import argparse,json,statistics,time,urllib.request,urllib.error
+import argparse,json,statistics,time,urllib.request,urllib.error,os,re
 from lab import task_grid,parse_model_json,validate
 
 URL="http://127.0.0.1:8080/v1/chat/completions"
-MODEL="Qwen3.5-0.8B-Q4_K_M.gguf"
+MODEL=os.getenv("P50_LOCAL_QWEN_MODEL","Qwen3.5-0.8B-Q4_K_M.gguf")
 # llama.cpp supports a constrained JSON-schema response format. This is a
 # generation constraint, not permission to trust a model's reasoning.
 PROPOSAL_SCHEMA={
@@ -20,27 +20,45 @@ PROPOSAL_SCHEMA={
             "properties":{
                 "nice":{"type":"integer","enum":[-10,-9,-11,-8,-12,-7,-13,-6,-5]},
                 "zstd":{"type":"integer","enum":[3,2,4,1,5,6,7,8]},
-                "hypothesis":{"type":"string","minLength":12,"maxLength":125}
+                "hypothesis":{"type":"string","minLength":35,"maxLength":165}
             },
             "required":["nice","zstd","hypothesis"]
         }
     }
 }
-SYSTEM=("You are one of 128 independent Puppy50 research task workers. "
-        "Return ONLY one JSON object with integer nice from [-10,-9,-11,-8,-12,-7,-13,-6,-5], "
-        "integer zstd from [3,2,4,1,5,6,7,8], and hypothesis of 8-150 characters. "
-        "Do not claim any completed OS boot or validated speedup. Do not output commands or markdown.")
+SYSTEM=("You are a Linux and Firefox boot-performance engineering researcher. "
+        "Return only JSON with numeric nice, zstd and a falsifiable hypothesis. "
+        "Explain one concrete technical causal mechanism linking Firefox CPU priority "
+        "or Zstd initramfs decompression to measured time to the first real Firefox frame. "
+        "Include an observable BIOS/UEFI boot metric and a predicted tradeoff. "
+        "No vague sentences such as 'run a controlled benchmark'. "
+        "Do not claim any completed test or speedup. Do not include shell commands.")
+def technically_specific(hypothesis):
+    """Heuristic triage only: never substitute for expert peer review/VM evidence."""
+    if not isinstance(hypothesis,str):return False
+    h=hypothesis.lower().strip()
+    if any(x in h for x in ("controlled benchmark", "theoretical construct",
+                            "could be run", "safe actual-vm comparative experiment")):
+        return False
+    mechanism=("zstd","decompress","initramfs","compress","firefox","priority",
+               "scheduler","i/o","cpu","kernel","memory")
+    measurement=("first frame","first firefox","boot","latency","seconds",
+                 "startup","render","firmware","uefi","bios")
+    return any(x in h for x in mechanism) and any(x in h for x in measurement)
+
 def send(task):
     start=time.monotonic()
     payload={
-        "model":MODEL,"temperature":0,"max_tokens":220,"stream":False,
+        "model":MODEL,"temperature":0,"max_tokens":300,"stream":False,
         "response_format":PROPOSAL_SCHEMA,
         "chat_template_kwargs":{"enable_thinking":False},
         "messages":[{"role":"system","content":SYSTEM},
                     {"role":"user","content":
                         f"Task {task['task_id']} (role {task['role']}, independent hypothesis "
-                        f"{task['slot']}/16). Suggest safe actual-VM comparative experiment "
-                        "using only the allowed numeric settings."}]
+                        f"{task['slot']}/16). Suggest one specific hypothesis in 90-145 chars: "
+                        "choose an allowed Firefox nice and initramfs Zstd level. Explain why "
+                        "the selected combination could change actual BIOS/UEFI first Firefox frame "
+                        "time, not mere synthetic compression speed."}]
     }
     try:
         req=urllib.request.Request(URL,data=json.dumps(payload).encode(),method="POST",
@@ -57,6 +75,7 @@ def send(task):
             proposal=validate(parse_model_json(message))
             record["proposal"]=proposal
             record["valid_safe_json"]=True
+            record["specific_hypothesis_heuristic"]=technically_specific(proposal["hypothesis"])
         except (ValueError,TypeError,KeyError) as e:
             record["validation_error"]=str(e)[:160]
             record["excerpt"]=message[:260]
@@ -97,6 +116,7 @@ def main():
         "total_logical_research_slots":len(all_tasks),
         "model_responses_received":received,
         "safe_strict_json_responses":valid,
+        "specific_hypotheses_heuristic":sum(x.get("specific_hypothesis_heuristic") is True for x in records),
         "attempted_parallel_slots":a.parallel,
         "roles":roles,
         "wall_seconds":round(time.monotonic()-started,2),
