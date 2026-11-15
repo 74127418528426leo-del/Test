@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Read-only Puppy50 progress for Hermes gateway / WhatsApp.
+
+No GitHub token, mutation endpoint, arbitrary URL, subprocess, or remote exec.
+Data is fetched from the user's public GitHub repo. The status is not a VM
+success claim unless the independent state records a verified result.
+"""
+import argparse
+import base64
+import json
+import math
+from collections import Counter
+from datetime import datetime, timezone
+from urllib import error, request
+from pathlib import Path
+
+REPOSITORY = "74127418528426leo-del/Test"
+BASE = "https://api.github.com/repos/" + REPOSITORY
+STATE = "experiments/puppy50-autolab/state.json"
+QUEUE = "research_lab/queue.json"
+BRANCH = "puppy50-autolab-state"
+ALLOWED_COMMANDS = ("progress","latest","fastest","failures","help")
+WORKFLOWS = (
+    "Puppy50 autonomous guarded VM experimentation",
+    "Puppy50 AI Research Laboratory",
+    "Puppy50 Qwen 128 Tasks Across Four Servers",
+    "Puppy50 Qwen 4B Engineering Quality Pilot",
+)
+
+def fetch_json(path):
+    if not isinstance(path,str) or not path.startswith("/"):
+        raise ValueError("invalid GitHub API path")
+    if "://" in path or ".." in path:
+        raise ValueError("unsafe API path")
+    url=BASE+path
+    req=request.Request(url,headers={
+        "Accept":"application/vnd.github+json",
+        "User-Agent":"Puppy50-Hermes-ReadOnly/1",
+        "X-GitHub-Api-Version":"2022-11-28"})
+    with request.urlopen(req,timeout=12) as response:
+        return json.load(response)
+
+def read_branch_file(path):
+    obj=fetch_json("/contents/"+path+"?ref="+BRANCH)
+    if not isinstance(obj,dict) or obj.get("encoding")!="base64":
+        raise ValueError("unexpected GitHub state response")
+    raw=base64.b64decode(obj["content"],validate=False)
+    if len(raw)>1024*1024:
+        raise ValueError("state file unexpectedly large")
+    result=json.loads(raw)
+    if not isinstance(result,dict):
+        raise ValueError("state must be object")
+    return result
+
+def numeric_frames(item):
+    f=item.get("frames")
+    if not isinstance(f,dict): return []
+    found=[]
+    for key in ("bios1","uefi1","bios2","uefi2"):
+        v=f.get(key)
+        if type(v) in (int,float) and math.isfinite(v) and 0<v<600:
+            found.append((key,round(float(v),3)))
+    return found
+
+def snapshot(state,queue,runs):
+    history=[x for x in state.get("history",[]) if isinstance(x,dict)]
+    latest_runs={}
+    for r in runs.get("workflow_runs",[]):
+        if not isinstance(r,dict): continue
+        name=r.get("name")
+        if name in WORKFLOWS and name not in latest_runs:
+            latest_runs[name]={
+                "status":r.get("status"),"conclusion":r.get("conclusion"),
+                "html_url":r.get("html_url"),"created_at":r.get("created_at")}
+    all_four=[]
+    any_frames=[]
+    for x in history:
+        vals=numeric_frames(x)
+        if vals:
+            any_frames.append((x,vals))
+            if len(vals)==4:all_four.append((x,vals))
+    # "Best" is fastest worst-case of a full four-boot batch,
+    # never cherry-pick a single BIOS result.
+    best=min(all_four,key=lambda p:max(v for _,v in p[1])) if all_four else None
+    latest=history[-1] if history else {}
+    candidate_count=len(queue.get("candidates",[])) if isinstance(queue.get("candidates"),list) else 0
+    return {
+      "checked_utc":datetime.now(timezone.utc).isoformat(),
+      "source_repository":REPOSITORY,
+      "vm_goal_verified":state.get("vm_goal_verified") is True,
+      "vm_goal_candidate":state.get("vm_goal_candidate") if state.get("vm_goal_verified") is True else None,
+      "vm_experiments_recorded":len(history),
+      "model_hypotheses_queued":candidate_count,
+      "latest_candidate":str(latest.get("candidate_id","unknown"))[:65],
+      "latest_result_reason":str(latest.get("reason","no VM results"))[:240],
+      "latest_observed_frames":dict(numeric_frames(latest)),
+      "latest_vm_passed":latest.get("vm_passed") is True,
+      "best_complete_4boot_candidate":(
+         {"candidate":best[0].get("candidate_id"),
+          "frames":dict(best[1]),
+          "worst_seconds":max(t for _,t in best[1]),
+          "mean_seconds":round(sum(t for _,t in best[1])/4,3),
+          "strict_vm_goal_passed":best[0].get("vm_passed") is True}
+         if best else None),
+      "latest_workflow_runs":latest_runs,
+      "physical_acer_power_on_to_browser_tested":False,
+      "notes":"Model responses and successful CI are NOT proof of faster or usable OS. "
+              "Only real QEMU validation with Firefox, RAM and network gates counts."
+    }
+
+def format_text(data,command):
+    if command=="help":
+        return ("Puppy50 status commands: progress, latest, fastest, failures, help. "
+            "Read-only reports: no builds are started or stopped.")
+    vm="VERIFIED" if data["vm_goal_verified"] else "NOT VERIFIED"
+    if command=="latest":
+        f=data["latest_observed_frames"]
+        frames=", ".join(f"{k} {v:.2f}s" for k,v in f.items()) or "not recorded"
+        return (f"Puppy50 latest: {data['latest_candidate']}. "
+            f"Firefox frames: {frames}. "
+            f"VM passed: {data['latest_vm_passed']}. "
+            f"Reason: {data['latest_result_reason']}.")
+    if command=="fastest":
+        b=data["best_complete_4boot_candidate"]
+        if not b:return "No complete four-boot QEMU measurements have been recorded yet."
+        return (f"Best observed complete four-boot batch: {b['candidate']}, "
+                f"mean {b['mean_seconds']:.2f}s, slowest {b['worst_seconds']:.2f}s. "
+                f"Under-five-second VM goal: {vm}. Physical Acer remains untested.")
+    if command=="failures":
+        bad=data["latest_result_reason"]
+        w=data["latest_workflow_runs"].get(WORKFLOWS[0],{})
+        return f"Latest VM result: {bad}. GitHub VM workflow: {w.get('conclusion') or w.get('status') or 'unknown'}. "               f"Run: {w.get('html_url') or 'not found'}"
+    w=data["latest_workflow_runs"].get(WORKFLOWS[0],{})
+    return (f"Puppy50 progress: under-5s VM target {vm}. "
+        f"{data['vm_experiments_recorded']} VM attempts recorded; "
+        f"{data['model_hypotheses_queued']} queued hypotheses. "
+        f"Last VM workflow: {w.get('conclusion') or w.get('status') or 'unknown'}. "
+        f"Actual Acer timing still unverified. "
+        f"{w.get('html_url') or ''}")
+
+def main():
+    p=argparse.ArgumentParser()
+    p.add_argument("command",nargs="?",choices=ALLOWED_COMMANDS,default="progress")
+    p.add_argument("--json",action="store_true")
+    args=p.parse_args()
+    if args.command=="help" and not args.json:
+        print(format_text({},args.command));return 0
+    try:
+        state=read_branch_file(STATE)
+        queue=read_branch_file(QUEUE)
+        runs=fetch_json("/actions/runs?per_page=60")
+        result=snapshot(state,queue,runs)
+        print(json.dumps(result,indent=2) if args.json else format_text(result,args.command))
+        return 0
+    except (error.HTTPError,error.URLError,TimeoutError,OSError,ValueError,KeyError) as exc:
+        # Do not silently fill unknown live state with fictional success.
+        print("Puppy50 live status unavailable; inspect "+BASE.replace("api.github.com/repos/","github.com/")+
+              "/actions . Reason: "+type(exc).__name__)
+        return 2
+
+if __name__=="__main__":
+    raise SystemExit(main())
