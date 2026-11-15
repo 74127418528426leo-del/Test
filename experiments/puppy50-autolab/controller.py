@@ -5,19 +5,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_PATH = "experiments/puppy50-autolab/state.json"
-NICE = [-10,-9,-11,-8,-12,-13]
-ZSTD = [3,1,2,4,5,6]
+NICE = [-10,-9,-11,-8,-12,-7,-13,-6,-5]
+ZSTD = [3,2,4,1,5,6,7,8]
 CANDIDATES = [{"id": f"nice{n}_zstd{z}", "nice": n, "zstd": z} for n in NICE for z in ZSTD]
 BOOTS = {"bios1","uefi1","bios2","uefi2"}
 
 def utc():
     return datetime.now(timezone.utc).isoformat()
 
-def api(method, body=None):
+def api(method, body=None, path=STATE_PATH):
     token=os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
     repo=os.environ["GITHUB_REPOSITORY"]
     if not token: raise RuntimeError("GitHub token missing")
-    url=f"https://api.github.com/repos/{repo}/contents/{STATE_PATH}"
+    url=f"https://api.github.com/repos/{repo}/contents/{path}"
     if method=="GET": url+="?ref=puppy50-autolab-state"
     data=None if body is None else json.dumps(body).encode()
     request=urllib.request.Request(url,method=method,data=data,headers={
@@ -44,11 +44,33 @@ def save_state(state,sha):
 def trials(state,id):
     return [x for x in state["history"] if x["candidate_id"]==id]
 
+def queued_candidates():
+    """Only load allowlisted numeric AI hypotheses. Never execute agent code."""
+    try:
+        obj=api("GET",path="research_lab/queue.json")
+        data=json.loads(base64.b64decode(obj["content"]).decode())
+    except urllib.error.HTTPError as e:
+        if e.code==404: return []
+        raise
+    found=[]
+    allowed={(c["nice"],c["zstd"]):c for c in CANDIDATES}
+    for candidate in data.get("candidates",[]):
+        if not isinstance(candidate,dict):continue
+        n,z=candidate.get("nice"),candidate.get("zstd")
+        if type(n) is not int or type(z) is not int:continue
+        selected=allowed.get((n,z))
+        if selected and selected not in found:found.append(selected)
+    return found
+
 def choose(state):
     if state["vm_goal_verified"]: return None,"VM verification complete; physical verification still required"
     for c in CANDIDATES:
         t=trials(state,c["id"])
         if len(t)==1 and t[0]["vm_passed"]: return c,"repeat promising result on independent run"
+    # AI-proposed numeric parameters receive priority, but still obey all VM gates.
+    for c in queued_candidates():
+        if len(trials(state,c["id"]))<2:
+            return c,"research-lab proposed, allowlisted VM candidate"
     pending=[c for c in CANDIDATES if len(trials(state,c["id"]))<2]
     if not pending: return None,"candidate catalog exhausted; new hypotheses required"
     pending.sort(key=lambda c:len(trials(state,c["id"])))
