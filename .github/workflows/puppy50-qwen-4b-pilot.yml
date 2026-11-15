@@ -1,0 +1,76 @@
+name: Puppy50 Qwen 4B Engineering Quality Pilot
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/puppy50-qwen-4b-pilot.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-qwen-4b-quality-pilot
+  cancel-in-progress: true
+jobs:
+  four_billion_cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      P50_LOCAL_QWEN_MODEL: Qwen3.5-4B-Q4_K_M.gguf
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified open-weight Qwen3.5 4B Q4_K_M (2.78GB)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          curl -fL --retry 3 --connect-timeout 30 --max-time 900 \
+            "https://huggingface.co/twoody/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf" \
+            -o models/Qwen3.5-4B-Q4_K_M.gguf
+          echo 'b7508d8b4a652bc020a439aafdd4ce1527d49774865ce3334a43b16dbeaa90ca  models/Qwen3.5-4B-Q4_K_M.gguf' | sha256sum -c -
+      - name: Start Qwen 4B llama.cpp CPU server in isolated loopback container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/ggml-org/llama.cpp:server
+          docker run -d --name puppy50-qwen-4b --network host --memory 6g --cpus 3 \
+            -v "$PWD/models:/models:ro" ghcr.io/ggml-org/llama.cpp:server \
+            -m /models/Qwen3.5-4B-Q4_K_M.gguf \
+            --host 127.0.0.1 --port 8080 --ctx-size 4096 \
+            --threads 2 --parallel 1 --jinja --n-gpu-layers 0
+      - name: Four real 4B model research hypotheses with JSON schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import time,json,urllib.request
+          deadline=time.monotonic()+150
+          while time.monotonic()<deadline:
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=4) as r:
+                      if json.load(r).get('status')=='ok':break
+              except Exception:time.sleep(3)
+          else:raise RuntimeError('Model did not become healthy')
+          PY
+          python3 research_lab/qwen_128_batch.py \
+            --shard-index 0 --shard-count 4 --limit 4 --parallel 2 \
+            --output pilot/qwen4b-engineering4.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('pilot/qwen4b-engineering4.json'))
+          print('Real 4B replies:',d['model_responses_received'])
+          print('Schema-safe replies:',d['safe_strict_json_responses'])
+          print('Specific hypotheses (heuristic only):',d['specific_hypotheses_heuristic'])
+          assert d['model_responses_received']==4
+          assert d['safe_strict_json_responses']==4
+          PY
+      - name: Save authentic evidence (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-qwen4b-real-cpu-engineering-quality
+          path: pilot/qwen4b-engineering4.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Destroy temporary CPU model server
+        if: always()
+        run: docker rm -f puppy50-qwen-4b 2>/dev/null || true
