@@ -559,8 +559,88 @@
       "role": "offline-planner",
       "source": "deterministic_scheduler",
       "zstd": 8
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=3 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd3",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 3
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=2 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd2",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 2
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=4 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd4",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 4
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=1 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd1",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 1
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=5 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd5",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 5
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=6 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd6",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 6
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=7 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd7",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 7
+    },
+    {
+      "architecture_idea": "The unchanged kernel, root, browser sandbox and recovery must be verified.",
+      "critic": "strict allowlist validation",
+      "hypothesis": "Controlled n=-6 and zstd=8 comparison; measure the real ISO, not a surrogate.",
+      "id": "nice-6_zstd8",
+      "nice": -6,
+      "role": "offline-planner",
+      "source": "deterministic_scheduler",
+      "zstd": 8
     }
   ],
   "schema": 1,
-  "updated_at": "2026-11-15T22:40:36.216841+00:00"
+  "updated_at": "2026-11-15T22:40:54.988812+00:00"
 }
