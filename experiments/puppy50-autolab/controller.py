@@ -79,8 +79,8 @@ def choose(state):
     # Test one-variable prefetch hypotheses once each before broad numeric sweeps.
     # Failed hypotheses are not automatically repeated unless they passed once.
     for c in PREFETCH_CANDIDATES:
-        if not trials(state,c["id"]):
-            return c,"isolated structural libxul prefetch experiment"
+        if len(trials(state,c["id"]))<2:
+            return c,"independent structural prefetch replication and same-host matched control"
     # AI-proposed numeric parameters receive priority, but still obey all VM gates.
     for c in queued_candidates():
         if len(trials(state,c["id"]))<2:
@@ -159,7 +159,9 @@ def main():
                    "vm_diagnostics":(partial.get("vm_failures") if isinstance(partial,dict) else None),
                    "ram_ready_seconds":(partial.get("ram_ready_seconds") if isinstance(partial,dict) else None),
                    "post_eject_http200_by_boot":(partial.get("post_eject_http200_by_boot") if isinstance(partial,dict) else None),
-                   "iso_sha256":report.get("sha256") if isinstance(report,dict) else None}
+                   "iso_sha256":report.get("sha256") if isinstance(report,dict) else None,
+                   "matched_prefetch_control":(report.get("matched_prefetch_control")
+                      if isinstance(report,dict) else None)}
             state["history"].append(entry)
             successes=[x for x in trials(state,a.candidate) if x["vm_passed"]]
             if len({x["run_id"] for x in successes})>=2:
