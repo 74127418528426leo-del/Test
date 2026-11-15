@@ -52,11 +52,16 @@ def send(task):
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--parallel",type=int,default=4)
+    p.add_argument("--shard-index",type=int,default=0)
+    p.add_argument("--shard-count",type=int,default=1)
     p.add_argument("--output",default="cpu-smoke-results/batch128.json")
     a=p.parse_args()
     if not 1<=a.parallel<=4:raise SystemExit("parallel capped at four CPU request slots")
-    tasks=task_grid()
-    if len(tasks)!=128 or len({x["task_id"] for x in tasks})!=128:raise AssertionError("bad grid")
+    all_tasks=task_grid()
+    if len(all_tasks)!=128 or len({x["task_id"] for x in all_tasks})!=128:raise AssertionError("bad grid")
+    if not 1<=a.shard_count<=8 or not 0<=a.shard_index<a.shard_count:
+        raise SystemExit("invalid bounded worker shard")
+    tasks=all_tasks[a.shard_index::a.shard_count]
     started=time.monotonic()
     with ThreadPoolExecutor(max_workers=a.parallel) as pool:
         records=list(pool.map(send,tasks))
@@ -67,6 +72,8 @@ def main():
         "utc":datetime.now(timezone.utc).isoformat(),
         "model":MODEL,
         "real_cpu_model_requests_attempted":len(records),
+        "shard_index":a.shard_index,"shard_count":a.shard_count,
+        "total_logical_research_slots":len(all_tasks),
         "model_responses_received":received,
         "safe_strict_json_responses":valid,
         "attempted_parallel_slots":a.parallel,
@@ -80,7 +87,7 @@ def main():
     out=Path(a.output);out.parent.mkdir(parents=True,exist_ok=True)
     out.write_text(json.dumps(stats,indent=2)+"\n")
     print(json.dumps({k:v for k,v in stats.items() if k!="results"},indent=2))
-    if received!=128:
-        raise SystemExit(f"Only {received}/128 actual model responses; investigation required")
-    print("ALL 128 REAL QWEN MODEL REQUESTS ANSWERED; strict JSON:",valid)
+    if received!=len(tasks):
+        raise SystemExit(f"Only {received}/{len(tasks)} actual model responses; investigation required")
+    print(f"ALL {len(tasks)} REAL QWEN MODEL REQUESTS ANSWERED (shard {a.shard_index}/{a.shard_count}); strict JSON:",valid)
 if __name__=="__main__":main()
