@@ -215,6 +215,15 @@ def ai_hypotheses(provider,tasks,taken,history,max_new,max_calls,max_parallel):
     budget=min(max_calls//2, max_new, len(tasks))
     if budget<1: return [],["need at least 2 model calls for proposer+critic"]
     prior_ids={x.get("candidate_id") for x in history}
+    # Ground the researchers in actual VM feedback; no invented performance.
+    # Keep only bounded, non-secret evidence from previous tracked runs.
+    recent=[
+        {"candidate_id":str(x.get("candidate_id",""))[:64],
+         "vm_passed":x.get("vm_passed") is True,
+         "reason":str(x.get("reason",""))[:160],
+         "first_frame_seconds":x.get("frames")}
+        for x in history[-12:] if isinstance(x,dict)
+    ]
     def propose(task):
         response=provider.call(INSTRUCTIONS,(
             f"Research role: {task['role']}; task {task['task_id']}. "
@@ -222,6 +231,8 @@ def ai_hypotheses(provider,tasks,taken,history,max_new,max_calls,max_parallel):
             f"Current candidates already queued: {sorted(ident(*k) for k in taken)[:50]}. "
             f"Return a creative but safe distinct compression / niceness hypothesis; "
             f"add a separate unexecuted architectural idea if useful. "
+            f"Observed prior verified VM ledger (failures included): {json.dumps(recent,sort_keys=True)}. "
+            f"Use the ledger as feedback and NEVER claim a result that has not passed independently. "
             f"Never assert benchmark results."))
         return task,validate(response)
     # Rotate specialties across cycles; no cycle exhausts the same role repeatedly.
