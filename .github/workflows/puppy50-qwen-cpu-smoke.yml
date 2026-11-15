@@ -1,0 +1,89 @@
+name: Puppy50 Real Qwen CPU Inference Smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/puppy50-qwen-cpu-smoke.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-real-qwen-cpu-smoke
+  cancel-in-progress: false
+jobs:
+  qwen_cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download one real open-weight Qwen 0.8B model; verify exact SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          curl --fail --location --retry 3 --connect-timeout 25 --max-time 420 \
+            "https://huggingface.co/axteam/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf" \
+            -o models/Qwen3.5-0.8B-Q4_K_M.gguf
+          echo 'b4e71cb32694733ba40c69e595a0524dfbc2cabe3c28fb7fef99eed4cf8730bf  models/Qwen3.5-0.8B-Q4_K_M.gguf' | sha256sum -c -
+      - name: Start official llama.cpp CPU-only server on loopback
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/ggml-org/llama.cpp:server
+          docker run -d --name puppy50-qwen-cpu --network host \
+            --memory 5g --cpus 3 \
+            -v "$PWD/models:/models:ro" \
+            ghcr.io/ggml-org/llama.cpp:server \
+            -m /models/Qwen3.5-0.8B-Q4_K_M.gguf \
+            --host 127.0.0.1 --port 8080 --ctx-size 2048 \
+            --threads 2 --parallel 1 --jinja --n-gpu-layers 0
+          python3 - <<'PY'
+          import json,time,urllib.request
+          deadline=time.monotonic()+120
+          while time.monotonic()<deadline:
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3) as response:
+                      obj=json.load(response)
+                  if obj.get('status')=='ok':
+                      print('REAL QWEN CPU SERVER HEALTHY')
+                      break
+              except Exception:
+                  time.sleep(3)
+          else:
+              raise RuntimeError('Local Qwen did not become healthy')
+          PY
+      - name: Perform TWO real Qwen model requests: researcher and independent critic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 research_lab/cpu_qwen_smoke.py --output cpu-smoke-results/smoke.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('cpu-smoke-results/smoke.json'))
+          assert d['independent_model_requests']==2
+          assert d['real_text_inference_confirmed']
+          print('REAL QWEN INFERENCE PASSED (CPU, not 27B)')
+          print('Agent JSON passed:',d['strict_agent_json_confirmed'])
+          PY
+      - name: Publish accurate machine-readable evidence
+        if: always()
+        shell: bash
+        run: |
+          if [ -f cpu-smoke-results/smoke.json ]; then
+            echo '## Real open-weight model inference test' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Qwen3.5-0.8B CPU model; two actual inference requests, no OS boot test.' >> "$GITHUB_STEP_SUMMARY"
+            cat cpu-smoke-results/smoke.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('Real inference:', d['real_text_inference_confirmed'], 'Strict JSON:',d['strict_agent_json_confirmed'])" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          docker logs puppy50-qwen-cpu --tail 100 > cpu-qwen-container.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-real-qwen-cpu-smoke
+          path: |
+            cpu-smoke-results/smoke.json
+            cpu-qwen-container.log
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Shut down isolated model server
+        if: always()
+        run: docker rm -f puppy50-qwen-cpu 2>/dev/null || true
