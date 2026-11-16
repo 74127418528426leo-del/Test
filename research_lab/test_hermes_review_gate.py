@@ -57,9 +57,9 @@ class HermesReviewGateTests(unittest.TestCase):
         result = gate.validate_report(report, sample_state(), calls)
         self.assertTrue(result["agent_report_consistent"])
 
-    def test_accepts_case_variant_of_packet_name_after_successful_read(self):
+    def test_accepts_canonical_packet_filename_after_successful_read(self):
         transcript = sample_transcript().replace(
-            "Read review-input.json", "Read Review-Input.json"
+            "Read review-input.json", "Read packet.json"
         )
         report, calls = gate.parse_hermes_transcript(transcript)
         result = gate.validate_report(report, sample_state(), calls)

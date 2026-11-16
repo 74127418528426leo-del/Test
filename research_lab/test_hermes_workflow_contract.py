@@ -18,10 +18,8 @@ class HermesWorkflowContractTests(unittest.TestCase):
         cwd_line = 'cwd: "$GITHUB_WORKSPACE/agent-work"'
         self.assertIn("terminal:", prepare)
         self.assertIn(cwd_line, prepare)
-        self.assertIn(
-            "cp agent-work/review-input.json agent-work/Review-Input.json",
-            prepare,
-        )
+        self.assertIn('Path("agent-work/packet.json")', prepare)
+        self.assertIn("path packet.json", prepare)
         self.assertNotIn("git archive HEAD", prepare)
         self.assertLess(
             workflow.index(cwd_line),

@@ -11,7 +11,7 @@ import stat
 from urllib.parse import urlsplit
 
 TOOL_NAME = "p50_read_review_input"
-PACKET_NAME = "review-input.json"
+PACKET_NAME = "packet.json"
 MAX_PACKET_BYTES = 4096
 MAX_TOOL_CALLS = 1
 MAX_LLM_CALLS = 3
@@ -158,7 +158,7 @@ def resolve_packet_root(packet: str | Path) -> Path:
     """Reject a packet symlink before deriving the only readable directory."""
     path = Path(packet)
     if path.name != PACKET_NAME or path.is_symlink():
-        raise ValueError("packet must be a regular review-input.json, not a symlink")
+        raise ValueError("packet must be a regular packet.json, not a symlink")
     metadata = path.lstat()
     if not stat.S_ISREG(metadata.st_mode):
         raise ValueError("review packet must be a regular file")
@@ -198,6 +198,22 @@ def summarize_agent_messages(messages: list) -> dict:
         "assistant_final_preview": assistant_preview,
         "assistant_preview_truncated": len(assistant_preview) == 512,
     }
+
+
+def _collect_agent_chunks(bot, audit: list[dict]) -> list:
+    """Force the evidence tool for turn one, then allow a final text response."""
+    bot.llm.generate_cfg["function_choice"] = TOOL_NAME
+    chunks = []
+    for chunk in bot.run(messages=[{
+        "role": "user",
+        "content": "Read the evidence packet with your tool and return the required JSON.",
+    }], seed=42, lang="en"):
+        chunks.append(chunk)
+        if audit and audit[-1].get("status") == "read":
+            # Qwen-Agent merges this config into every request. Release the
+            # forced choice only after the fixed packet was actually read.
+            bot.llm.generate_cfg["function_choice"] = "auto"
+    return chunks
 
 
 def run_agent(base_url: str, packet: Path, state: dict, diagnostics: dict | None = None) -> dict:
@@ -243,10 +259,7 @@ def run_agent(base_url: str, packet: Path, state: dict, diagnostics: dict | None
         system_message=SYSTEM_MESSAGE,
         name="Puppy50 bounded evidence reviewer",
     )
-    chunks = list(bot.run(messages=[{
-        "role": "user",
-        "content": "Read the review packet with your tool and return the required JSON.",
-    }], seed=42, lang="en"))
+    chunks = _collect_agent_chunks(bot, audit)
     if not chunks or not isinstance(chunks[-1], list):
         raise ValueError("Qwen-Agent returned no final message list")
     messages = chunks[-1]

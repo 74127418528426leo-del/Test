@@ -73,19 +73,18 @@ jobs:
               "test_summary": "Offline regression and shell syntax checks passed.",
               "limitation": "One same-host run; sampled page detection, not exact first Firefox frame; independent replication required."
           }
-          Path("agent-work/review-input.json").write_text(
+          Path("agent-work/packet.json").write_text(
               json.dumps(packet, indent=2, sort_keys=True) + "\n")
           PY
           cat > agent-work/agent-context/task.md <<'TASK'
-          Use Hermes read_file exactly once to read:
-          Review-Input.json
+          Call Hermes read_file exactly once with the path packet.json.
+          Use that exact filename; do not list or search for files.
           Copy all six values exactly into one raw JSON object with exactly these keys:
           run_id, candidate_mean_seconds, control_mean_seconds, goal_verified,
           test_summary, limitation.
           Do not read any other file, call another tool, invent facts, or add prose.
           Do not claim that this packet independently verifies a Puppy50 boot.
           TASK
-          cp agent-work/review-input.json agent-work/Review-Input.json
           cat > "$RUNNER_TEMP/hermes-home/config.yaml" <<CONFIG
           model:
             provider: custom
@@ -104,8 +103,7 @@ jobs:
           from pathlib import Path
           root = (Path(os.environ["GITHUB_WORKSPACE"]) / "agent-work").resolve()
           expected = {
-              "review-input.json",
-              "Review-Input.json",
+              "packet.json",
               "agent-context/task.md",
           }
           actual = {
@@ -114,8 +112,6 @@ jobs:
           }
           if actual != expected:
               raise SystemExit(f"unexpected agent workspace files: {sorted(actual)}")
-          if (root / "review-input.json").read_bytes() != (root / "Review-Input.json").read_bytes():
-              raise SystemExit("Hermes/Qwen packet aliases differ")
           config = Path(os.environ["RUNNER_TEMP"]) / "hermes-home/config.yaml"
           if f'  cwd: "{root}"' not in config.read_text(encoding="utf-8"):
               raise SystemExit("Hermes terminal.cwd is not the isolated review workspace")
@@ -350,7 +346,7 @@ jobs:
               PYTHONDONTWRITEBYTECODE=1 \
               "$python_bin" research_lab/qwen_agent_pilot.py \
                 --base-url http://127.0.0.1:8088/v1 \
-                --packet agent-work/review-input.json \
+                --packet agent-work/packet.json \
                 --state lab-state/experiments/puppy50-autolab/state.json \
                 --output agent-evidence/qwen-agent-review.json \
             > agent-evidence/qwen-agent-run.log 2>&1

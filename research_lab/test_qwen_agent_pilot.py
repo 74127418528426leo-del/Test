@@ -35,14 +35,39 @@ def sample_report():
 
 
 class QwenAgentPilotTests(unittest.TestCase):
+    def test_agent_forces_tool_once_then_returns_to_auto_after_real_read(self):
+        audit = []
+
+        class FakeLLM:
+            generate_cfg = {}
+
+        class FakeBot:
+            llm = FakeLLM()
+
+            def __init__(self):
+                self.choices = []
+
+            def run(self, **kwargs):
+                self.choices.append(self.llm.generate_cfg["function_choice"])
+                yield [{"role": "assistant", "content": "tool call"}]
+                audit.append({"status": "read"})
+                yield [{"role": "function", "content": "packet"}]
+                self.choices.append(self.llm.generate_cfg["function_choice"])
+                yield [{"role": "assistant", "content": "report"}]
+
+        bot = FakeBot()
+        chunks = pilot._collect_agent_chunks(bot, audit)
+        self.assertEqual(bot.choices, [pilot.TOOL_NAME, "auto"])
+        self.assertEqual(chunks[-1][0]["content"], "report")
+
     def test_tool_schema_is_argument_free_and_normalizes_to_fixed_packet(self):
         self.assertEqual(pilot.TOOL_PARAMETERS, [])
-        self.assertEqual(pilot._parse_tool_args({}), {"path": "review-input.json"})
-        self.assertEqual(pilot._parse_tool_args("{}"), {"path": "review-input.json"})
+        self.assertEqual(pilot._parse_tool_args({}), {"path": "packet.json"})
+        self.assertEqual(pilot._parse_tool_args("{}"), {"path": "packet.json"})
         for params in (
-            {"path": "review-input.json"},
-            {"path": "path-review-input.json"},
-            {"path": "../review-input.json"},
+            {"path": "packet.json"},
+            {"path": "path-packet.json"},
+            {"path": "../packet.json"},
         ):
             with self.subTest(params=params), self.assertRaises(ValueError):
                 pilot._parse_tool_args(params)
@@ -51,7 +76,7 @@ class QwenAgentPilotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             payload = '{"run_id":"safe"}\n'
-            (root / "review-input.json").write_text(payload)
+            (root / "packet.json").write_text(payload)
             audit = []
             self.assertEqual(
                 pilot.safe_read_review_packet(root, {}, audit),
@@ -60,7 +85,7 @@ class QwenAgentPilotTests(unittest.TestCase):
             self.assertEqual(audit, [{
                 "call": 1,
                 "tool": pilot.TOOL_NAME,
-                "path": "review-input.json",
+                "path": "packet.json",
                 "status": "read",
                 "bytes": len(payload.encode()),
                 "sha256": hashlib.sha256(payload.encode()).hexdigest(),
@@ -69,12 +94,12 @@ class QwenAgentPilotTests(unittest.TestCase):
     def test_tool_rejects_traversal_absolute_paths_and_extra_parameters(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "review-input.json").write_text("{}")
+            (root / "packet.json").write_text("{}")
             for params in (
-                {"path": "../review-input.json"},
-                {"path": str(root / "review-input.json")},
-                {"path": "review-input.json", "other": "x"},
-                {"path": "path-review-input.json"},
+                {"path": "../packet.json"},
+                {"path": str(root / "packet.json")},
+                {"path": "packet.json", "other": "x"},
+                {"path": "path-packet.json"},
             ):
                 with self.subTest(params=params), self.assertRaises(ValueError):
                     pilot.safe_read_review_packet(root, params, [])
@@ -84,11 +109,11 @@ class QwenAgentPilotTests(unittest.TestCase):
             root = Path(directory)
             target = root / "outside.json"
             target.write_text("{}")
-            (root / "review-input.json").symlink_to(target)
+            (root / "packet.json").symlink_to(target)
             with self.assertRaises(ValueError):
                 pilot.safe_read_review_packet(root, {}, [])
-            (root / "review-input.json").unlink()
-            (root / "review-input.json").write_text("{}")
+            (root / "packet.json").unlink()
+            (root / "packet.json").write_text("{}")
             audit = []
             pilot.safe_read_review_packet(root, {}, audit)
             with self.assertRaises(ValueError):
@@ -99,7 +124,7 @@ class QwenAgentPilotTests(unittest.TestCase):
     def test_tool_rejects_oversized_packet(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "review-input.json").write_bytes(
+            (root / "packet.json").write_bytes(
                 b"x" * (pilot.MAX_PACKET_BYTES + 1)
             )
             with self.assertRaisesRegex(ValueError, "byte limit"):
@@ -112,9 +137,9 @@ class QwenAgentPilotTests(unittest.TestCase):
             root = Path(directory)
             other = root / "elsewhere"
             other.mkdir()
-            (other / "review-input.json").write_text("{}")
-            packet = root / "review-input.json"
-            packet.symlink_to(other / "review-input.json")
+            (other / "packet.json").write_text("{}")
+            packet = root / "packet.json"
+            packet.symlink_to(other / "packet.json")
             with self.assertRaisesRegex(ValueError, "not a symlink"):
                 pilot.resolve_packet_root(packet)
             packet.unlink()
@@ -132,7 +157,7 @@ class QwenAgentPilotTests(unittest.TestCase):
             pilot.parse_model_report("```json\n" + encoded + "\n```")
 
     def test_gate_requires_one_successful_real_tool_execution_and_matches_state(self):
-        audit = [{"tool": pilot.TOOL_NAME, "status": "read", "path": "review-input.json"}]
+        audit = [{"tool": pilot.TOOL_NAME, "status": "read", "path": "packet.json"}]
         verified = pilot.validate_agent_run(sample_report(), audit, sample_state())
         self.assertTrue(verified["agent_report_consistent"])
         self.assertIn("Qwen-Agent", verified["scope"])
