@@ -1,18 +1,20 @@
 # Qwen + Hermes / OpenClaude / OpenCode integration
 
 **Status (updated November 16, 2026):** Hermes passed its credential-free
-review gate in runs 43906628085, 43913391779, and 43914318295, each making
-two calls and reading only the prepared packet. Run 43912198706 made zero tool
-calls, so Hermes tool-selection reliability is not established. These reviews
-do not certify a Puppy50 boot or provide an always-on supervisor.
+review gate in runs 43906628085, 43913391779, and 43914318295. It made zero
+file-tool calls in runs 43912198706 and 43917314867; the latest transcript says
+it could not find the packet because `TERMINAL_CWD` was removed from its
+isolated environment. The workflow now supplies the prepared review workspace
+as Hermes' explicit terminal cwd. These checks do not certify Puppy50 boots
+or provide an always-on supervisor.
 
-The Qwen3.5-0.8B CPU workflow now tests a separately bounded Qwen-Agent worker.
-Its first three attempts all stopped during framework import: missing NumPy
-(43912198706), SoundFile (43913391779), then tqdm (43914318295). No
-Qwen-Agent model request was made. The next run explicitly pins those
-dependencies plus python-dateutil and checks the actual Assistant/BaseTool
-imports before launching the worker. Neither Qwen3.8 GPU inference nor a
-persistent Hermes service is provisioned. OpenClaude has not been exercised.
+The Qwen3.5-0.8B CPU workflow now imports and invokes pinned Qwen-Agent 0.0.34.
+Run 43917314867 reached the local model, but the final report failed JSON
+parsing at the 256-token cap. The prior failure record omitted the assistant
+preview and tool audit, so tool execution is unconfirmed. The next attempt
+raises the cap to 512, disables reasoning output, and records bounded
+diagnostics. No Qwen3.8 GPU host, persistent Hermes service, or OpenClaude
+worker is provisioned.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
@@ -110,19 +112,19 @@ The experimental workflow installs Qwen-Agent from immutable source commit
 `31a4d36d123688581a9e9744427272b33ce940e0` (package version 0.0.34) and runs
 its Assistant/function-calling loop against the loopback llama.cpp endpoint.
 The worker is limited to one tool that reads exactly `review-input.json`, one
-successful tool execution, three local model calls, and a 180-second wall-clock
-limit. The process receives no GitHub token, uses the loopback model endpoint,
-and has no shell or write tool. It is not network-namespace isolated. The
-deterministic gate rejects a missing or extra tool call, invalid report, or
-disagreement with durable state.
-Runs 439121, 439133, and 439143 installed the pinned source but failed
-during eager framework imports: missing NumPy, SoundFile, and tqdm respectively.
-None made a Qwen-Agent model request. The workflow now explicitly pins NumPy
-2.5.4, SoundFile 0.14.0, tqdm 4.70.1, and python-dateutil 2.9.0.post0; it
-checks the actual Assistant and BaseTool import path, captures the resolved
-package freeze, and then retries the worker. The framework source is
-commit-pinned, but its transitive dependencies are not locked. This pilot is
-not ready for persistent deployment.
+successful tool execution, three local model calls, a 512-token output cap,
+and a 180-second wall-clock limit. The process receives no GitHub token, uses
+the loopback model endpoint, and has no shell or write tool. It is not
+network-namespace isolated. The deterministic gate rejects missing/extra tool
+calls, invalid reports, and disagreement with durable state.
+
+Runs 439121, 439133, and 439143 failed during eager imports on NumPy, SoundFile,
+and tqdm. Run 439173 passed import and reached the local model but failed final
+JSON parsing at the 256-token cap; the response and tool audit were not kept.
+The workflow raises the output cap, disables reasoning output, and adds bounded
+failure diagnostics. It also fixes Hermes' explicit review-workspace cwd. The
+full transitive dependency set is not locked, so this pilot is not ready for
+persistent deployment.
 
 See [AI agent and provider research](AI_AGENT_AND_PROVIDER_RESEARCH.md) for
 provider costs, open-source integration boundaries, and the recommended worker

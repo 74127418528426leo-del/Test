@@ -15,7 +15,7 @@ PACKET_NAME = "review-input.json"
 MAX_PACKET_BYTES = 4096
 MAX_TOOL_CALLS = 1
 MAX_LLM_CALLS = 3
-MAX_OUTPUT_TOKENS = 256
+MAX_OUTPUT_TOKENS = 512
 MODEL_ID = "p50-qwen35-review"
 EXPECTED_TEST_SUMMARY = "Offline regression and shell syntax checks passed."
 EXPECTED_LIMITATION = (
@@ -23,11 +23,12 @@ EXPECTED_LIMITATION = (
     "independent replication required."
 )
 SYSTEM_MESSAGE = (
-    "You are a read-only evidence reviewer. Use the one available tool exactly "
-    "once to read review-input.json, then copy its six values into one raw JSON "
-    "object with keys run_id, candidate_mean_seconds, control_mean_seconds, "
-    "goal_verified, test_summary, limitation. Do not read another file, invent "
-    "facts, or add prose. The packet does not independently certify a Puppy50 boot."
+    "You are a read-only evidence reviewer. Call p50_read_review_input exactly "
+    "once with path review-input.json; this call is required. After the tool "
+    "returns, copy all six values exactly into one minified raw JSON object with "
+    "keys run_id, candidate_mean_seconds, control_mean_seconds, goal_verified, "
+    "test_summary, limitation. Output no explanation, markdown, or invented "
+    "facts. Do not call another tool. The packet does not certify a Puppy50 boot."
 )
 
 
@@ -164,7 +165,39 @@ def resolve_packet_root(packet: str | Path) -> Path:
     return root
 
 
-def run_agent(base_url: str, packet: Path, state: dict) -> dict:
+def summarize_agent_messages(messages: list) -> dict:
+    """Keep only bounded diagnostics needed to explain a failed model turn."""
+    roles = []
+    tool_names = []
+    assistant_preview = ""
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        roles.append(str(message.get("role", ""))[:32])
+        calls = message.get("tool_calls")
+        if isinstance(calls, list):
+            for call in calls:
+                function = call.get("function") if isinstance(call, dict) else None
+                name = function.get("name") if isinstance(function, dict) else None
+                if isinstance(name, str):
+                    tool_names.append(name[:80])
+        legacy = message.get("function_call")
+        if isinstance(legacy, dict) and isinstance(legacy.get("name"), str):
+            tool_names.append(legacy["name"][:80])
+        if message.get("role") == "assistant":
+            try:
+                assistant_preview = _content_text(message)[:512]
+            except ValueError:
+                pass
+    return {
+        "message_roles": roles[:12],
+        "model_tool_call_names": tool_names[:4],
+        "assistant_final_preview": assistant_preview,
+        "assistant_preview_truncated": len(assistant_preview) == 512,
+    }
+
+
+def run_agent(base_url: str, packet: Path, state: dict, diagnostics: dict | None = None) -> dict:
     """Run pinned Qwen-Agent against local Qwen with one credential-free tool."""
     _require_loopback_endpoint(base_url)
     packet_root = resolve_packet_root(packet)
@@ -176,6 +209,8 @@ def run_agent(base_url: str, packet: Path, state: dict) -> dict:
     # this experimental worker to three local completions and one tool call.
     fncall_module.MAX_LLM_CALL_PER_RUN = MAX_LLM_CALLS
     audit: list[dict] = []
+    if diagnostics is not None:
+        diagnostics["tool_events"] = audit
 
     class ReviewInputTool(BaseTool):
         name = TOOL_NAME
@@ -200,6 +235,7 @@ def run_agent(base_url: str, packet: Path, state: dict) -> dict:
             "top_p": 0.1,
             "max_tokens": MAX_OUTPUT_TOKENS,
             "max_input_tokens": 8192,
+            "reasoning_effort": "none",
             "use_raw_api": False,
         },
     }
@@ -216,6 +252,8 @@ def run_agent(base_url: str, packet: Path, state: dict) -> dict:
     if not chunks or not isinstance(chunks[-1], list):
         raise ValueError("Qwen-Agent returned no final message list")
     messages = chunks[-1]
+    if diagnostics is not None:
+        diagnostics.update(summarize_agent_messages(messages))
     calls = [m for m in messages if isinstance(m, dict) and m.get("role") == "function"]
     if len(calls) != len(audit):
         raise ValueError("Qwen-Agent function messages do not match executed tool calls")
@@ -224,7 +262,11 @@ def run_agent(base_url: str, packet: Path, state: dict) -> dict:
     ]
     if not assistant_messages:
         raise ValueError("Qwen-Agent returned no assistant response")
-    report = parse_model_report(_content_text(assistant_messages[-1]))
+    final_text = _content_text(assistant_messages[-1])
+    if diagnostics is not None:
+        diagnostics["assistant_final_preview"] = final_text[:512]
+        diagnostics["assistant_preview_truncated"] = len(final_text) > 512
+    report = parse_model_report(final_text)
     verified = validate_agent_run(report, audit, state)
     return {
         "passed": True,
@@ -247,9 +289,10 @@ def main() -> int:
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    diagnostics = {}
     try:
         state = json.loads(args.state.read_text(encoding="utf-8"))
-        evidence = run_agent(args.base_url, args.packet, state)
+        evidence = run_agent(args.base_url, args.packet, state, diagnostics)
         code = 0
     except Exception as exc:
         evidence = {
@@ -258,6 +301,7 @@ def main() -> int:
             "model": MODEL_ID,
             "error_type": type(exc).__name__,
             "error": str(exc)[:360],
+            "diagnostics": diagnostics,
         }
         code = 1
     args.output.parent.mkdir(parents=True, exist_ok=True)

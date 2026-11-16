@@ -22,7 +22,7 @@ def response(name=None, args=None, calls=None):
 class QwenToolCallProbeTests(unittest.TestCase):
     def test_payload_forces_one_bounded_nonexecuting_tool(self):
         p = probe.payload()
-        self.assertEqual(p["tool_choice"]["function"]["name"], probe.TOOL)
+        self.assertEqual(p["tool_choice"], "required")
         self.assertEqual(len(p["tools"]), 1)
         self.assertEqual(p["max_tokens"], 128)
         schema = p["tools"][0]["function"]["parameters"]
@@ -58,6 +58,19 @@ class QwenToolCallProbeTests(unittest.TestCase):
     def test_rejects_malformed_arguments(self):
         with self.assertRaisesRegex(ValueError, "invalid JSON"):
             probe.parse_response(response(args="{bad"))
+
+    def test_message_summary_records_roles_calls_and_bounds_output(self):
+        summary = pilot.summarize_agent_messages([
+            {"role": "assistant", "tool_calls": [{
+                "function": {"name": pilot.TOOL_NAME, "arguments": "{}"}
+            }]},
+            {"role": "function", "name": pilot.TOOL_NAME, "content": "private tool output"},
+            {"role": "assistant", "content": "x" * 600},
+        ])
+        self.assertEqual(summary["message_roles"], ["assistant", "function", "assistant"])
+        self.assertEqual(summary["model_tool_call_names"], [pilot.TOOL_NAME])
+        self.assertEqual(len(summary["assistant_final_preview"]), 512)
+        self.assertTrue(summary["assistant_preview_truncated"])
 
     def test_template_properties_are_diagnostic_only(self):
         self.assertEqual(

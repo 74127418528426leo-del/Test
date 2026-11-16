@@ -62,30 +62,30 @@ provider, so data handling must be reviewed as well as price.
    small-model tool use, not substantiate performance claims for a larger
    model.
 
-The new CI pilot is configured to test real Qwen-Agent tool selection with a
-single read-only tool that can open only `review-input.json`, allows at most
-one successful tool execution and three local model calls, and gives the
-process no GitHub credential, shell tool, or write tool. Its model endpoint is
-loopback; the runner process is not network-namespace isolated. The report is
-compared by the existing deterministic evidence gate. Hermes passed its report
-gate in runs 43906628085, 43913391779, and 43914318295, each making two calls
-and reading the prepared packet. Run 43912198706 made zero tool calls, so
-Hermes selection is not yet reliable. The boot goal remained false.
+The Qwen-Agent pilot uses one read-only packet tool, at most one
+successful tool execution, three local model calls, a 512-token output cap, and
+a 180-second wall-clock limit. The process receives no GitHub token, shell
+tool, or write tool. Its endpoint is loopback, but its process is not
+network-namespace isolated. Failed runs preserve tool events and a bounded
+assistant-response preview so a rejected report can be diagnosed.
 
-Qwen-Agent has not reached inference. The pinned package installs, but eager
-package imports exposed undeclared runtime dependencies sequentially:
-NumPy (43912198706), SoundFile (43913391779), then tqdm (43914318295). None of
-those runs sent a Qwen-Agent request. The next attempt explicitly pins NumPy,
-SoundFile, tqdm, and python-dateutil, and tests the actual Assistant and BaseTool
-imports before starting the worker. The earlier direct Qwen function-call
-canary forced the tool choice and did not execute a tool, so it is not counted
-as an agent success. Qwen-Agent results will be recorded separately from
-Hermes and OS boot benchmarks.
+Hermes passed its credential-free review gate in runs 43906628085,
+43913391779, and 43914318295. Runs 43912198706 and 43917314867 made zero file
+tool calls. In 439173, Hermes said it could not find `review-input.json`;
+the cleaned process environment had dropped `TERMINAL_CWD`, which the pinned
+file tools use to anchor paths. The next run supplies the isolated workspace
+explicitly. This is not an always-on service or boot verification.
 
-The framework source revision is pinned in the pilot, but its transitive Python
-dependencies are not yet locked. Before any persistent service is deployed,
-the environment needs a reproducible dependency lock, vulnerability review,
-and a dedicated sandbox; this first CI trial is a compatibility experiment.
+Qwen-Agent imports and reached the local model in run 43917314867, but its
+final response failed JSON parsing. The server log shows the last generation
+hit 256 tokens; truncation is likely, not confirmed because the old artifact
+omitted the response preview and tool audit. The next run raises the cap to
+512, disables reasoning text, and records bounded diagnostics.
+
+The direct Qwen canary previously sent object-form `tool_choice`; pinned
+llama.cpp logged a type mismatch and fell back to its default. The canary now
+uses its supported string form `"required"`; it tests serialization only and
+does not execute a tool. Qwen-Agent, Hermes, and OS results remain separate.
 
 ## Official sources
 

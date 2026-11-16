@@ -32,7 +32,7 @@ def payload():
                 },
             },
         }],
-        "tool_choice": {"type": "function", "function": {"name": TOOL}},
+        "tool_choice": "required",
         "parallel_tool_calls": False,
         "temperature": 0,
         "max_tokens": LIMIT,

@@ -200,7 +200,7 @@ jobs:
           env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/hermes-home" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
             "$server_bin" -m "$PWD/models/qwen35-review.gguf" --alias p50-qwen35-review \
             --host 127.0.0.1 --port 8088 --ctx-size 65536 --threads 2 --parallel 1 \
-            --jinja --n-gpu-layers 0 -n 256 \
+            --jinja --n-gpu-layers 0 -n 512 \
             > "$RUNNER_TEMP/p50-qwen35-server.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/p50-qwen35-server.pid"
           python3 - <<'PY'
@@ -262,7 +262,8 @@ jobs:
           (
             cd "$GITHUB_WORKSPACE/agent-work"
             env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" \
-              HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" PATH=/usr/bin:/bin \
+              HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" \
+              TERMINAL_CWD="$GITHUB_WORKSPACE/agent-work" PATH=/usr/bin:/bin \
               bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env" \
               python "$RUNNER_TEMP/hermes-source/hermes" chat \
               --oneshot --query-file agent-context/task.md \
