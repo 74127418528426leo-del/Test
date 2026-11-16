@@ -1,0 +1,157 @@
+name: Puppy50 Hermes review with local Qwen CPU
+on:
+  push:
+    branches: [main, puppy50-boot-measurement-integrity-20261116]
+    paths:
+      - '.github/workflows/puppy50-hermes-qwen-agent-pilot.yml'
+      - '.github/workflows/puppy50-autonomous-research.yml'
+      - 'research_lab/**'
+      - 'experiments/puppy50-autolab/**'
+  schedule:
+    # Daily bounded worker; scheduled events run from the default branch.
+    - cron: '17 5 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-hermes-qwen-review
+  cancel-in-progress: false
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-autolab-state
+          path: lab-state
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Run offline regression and shell checks
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q
+          bash -n research_lab/build_matched_control.sh
+      - name: Prepare a credential-free review copy and bounded task
+        run: |
+          set -euo pipefail
+          mkdir -p models agent-work agent-evidence "$RUNNER_TEMP/hermes-home"
+          git archive HEAD | tar -x -C agent-work
+          mkdir -p agent-work/agent-context
+          cp research_lab/RESULTS_2026-11-16.md agent-work/agent-context/
+          cp lab-state/experiments/puppy50-autolab/state.json agent-work/agent-context/
+          cp lab-state/research_lab/queue.json agent-work/agent-context/
+          cat > agent-work/agent-context/task.md <<'TASK'
+          Review the Puppy50 experiment branch as a cautious software verifier.
+          Use the local files and the terminal tool only. The model is a small
+          Qwen 1.5B CPU pilot; do not claim it is Qwen3.8 or an independent model.
+          Inspect the current boot workflow, matched-control builder, measurement
+          code, tests, and the supplied experiment history. Check whether the
+          latest kernel preservation audit compares both kernel paths in the
+          authenticated base ISO against the final candidate ISO and matched
+          control. Run only offline tests and syntax checks; do not build or boot
+          an ISO. Do not edit files, use the network, commit, push, merge, release,
+          or publish anything. Do not infer an outcome for any workflow still in
+          progress. Return a short report with checks performed, any concrete
+          defect or missing evidence, and limitations. Do not reveal private
+          reasoning; report conclusions only.
+          TASK
+          git -C agent-work init -q
+          git -C agent-work config user.name 'Puppy50 isolated Hermes review'
+          git -C agent-work config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C agent-work add -A
+          git -C agent-work commit -qm 'temporary review baseline'
+      - name: Restore or cache the pinned Qwen CPU model
+        uses: actions/cache@v4
+        id: qwen-cache
+        with:
+          path: models/coder.gguf
+          key: puppy50-qwen-coder-q4km-cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046
+      - name: Download and verify Qwen Coder model
+        run: |
+          set -euo pipefail
+          if ! test -f models/coder.gguf || ! echo 'cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046  models/coder.gguf' | sha256sum -c - >/dev/null 2>&1; then
+            curl -fL --retry 2 --connect-timeout 25 --max-time 420               'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'               -o models/coder.gguf
+          fi
+          echo 'cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046  models/coder.gguf' | sha256sum -c -
+      - name: Install pinned Hermes Agent source
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/hermes-venv"
+          "$RUNNER_TEMP/hermes-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir             'git+https://github.com/NousResearch/hermes-agent.git@3b421578588243f920886e6fe79a6faa87ea026e'
+          "$RUNNER_TEMP/hermes-venv/bin/hermes-agent" --version
+      - name: Configure Hermes to use only the local Qwen server
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/hermes-home/config.yaml" <<'CONFIG'
+          model:
+            provider: custom
+            default: p50-coder
+            base_url: http://127.0.0.1:8088/v1
+            api_key: local-cpu-only
+          terminal:
+            backend: local
+            timeout: 120
+          agent:
+            max_turns: 6
+          CONFIG
+      - name: Start sandboxed local CPU inference server
+        run: |
+          set -euo pipefail
+          img='ghcr.io/ggml-org/llama.cpp@sha256:89fe93c2ef53ea2d09ca9f53db8878a8f57bb6b143eb63c76a9c218fb583b392'
+          docker pull "$img"
+          docker run -d --name p50-hermes-qwen --memory 5g --cpus 2 --pids-limit 128             --cap-drop ALL --security-opt no-new-privileges --user 65534:65534             --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m             -p 127.0.0.1:8088:8080 -v "$PWD/models:/models:ro" "$img"             -m /models/coder.gguf --alias p50-coder --host 0.0.0.0 --port 8080             --ctx-size 8192 --threads 2 --parallel 1 --jinja --n-gpu-layers 0
+          python3 - <<'PY'
+          import json,time,urllib.request
+          deadline=time.monotonic()+120
+          while time.monotonic()<deadline:
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8088/health',timeout=3) as r:
+                      if json.load(r).get('status')=='ok': break
+              except Exception:
+                  time.sleep(2)
+          else:
+              raise RuntimeError('Local Qwen CPU server did not become healthy')
+          PY
+      - name: Run bounded Hermes review with no GitHub credentials
+        run: |
+          set -euo pipefail
+          set +e
+          (
+            cd agent-work
+            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" PATH="$PATH"               "$RUNNER_TEMP/hermes-venv/bin/hermes-agent"               --query-file agent-context/task.md               --model p50-coder               --base-url http://127.0.0.1:8088/v1               --max-turns 6               --enabled-toolsets file,terminal
+          ) > agent-evidence/hermes-session.log 2>&1
+          rc=$?
+          set -e
+          printf '%s\n' "$rc" > agent-evidence/hermes-exit-code.txt
+          test "$rc" -eq 0
+      - name: Capture review output and local model diagnostics
+        if: always()
+        run: |
+          set +e
+          mkdir -p agent-evidence
+          git -C agent-work status --short > agent-evidence/worktree-status.txt 2>&1
+          git -C agent-work diff --binary > agent-evidence/proposal.patch 2>&1
+          docker logs p50-hermes-qwen --tail 100 > agent-evidence/qwen-server.log 2>&1
+          set -e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-hermes-qwen-review-${{ github.run_id }}
+          path: agent-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Stop temporary local inference server
+        if: always()
+        run: docker rm -f p50-hermes-qwen 2>/dev/null || true
+      - name: Enforce review-only behavior
+        if: always()
+        run: |
+          test -f agent-evidence/hermes-exit-code.txt
+          test "$(cat agent-evidence/hermes-exit-code.txt)" = 0
+          test -z "$(git -C agent-work status --porcelain)"
