@@ -277,6 +277,25 @@
       "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43824576971",
       "artifact_id": 14205848402,
       "notes": "One runner, 3 BIOS and 2 UEFI boots per condition at 3072 MiB; historical report times are rounded, home-page sampling is not exact first paint."
+    },
+    {
+      "at": "2026-11-16T07:47:40Z",
+      "candidate_id": "parallel-secure-x11-cookie",
+      "run_id": "43825819475",
+      "source_job_id": "133159316703",
+      "vm_passed": false,
+      "iso_sha256": "005127ac735a46dcc54cd9be3f783f8ed025eaab07f834423d19a9d6cc838fbd",
+      "frames": {},
+      "vm_diagnostics": {
+        "bios1": "No Firefox home frame within 100 seconds; browser, media removal and post-eject HTTP were not verified."
+      },
+      "reason": "Experimental asynchronous cookie launcher failed its first BIOS boot; not a valid matched comparison.",
+      "post_eject_http200_by_boot": {},
+      "ram_ready_seconds": {},
+      "benchmark_timing_schema": 2,
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43825819475",
+      "artifact_id": 14205914885,
+      "notes": "Serial logged background cookie start and launcher entry but no cookie-ready or Xorg marker. Cause under investigation; no claim of a speedup."
     }
   ],
   "schema": 1,
