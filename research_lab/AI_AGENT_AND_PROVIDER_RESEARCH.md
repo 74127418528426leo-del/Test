@@ -70,9 +70,13 @@ loopback; the runner process is not network-namespace isolated. The report is
 compared by the existing deterministic evidence gate. Hermes' most recent
 successful check (run 43906628085) made two tool calls, read the prepared
 evidence packet, and returned matching values; the boot goal remained false.
+The next Hermes attempt (run 43912198706) made zero calls, so Hermes tool
+selection is still inconsistent. The first Qwen-Agent workflow attempt installed
+the framework but failed at import because NumPy was undeclared; it never sent
+a model request. The retry explicitly installs NumPy and is pending.
 The earlier direct Qwen function-call canary forced the tool choice and did not
 execute a tool, so it is not counted as an agent success. The unforced
-Qwen-Agent run is pending its first Actions result. Qwen-Agent results will be
+Qwen-Agent trial has no execution result yet. Qwen-Agent results will be
 recorded separately from Hermes and from OS boot benchmarks.
 
 The framework source revision is pinned in the pilot, but its transitive Python

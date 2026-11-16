@@ -293,17 +293,25 @@ jobs:
               > agent-evidence/qwen-agent-review.json
             exit 1
           fi
-          if ! "$python_bin" -m pip install --disable-pip-version-check --no-input \
-            "qwen-agent @ git+https://github.com/QwenLM/Qwen-Agent.git@$framework_commit"; then
-            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"pinned framework installation failed"}' \
-              > agent-evidence/qwen-agent-review.json
+          if ! "$python_bin" -m pip install --disable-pip-version-check --no-input "qwen-agent @ git+https://github.com/QwenLM/Qwen-Agent.git@$framework_commit" "numpy==2.5.4"; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"pinned framework or NumPy installation failed"}' > agent-evidence/qwen-agent-review.json
             exit 1
           fi
-          version="$("$python_bin" -c 'import qwen_agent; print(qwen_agent.__version__)')"
-          test "$version" = '0.0.34'
+          if ! "$python_bin" -c 'import qwen_agent; print(qwen_agent.__version__)' > agent-evidence/qwen-agent-import.txt 2>&1; then
+            cat agent-evidence/qwen-agent-import.txt
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"framework import failed; see qwen-agent-import.txt"}' > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          version="$(cat agent-evidence/qwen-agent-import.txt)"
+          if test "$version" != '0.0.34'; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"unexpected package version"}' > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          "$python_bin" -m pip freeze > agent-evidence/qwen-agent-python-freeze.txt
           {
             printf 'source_commit=%s\n' "$framework_commit"
             printf 'package_version=%s\n' "$version"
+            printf 'numpy_version=%s\n' "$("$python_bin" -c 'import numpy; print(numpy.__version__)')"
           } > agent-evidence/qwen-agent-provenance.txt
           set +e
           mkdir -p "$RUNNER_TEMP/qwen-agent-home"

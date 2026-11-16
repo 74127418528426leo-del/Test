@@ -6,10 +6,13 @@ prepared packet, and returned values matching persistent state; the report
 explicitly says this does not certify a boot. Earlier runs failed at tool
 selection or report formatting, so this is not a reliable always-on supervisor.
 The direct Qwen function-call canary still forces the call and executes no
-tool. This branch now adds a separately gated Qwen-Agent trial against the
-same local Qwen3.5-0.8B CPU endpoint; its first Actions result is pending.
-Neither Qwen3.8 GPU inference nor a persistent Hermes service is provisioned.
-OpenClaude has not been exercised.
+tool. This branch adds a separately gated Qwen-Agent trial against the same
+local Qwen3.5-0.8B CPU endpoint. Run 439121 exposed two separate problems:
+Hermes again made zero tool calls, and Qwen-Agent could not import because its
+package metadata omitted the NumPy dependency. Qwen-Agent did not reach model
+inference in that run. The dependency is now explicit and the bounded worker
+is being retried. Neither Qwen3.8 GPU inference nor a persistent Hermes service
+is provisioned. OpenClaude has not been exercised.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
@@ -108,13 +111,16 @@ The experimental workflow installs Qwen-Agent from immutable source commit
 its Assistant/function-calling loop against the loopback llama.cpp endpoint.
 The worker is limited to one tool that reads exactly `review-input.json`, one
 successful tool execution, three local model calls, and a 180-second wall-clock
-limit. The process receives no GitHub token, has only the loopback model endpoint configured,
-and has no shell or write tool. It is not network-namespace isolated. The deterministic gate rejects a
-missing/extra tool call, invalid report, or disagreement with durable state.
-The first CI execution decides whether this adapter/model combination works;
-installation or inference failure is valid negative evidence. The framework
-source is commit-pinned, but its transitive Python dependencies are not yet
-locked; this pilot is not ready for persistent deployment.
+limit. The process receives no GitHub token, uses the loopback model endpoint,
+and has no shell or write tool. It is not network-namespace isolated. The
+deterministic gate rejects a missing or extra tool call, invalid report, or
+disagreement with durable state.
+Run 439121 installed the pinned source but failed at import because NumPy was
+not declared by Qwen-Agent's package metadata; no Qwen-Agent model request was
+made. The next run installs explicit NumPy 2.5.4, captures the resolved
+package freeze, and retries the worker. The framework source is commit-pinned,
+but its transitive Python dependencies are not yet locked; this pilot is not
+ready for persistent deployment.
 
 See [AI agent and provider research](AI_AGENT_AND_PROVIDER_RESEARCH.md) for
 provider costs, open-source integration boundaries, and the recommended worker
