@@ -74,6 +74,10 @@ def parse_hermes_transcript(transcript: str) -> tuple[dict[str, Any], int]:
         response = response[4:].lstrip()
     if not response:
         raise ValueError("Hermes final response is empty")
+    # Qwen sometimes emits this exact escaped-object form through Hermes. Remove
+    # the extra quote and unescape JSON delimiters, then apply the usual strict schema/value checks.
+    if response.startswith('{"\\"run_id\\"'):
+        response = response[:1] + response[2:].replace('\\"', '"')
     try:
         report = json.loads(response)
     except json.JSONDecodeError as exc:

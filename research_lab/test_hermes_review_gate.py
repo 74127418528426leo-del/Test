@@ -66,6 +66,15 @@ class HermesReviewGateTests(unittest.TestCase):
         self.assertTrue(result["agent_report_consistent"])
         self.assertEqual(result["run_id"], "43874157306")
 
+    def test_accepts_hermes_escaped_object_format_seen_in_ci(self):
+        payload = json.dumps(sample_report())
+        escaped = '{"' + payload[1:].replace('"', r'\"')
+        transcript = sample_transcript().replace(payload, escaped)
+        report, calls = gate.parse_hermes_transcript(transcript)
+        result = gate.validate_report(report, sample_state(), calls)
+        self.assertTrue(result["agent_report_consistent"])
+        self.assertEqual(result["run_id"], "43874157306")
+
     def test_rejects_zero_file_tool_calls(self):
         with self.assertRaisesRegex(ValueError, "file-tool call"):
             gate.parse_hermes_transcript(sample_transcript(tool_calls=0))

@@ -79,6 +79,8 @@ jobs:
           run_id, candidate_mean_seconds, control_mean_seconds, goal_verified,
           test_summary, limitation.
           Do not read any other file, call another tool, invent facts, or add prose.
+          Output exactly one raw JSON object, never a quoted JSON string.
+          Use ordinary JSON quotes; do not put backslashes before quote characters.
           Do not claim that this packet independently verifies a Puppy50 boot.
           TASK
           git -C agent-work init -q
