@@ -6,6 +6,8 @@ on:
       - '.github/workflows/puppy50-autonomous-research.yml'
       - 'research_lab/hermes_review_gate.py'
       - 'research_lab/test_hermes_review_gate.py'
+      - 'research_lab/qwen_toolcall_probe.py'
+      - 'research_lab/test_qwen_toolcall_probe.py'
       - 'research_lab/critical_path.py'
       - 'research_lab/test_measurement_integrity.py'
       - 'research_lab/QWEN_HERMES_SETUP.md'
@@ -227,7 +229,15 @@ jobs:
               json.dump({'model_ids':ids,'max_tokens':limit,'finish_reason':result['choices'][0].get('finish_reason'),'answer':answer},f,indent=2)
               f.write('\n')
           PY
+      - name: Check direct Qwen tool-call support
+        id: qwen-tool-canary
+        run: |
+          set -euo pipefail
+          python3 research_lab/qwen_toolcall_probe.py \
+            --base-url http://127.0.0.1:8088 \
+            --output agent-evidence/qwen-toolcall-probe.json
       - name: Run bounded Hermes review with no GitHub credentials
+        if: steps.qwen-tool-canary.outcome == 'success'
         run: |
           set -euo pipefail
           export HERMES_HOME="$RUNNER_TEMP/hermes-home"
@@ -281,7 +291,7 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/p50-qwen35-server.pid")" 2>/dev/null || true
           fi
       - name: Enforce review-only behavior
-        if: always()
+        if: always() && steps.qwen-tool-canary.outcome == 'success'
         run: |
           test -f agent-evidence/hermes-exit-code.txt
           test "$(cat agent-evidence/hermes-exit-code.txt)" = 0
