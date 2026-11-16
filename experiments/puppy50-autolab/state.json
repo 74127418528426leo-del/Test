@@ -143,8 +143,8 @@
         "matched_control_minus_candidate_seconds": {
           "bios1": -2.74,
           "bios2": -0.01,
-          "uefi1": 0.0,
-          "uefi2": 0.0
+          "uefi1": 0,
+          "uefi2": 0
         },
         "mean_candidate_seconds": 11.725,
         "mean_control_minus_candidate_seconds": -0.687,
@@ -171,6 +171,112 @@
       "run_id": "43777265230",
       "vm_diagnostics": {},
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-16T07:37:53Z",
+      "candidate_id": "nice-10_zstd3_prefetch0",
+      "run_id": "43824576971",
+      "source_job_id": "133155213122",
+      "vm_passed": false,
+      "iso_sha256": "e56bc24823594d127580952210d2f325d41610eb2f58a8f0c052997d8213971b",
+      "frames": {
+        "bios1": 8.57
+      },
+      "ram_ready_seconds": {
+        "bios1": 15.19
+      },
+      "post_eject_http200_by_boot": {
+        "bios1": true
+      },
+      "vm_diagnostics": {
+        "matched_bios1": "Control browser post-eject HTTP200 not observed after three navigation attempts; paired batch stopped."
+      },
+      "reason": "One candidate BIOS boot reached Firefox and post-eject HTTP200; matched control failed its HTTP200 gate. No valid A/B comparison.",
+      "benchmark_timing_schema": 2,
+      "home_frame_observation_upper_seconds": {
+        "bios1": 8.573864
+      },
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43824576971",
+      "artifact_id": 14205938166
+    },
+    {
+      "at": "2026-11-16T07:45:15Z",
+      "candidate_id": "nice-10_zstd3_prefetch32",
+      "run_id": "43824576971",
+      "source_job_id": "133155212764",
+      "vm_passed": false,
+      "iso_sha256": "917a40ec843144fdcdd55746a74925e9445a479b2bd074ba968f16d7c7fc17aa",
+      "frames": {
+        "bios1": 9.27,
+        "uefi1": 13.15,
+        "bios2": 8.27,
+        "uefi2": 13.16,
+        "bios3": 8.28
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.94,
+        "uefi1": 21.32,
+        "bios2": 16.45,
+        "uefi2": 21.32,
+        "bios3": 16.45
+      },
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "uefi1": true,
+        "bios2": true,
+        "uefi2": true,
+        "bios3": true
+      },
+      "vm_diagnostics": {},
+      "reason": "Five candidate and five matched-control QEMU boots passed the recorded RAM/media/local-HTTP gates; all sampled home-page times exceeded five seconds. No verified speedup.",
+      "matched_prefetch_control": {
+        "scope": "one host, alternating 5+5 genuine QEMU cold boots, three BIOS and two UEFI per condition",
+        "reference_prefetch_mib": 256,
+        "candidate_prefetch_mib": 32,
+        "fixed_firefox_nice": -10,
+        "fixed_zstd_level": 3,
+        "reference_iso_sha256": "2d70cc81a683e583e15faf5e47dab4677a1986fca2a8beed31b8a574bbbae53f",
+        "candidate_iso_sha256": "917a40ec843144fdcdd55746a74925e9445a479b2bd074ba968f16d7c7fc17aa",
+        "control_frame_seconds": {
+          "bios1": 8.27,
+          "uefi1": 13.36,
+          "bios2": 8.27,
+          "uefi2": 13.13,
+          "bios3": 8.04
+        },
+        "candidate_frame_seconds": {
+          "bios1": 9.27,
+          "uefi1": 13.15,
+          "bios2": 8.27,
+          "uefi2": 13.16,
+          "bios3": 8.28
+        },
+        "matched_control_minus_candidate_seconds": {
+          "bios1": -1,
+          "uefi1": 0.21,
+          "bios2": 0,
+          "uefi2": -0.03,
+          "bios3": -0.24
+        },
+        "mean_control_seconds": 10.214,
+        "mean_candidate_seconds": 10.426,
+        "mean_control_minus_candidate_seconds": -0.212,
+        "control_and_candidate_functional": true,
+        "not_five_second_certification": true,
+        "not_randomized_across_hosts": true,
+        "interpretation": "Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required."
+      },
+      "benchmark_timing_schema": 2,
+      "home_frame_observation_upper_seconds": {
+        "bios1": 9.269819,
+        "uefi1": 13.149128,
+        "bios2": 8.272758,
+        "uefi2": 13.157425,
+        "bios3": 8.279886
+      },
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43824576971",
+      "artifact_id": 14205848402,
+      "notes": "One runner, 3 BIOS and 2 UEFI boots per condition at 3072 MiB; historical report times are rounded, home-page sampling is not exact first paint."
     }
   ],
   "schema": 1,
