@@ -1,4 +1,4 @@
-name: Puppy50 Hermes review with native-context Qwen CPU
+name: Puppy50 Hermes and Qwen-Agent review with local Qwen CPU
 on:
   push:
     branches: [main, puppy50-boot-measurement-integrity-20261116]
@@ -9,6 +9,9 @@ on:
       - 'research_lab/test_hermes_review_gate.py'
       - 'research_lab/qwen_toolcall_probe.py'
       - 'research_lab/test_qwen_toolcall_probe.py'
+      - 'research_lab/qwen_agent_pilot.py'
+      - 'research_lab/test_qwen_agent_pilot.py'
+      - 'research_lab/AI_AGENT_AND_PROVIDER_RESEARCH.md'
       - 'research_lab/critical_path.py'
       - 'research_lab/test_measurement_integrity.py'
       - 'research_lab/QWEN_HERMES_SETUP.md'
@@ -50,6 +53,7 @@ jobs:
           mkdir -p models agent-work agent-evidence "$RUNNER_TEMP/hermes-home"
           git archive HEAD | tar -x -C agent-work
           mkdir -p agent-work/agent-context
+          rm -f agent-work/review-input.json
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -276,6 +280,47 @@ jobs:
             --transcript agent-evidence/hermes-session.log \
             --state lab-state/experiments/puppy50-autolab/state.json \
             --output agent-evidence/hermes-review-verified.json
+      - name: Install and run pinned Qwen-Agent with the local Qwen model
+        if: always() && steps.qwen-tool-canary.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          framework_commit='31a4d36d123688581a9e9744427272b33ce940e0'
+          python_bin="$RUNNER_TEMP/qwen-agent-venv/bin/python"
+          mkdir -p agent-evidence
+          if ! python3 -m venv "$RUNNER_TEMP/qwen-agent-venv"; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"venv creation failed"}' \
+              > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          if ! "$python_bin" -m pip install --disable-pip-version-check --no-input \
+            "qwen-agent @ git+https://github.com/QwenLM/Qwen-Agent.git@$framework_commit"; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"pinned framework installation failed"}' \
+              > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          version="$("$python_bin" -c 'import qwen_agent; print(qwen_agent.__version__)')"
+          test "$version" = '0.0.34'
+          {
+            printf 'source_commit=%s\n' "$framework_commit"
+            printf 'package_version=%s\n' "$version"
+          } > agent-evidence/qwen-agent-provenance.txt
+          set +e
+          mkdir -p "$RUNNER_TEMP/qwen-agent-home"
+          timeout --signal=TERM --kill-after=10s 180s \
+            env -i HOME="$RUNNER_TEMP/qwen-agent-home" PATH=/usr/bin:/bin \
+              PYTHONDONTWRITEBYTECODE=1 \
+              "$python_bin" research_lab/qwen_agent_pilot.py \
+                --base-url http://127.0.0.1:8088/v1 \
+                --packet agent-work/review-input.json \
+                --state lab-state/experiments/puppy50-autolab/state.json \
+                --output agent-evidence/qwen-agent-review.json \
+            > agent-evidence/qwen-agent-run.log 2>&1
+          rc=$?
+          set -e
+          cat agent-evidence/qwen-agent-run.log
+          test "$rc" -eq 0
+          python3 -c 'import json; d=json.load(open("agent-evidence/qwen-agent-review.json")); assert d.get("passed") is True'
       - name: Capture review output and local model diagnostics
         if: always()
         run: |

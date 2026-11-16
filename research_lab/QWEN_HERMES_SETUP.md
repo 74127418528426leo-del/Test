@@ -1,13 +1,15 @@
 # Qwen + Hermes / OpenClaude / OpenCode integration
 
-**Status (updated November 16, 2026):** A pinned Qwen3.5-0.8B Q4 CPU
-model behind llama.cpp and the Hermes CLI have been exercised in bounded,
-credential-free GitHub Actions jobs. Hermes read a root-level packet in run
-439040, but omitted the required timing caveat. The next run, 439051, made
-zero tool calls. Earlier attempts also missed or failed the read, so this is
-not a reliable agent loop or an always-on supervisor. No Qwen3.8 GPU host or
-endpoint is provisioned, and OpenClaude has not been exercised. A separate GPU
-deployment still requires operator-owned, appropriately sized infrastructure.
+**Status (updated November 16, 2026):** Run 43906628085 passed the
+credential-free Hermes review gate. Hermes made two tool calls, read only the
+prepared packet, and returned values matching persistent state; the report
+explicitly says this does not certify a boot. Earlier runs failed at tool
+selection or report formatting, so this is not a reliable always-on supervisor.
+The direct Qwen function-call canary still forces the call and executes no
+tool. This branch now adds a separately gated Qwen-Agent trial against the
+same local Qwen3.5-0.8B CPU endpoint; its first Actions result is pending.
+Neither Qwen3.8 GPU inference nor a persistent Hermes service is provisioned.
+OpenClaude has not been exercised.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
@@ -97,3 +99,23 @@ The GPU model may propose creative architecture designs, but the current
 automated VM bridge only directly tests bounded Firefox nice and initramfs
 Zstd levels. Arbitrary kernel/compiler/Xorg patches need a separate reviewed
 build workflow and approval gates; this is intentional.
+
+
+## Qwen-Agent worker trial
+
+The experimental workflow installs Qwen-Agent from immutable source commit
+`31a4d36d123688581a9e9744427272b33ce940e0` (package version 0.0.34) and runs
+its Assistant/function-calling loop against the loopback llama.cpp endpoint.
+The worker is limited to one tool that reads exactly `review-input.json`, one
+successful tool execution, three local model calls, and a 180-second wall-clock
+limit. The process receives no GitHub token, has only the loopback model endpoint configured,
+and has no shell or write tool. It is not network-namespace isolated. The deterministic gate rejects a
+missing/extra tool call, invalid report, or disagreement with durable state.
+The first CI execution decides whether this adapter/model combination works;
+installation or inference failure is valid negative evidence. The framework
+source is commit-pinned, but its transitive Python dependencies are not yet
+locked; this pilot is not ready for persistent deployment.
+
+See [AI agent and provider research](AI_AGENT_AND_PROVIDER_RESEARCH.md) for
+provider costs, open-source integration boundaries, and the recommended worker
+architecture. No hosted provider is enabled by this experiment.
