@@ -87,6 +87,11 @@ llama.cpp logged a type mismatch and fell back to its default. The canary now
 uses its supported string form `"required"`; it tests serialization only and
 does not execute a tool. Qwen-Agent, Hermes, and OS results remain separate.
 
+Run 43919905873 then caught a test-wiring error in the offline suite: a
+Qwen-Agent diagnostic test was placed in the Qwen tool-call test module. CI
+stopped before Hermes, Qwen, or VM stages ran. The draft moves the test into
+its owning module; no persistent Puppy50 state changed.
+
 ## Official sources
 
 - [Qwen-Agent configuration: local OpenAI-compatible model servers](https://github.com/QwenLM/Qwen-Agent/blob/31a4d36d123688581a9e9744427272b33ce940e0/qwen-agent-docs/website/content/en/guide/get_started/configuration.md)

@@ -59,19 +59,6 @@ class QwenToolCallProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid JSON"):
             probe.parse_response(response(args="{bad"))
 
-    def test_message_summary_records_roles_calls_and_bounds_output(self):
-        summary = pilot.summarize_agent_messages([
-            {"role": "assistant", "tool_calls": [{
-                "function": {"name": pilot.TOOL_NAME, "arguments": "{}"}
-            }]},
-            {"role": "function", "name": pilot.TOOL_NAME, "content": "private tool output"},
-            {"role": "assistant", "content": "x" * 600},
-        ])
-        self.assertEqual(summary["message_roles"], ["assistant", "function", "assistant"])
-        self.assertEqual(summary["model_tool_call_names"], [pilot.TOOL_NAME])
-        self.assertEqual(len(summary["assistant_final_preview"]), 512)
-        self.assertTrue(summary["assistant_preview_truncated"])
-
     def test_template_properties_are_diagnostic_only(self):
         self.assertEqual(
             probe.template_capabilities({

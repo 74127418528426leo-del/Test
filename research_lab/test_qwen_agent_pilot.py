@@ -130,6 +130,19 @@ class QwenAgentPilotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "successfully"):
             pilot.validate_agent_run(sample_report(), [{**audit[0], "status": "denied"}], sample_state())
 
+    def test_message_summary_records_roles_calls_and_bounds_output(self):
+        summary = pilot.summarize_agent_messages([
+            {"role": "assistant", "tool_calls": [{
+                "function": {"name": pilot.TOOL_NAME, "arguments": "{}"}
+            }]},
+            {"role": "function", "name": pilot.TOOL_NAME, "content": "private tool output"},
+            {"role": "assistant", "content": "x" * 600},
+        ])
+        self.assertEqual(summary["message_roles"], ["assistant", "function", "assistant"])
+        self.assertEqual(summary["model_tool_call_names"], [pilot.TOOL_NAME])
+        self.assertEqual(len(summary["assistant_final_preview"]), 512)
+        self.assertTrue(summary["assistant_preview_truncated"])
+
     def test_agent_endpoint_must_be_local_loopback(self):
         pilot._require_loopback_endpoint("http://127.0.0.1:8088/v1")
         for url in (

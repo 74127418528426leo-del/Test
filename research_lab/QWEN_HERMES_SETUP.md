@@ -13,8 +13,10 @@ Run 43917314867 reached the local model, but the final report failed JSON
 parsing at the 256-token cap. The prior failure record omitted the assistant
 preview and tool audit, so tool execution is unconfirmed. The next attempt
 raises the cap to 512, disables reasoning output, and records bounded
-diagnostics. No Qwen3.8 GPU host, persistent Hermes service, or OpenClaude
-worker is provisioned.
+diagnostics. Run 43919905873 stopped at the offline suite because a diagnostic test was
+wired into the wrong test module; no agent or VM stage ran. The draft moves it
+to the Qwen-Agent test suite. No Qwen3.8 GPU host, persistent Hermes service,
+or OpenClaude worker is provisioned.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
