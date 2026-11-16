@@ -293,12 +293,17 @@ jobs:
               > agent-evidence/qwen-agent-review.json
             exit 1
           fi
-          if ! "$python_bin" -m pip install --disable-pip-version-check --no-input "qwen-agent @ git+https://github.com/QwenLM/Qwen-Agent.git@$framework_commit" "numpy==2.5.4" "soundfile==0.14.0"; then
+          # Qwen-Agent 0.0.34 eagerly imports python_executor and shared audio utilities;
+          # these imports are needed even though the worker exposes no Python execution tool.
+          if ! "$python_bin" -m pip install --disable-pip-version-check --no-input \
+            "qwen-agent @ git+https://github.com/QwenLM/Qwen-Agent.git@$framework_commit" \
+            "numpy==2.5.4" "soundfile==0.14.0" "tqdm==4.70.1" \
+            "python-dateutil==2.9.0.post0"; then
             printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"pinned framework or missing runtime dependency installation failed"}' > agent-evidence/qwen-agent-review.json
             exit 1
           fi
           "$python_bin" -m pip freeze > agent-evidence/qwen-agent-python-freeze.txt
-          if ! "$python_bin" -c 'import qwen_agent; print(qwen_agent.__version__)' > agent-evidence/qwen-agent-import.txt 2>&1; then
+          if ! "$python_bin" -c 'from qwen_agent.agents import Assistant; from qwen_agent.tools import BaseTool; import qwen_agent; assert callable(Assistant) and isinstance(BaseTool, type); print(qwen_agent.__version__)' > agent-evidence/qwen-agent-import.txt 2>&1; then
             cat agent-evidence/qwen-agent-import.txt
             printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"framework import failed; see qwen-agent-import.txt"}' > agent-evidence/qwen-agent-review.json
             exit 1
@@ -313,6 +318,8 @@ jobs:
             printf 'package_version=%s\n' "$version"
             printf 'numpy_version=%s\n' "$("$python_bin" -c 'import numpy; print(numpy.__version__)')"
             printf 'soundfile_version=%s\n' "$("$python_bin" -c 'import soundfile; print(soundfile.__version__)')"
+            printf 'tqdm_version=%s\n' "$("$python_bin" -c 'import tqdm; print(tqdm.__version__)')"
+            printf 'python_dateutil_version=%s\n' "$("$python_bin" -c 'import dateutil; print(dateutil.__version__)')"
           } > agent-evidence/qwen-agent-provenance.txt
           set +e
           mkdir -p "$RUNNER_TEMP/qwen-agent-home"

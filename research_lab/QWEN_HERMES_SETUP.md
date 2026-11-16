@@ -1,18 +1,18 @@
 # Qwen + Hermes / OpenClaude / OpenCode integration
 
-**Status (updated November 16, 2026):** Run 43906628085 passed the
-credential-free Hermes review gate. Hermes made two tool calls, read only the
-prepared packet, and returned values matching persistent state; the report
-explicitly says this does not certify a boot. Earlier runs failed at tool
-selection or report formatting, so this is not a reliable always-on supervisor.
-The direct Qwen function-call canary still forces the call and executes no
-tool. This branch adds a separately gated Qwen-Agent trial against the same
-local Qwen3.5-0.8B CPU endpoint. Run 439121 exposed two problems: Hermes made zero tool calls, and Qwen-Agent
-could not import because its metadata omitted NumPy. In run 439133 Hermes again
-passed its report gate, but Qwen-Agent import then found a second undeclared
-dependency, SoundFile, after NumPy was added. Neither Qwen-Agent attempt reached
-model inference. Both packages are now explicit for the next retry. Neither Qwen3.8 GPU inference nor a persistent Hermes service
-is provisioned. OpenClaude has not been exercised.
+**Status (updated November 16, 2026):** Hermes passed its credential-free
+review gate in runs 43906628085, 43913391779, and 43914318295, each making
+two calls and reading only the prepared packet. Run 43912198706 made zero tool
+calls, so Hermes tool-selection reliability is not established. These reviews
+do not certify a Puppy50 boot or provide an always-on supervisor.
+
+The Qwen3.5-0.8B CPU workflow now tests a separately bounded Qwen-Agent worker.
+Its first three attempts all stopped during framework import: missing NumPy
+(43912198706), SoundFile (43913391779), then tqdm (43914318295). No
+Qwen-Agent model request was made. The next run explicitly pins those
+dependencies plus python-dateutil and checks the actual Assistant/BaseTool
+imports before launching the worker. Neither Qwen3.8 GPU inference nor a
+persistent Hermes service is provisioned. OpenClaude has not been exercised.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
@@ -115,13 +115,14 @@ limit. The process receives no GitHub token, uses the loopback model endpoint,
 and has no shell or write tool. It is not network-namespace isolated. The
 deterministic gate rejects a missing or extra tool call, invalid report, or
 disagreement with durable state.
-Runs 439121 and 439133 installed the pinned source but failed during import:
-first NumPy, then SoundFile (also omitted from package metadata). Neither run
-made a Qwen-Agent model request. The next run explicitly installs NumPy 2.5.4
-and SoundFile 0.14.0, captures the resolved package freeze before import, and
-retries the worker. The framework source is commit-pinned,
-but its transitive Python dependencies are not yet locked; this pilot is not
-ready for persistent deployment.
+Runs 439121, 439133, and 439143 installed the pinned source but failed
+during eager framework imports: missing NumPy, SoundFile, and tqdm respectively.
+None made a Qwen-Agent model request. The workflow now explicitly pins NumPy
+2.5.4, SoundFile 0.14.0, tqdm 4.70.1, and python-dateutil 2.9.0.post0; it
+checks the actual Assistant and BaseTool import path, captures the resolved
+package freeze, and then retries the worker. The framework source is
+commit-pinned, but its transitive dependencies are not locked. This pilot is
+not ready for persistent deployment.
 
 See [AI agent and provider research](AI_AGENT_AND_PROVIDER_RESEARCH.md) for
 provider costs, open-source integration boundaries, and the recommended worker

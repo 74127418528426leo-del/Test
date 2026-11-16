@@ -26,9 +26,9 @@ reliable tool protocol.
 | Route | What the official material currently says | Puppy50 decision |
 | --- | --- | --- |
 | **Local Qwen weights + Qwen-Agent** | Qwen-Agent supports local OpenAI-compatible model servers. Local inference avoids a vendor API token bill, but still uses a computer, power, storage, and setup time. | Preferred path for CI experiments. The current 0.8B CPU model is a tool-use smoke-test model, not the engineering lead model. |
-| **Grok / xAI API** | API requests bill input/output tokens; server-side tools can add invocation charges. API use draws on purchased prepaid credits or an invoice balance. Grok app access and API access are separate products. | Do not call from the lab without explicit approval and a spending limit. |
+| **Grok / xAI** | The OpenClaw adapter can authenticate with an API key or OAuth; its current OAuth route requires an eligible SuperGrok or X Premium subscription. Direct API use is separately token-metered, with prepaid credits or invoicing. Adapter code is free to reuse, but the hosted service is not thereby free. | Do not call from the lab without explicit approval and a spending limit. |
 | **DeepSeek API** | The official API page publishes per-token prices and supports tool calls. Charges are deducted from topped-up or granted balance. A grant may temporarily cover usage; it is not evidence of a permanent free API. | Do not call from the lab without explicit approval. |
-| **MiniMax** | MiniMax Code has a limited Free plan, but the current M Plan comparison marks the API key for AI agents/coding tools unavailable on Free; paid Go/Explore/Build plans include it. Its separate API platform also publishes pay-as-you-go token rates. | Free MiniMax Code access is not a free CI API credential. No use in this project. |
+| **MiniMax** | MiniMax Code/app access, subscription quotas, and the API key for third-party coding agents are distinct, plan-specific routes. The current official plan page advertises API keys for AI tools on paid tiers; any free app allowance is not automatically a free unattended API credential. | No use in this project. Recheck the exact plan before connecting any service. |
 | **Mistral** | Mistral's current usage-limit documentation says Free mode covers a monthly Vibe/Studio budget and does not include API access; API use requires billing activation and pay-as-you-go. | Not a no-cost unattended API path. |
 | **Hugging Face Inference Providers** | The published pricing page lists $0.10 monthly inference credits for free accounts, subject to change; additional usage is pay-as-you-go. | Too small and changeable for a continuous research worker; not enabled. |
 | **GitHub Models** | GitHub retired the playground, catalog, inference API, and BYOK service on July 30, 2026. | Not an available free-model backend. |
@@ -68,15 +68,19 @@ one successful tool execution and three local model calls, and gives the
 process no GitHub credential, shell tool, or write tool. Its model endpoint is
 loopback; the runner process is not network-namespace isolated. The report is
 compared by the existing deterministic evidence gate. Hermes passed its report
-gate in runs 43906628085 and 43913391779, making two calls and reading the
-prepared packet; the boot goal remained false. Run 43912198706 made zero tool
-calls, so Hermes selection is still inconsistent. Qwen-Agent has not reached
-inference: run 439121 missed undeclared NumPy, and run 439133 missed undeclared
-SoundFile. The next retry installs both explicitly.
-The earlier direct Qwen function-call canary forced the tool choice and did not
-execute a tool, so it is not counted as an agent success. The unforced
-Qwen-Agent trial has no execution result yet. Qwen-Agent results will be
-recorded separately from Hermes and from OS boot benchmarks.
+gate in runs 43906628085, 43913391779, and 43914318295, each making two calls
+and reading the prepared packet. Run 43912198706 made zero tool calls, so
+Hermes selection is not yet reliable. The boot goal remained false.
+
+Qwen-Agent has not reached inference. The pinned package installs, but eager
+package imports exposed undeclared runtime dependencies sequentially:
+NumPy (43912198706), SoundFile (43913391779), then tqdm (43914318295). None of
+those runs sent a Qwen-Agent request. The next attempt explicitly pins NumPy,
+SoundFile, tqdm, and python-dateutil, and tests the actual Assistant and BaseTool
+imports before starting the worker. The earlier direct Qwen function-call
+canary forced the tool choice and did not execute a tool, so it is not counted
+as an agent success. Qwen-Agent results will be recorded separately from
+Hermes and OS boot benchmarks.
 
 The framework source revision is pinned in the pilot, but its transitive Python
 dependencies are not yet locked. Before any persistent service is deployed,
@@ -87,10 +91,10 @@ and a dedicated sandbox; this first CI trial is a compatibility experiment.
 
 - [Qwen-Agent configuration: local OpenAI-compatible model servers](https://github.com/QwenLM/Qwen-Agent/blob/31a4d36d123688581a9e9744427272b33ce940e0/qwen-agent-docs/website/content/en/guide/get_started/configuration.md)
 - [Qwen3 function calling and Qwen-Agent](https://github.com/QwenLM/Qwen3/blob/main/docs/source/framework/function_call.md)
-- [OpenClaw official model-provider integrations](https://docs.openclaw.ai/concepts/model-providers/official-provider-plugins)
+- [OpenClaw official model-provider integrations](https://docs.openclaw.ai/concepts/model-providers/official-provider-plugins) and [xAI/Grok provider setup](https://docs.openclaw.ai/providers/xai)
 - [xAI API pricing](https://docs.x.ai/developers/pricing), [billing and credits](https://docs.x.ai/console/billing), and [tools](https://docs.x.ai/developers/tools/overview)
 - [DeepSeek API pricing and tool-call support](https://api-docs.deepseek.com/quick_start/pricing/)
-- [MiniMax M Plan](https://www.minimax.io/m-plan) and [API pricing](https://platform.minimax.io/subscribe/token-plan)
+- [MiniMax plan and API-key options](https://platform.minimax.io/subscribe/coding-plan) and [API pricing](https://platform.minimax.io/subscribe/token-plan)
 - [Mistral usage and limits](https://docs.mistral.ai/admin/billing-usage/usage-limits)
 - [Hugging Face Inference Providers pricing](https://huggingface.co/docs/inference-providers/pricing)
 - [GitHub Models retirement](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/)
