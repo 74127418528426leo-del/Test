@@ -35,8 +35,9 @@ jobs:
       - name: Run offline regression and shell checks
         run: |
           set -euo pipefail
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q 2>&1 | tee "$RUNNER_TEMP/p50-offline-tests.txt"
           bash -n research_lab/build_matched_control.sh
+          printf '%s\n' 'PASS: bash -n research_lab/build_matched_control.sh' >> "$RUNNER_TEMP/p50-offline-tests.txt"
       - name: Prepare a credential-free review copy and bounded task
         run: |
           set -euo pipefail
@@ -46,24 +47,26 @@ jobs:
           cp research_lab/RESULTS_2026-11-16.md agent-work/agent-context/
           cp lab-state/experiments/puppy50-autolab/state.json agent-work/agent-context/
           cp lab-state/research_lab/queue.json agent-work/agent-context/
+          cp "$RUNNER_TEMP/p50-offline-tests.txt" agent-work/agent-context/offline-checks.txt
+
           cat > agent-work/agent-context/task.md <<'TASK'
-          Review this Puppy50 research branch as a read-only engineering verifier.
-          You are Qwen3.5-0.8B Q4_0 on CPU through Hermes: a small triage worker,
-          not an independently proven OS engineer. Read the supplied results and
-          state, then inspect the boot workflow and measurement/controller tests.
-          Report whether the latest persisted matched comparison agrees with its
-          raw values and identify one concrete measurement limitation. Run only
-          offline checks if needed; do not build or boot an ISO. Do not modify
-          files, use network access, commit, push, publish, or request credentials.
-          Do not infer pending runs. Return at most 160 words with actions actually
-          performed, exact evidence paths/run, finding, and limitations. Do not
-          provide private reasoning.
+          Read only these files: agent-context/RESULTS_2026-11-16.md,
+          agent-context/state.json, agent-context/offline-checks.txt,
+          research_lab/critical_path.py, and research_lab/test_measurement_integrity.py.
+          Check whether the latest recorded run agrees with the stated comparison,
+          whether the five-second goal is marked verified, and name one limit.
+          Use file reads only. Do not use terminal, write, edit, patch, commit,
+          access a network, or infer a pending run. Return at most 100 words as
+          concise JSON with fields run_id, comparison, goal_verified, test_summary,
+          limitation. Do not provide private reasoning.
           TASK
           git -C agent-work init -q
           git -C agent-work config user.name 'Puppy50 isolated Hermes review'
           git -C agent-work config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C agent-work add -A
           git -C agent-work commit -qm 'temporary review baseline'
+          chmod -R a-w agent-work
+          test -z "$(find agent-work -perm /222 -print -quit)"
       - name: Restore or cache pinned Qwen3.5 reviewer
         uses: actions/cache@v4
         id: qwen-cache
@@ -149,9 +152,6 @@ jobs:
             base_url: http://127.0.0.1:8088/v1
             api_key: local-cpu-only
             context_length: 65536
-          terminal:
-            backend: local
-            timeout: 120
           agent:
             reasoning_effort: none
             max_turns: 4
@@ -196,12 +196,13 @@ jobs:
           ids=[m.get('id') for m in models.get('data',[])]
           if 'p50-qwen35-review' not in ids:
               raise RuntimeError(f'Unexpected Qwen server model IDs: {ids}')
+          limit=16
           payload=json.dumps({
               'model':'p50-qwen35-review',
               'messages':[{'role':'user','content':'Reply with READY.'}],
               'temperature':0,
               'reasoning_effort':'none',
-              'max_tokens':16
+              'max_tokens':limit
           }).encode()
           request=urllib.request.Request(base+'/v1/chat/completions',data=payload,
               headers={'Content-Type':'application/json'})
@@ -209,15 +210,11 @@ jobs:
               result=json.load(r)
           message=result['choices'][0]['message']
           answer=message.get('content','')
-          if not answer.strip():
-              reasoning=message.get('reasoning_content','')
+          if not answer.strip() or 'ready' not in answer.lower():
               finish=result['choices'][0].get('finish_reason')
-              raise RuntimeError(
-                  f'Qwen returned no final text; finish_reason={finish}; '
-                  f'reasoning_chars={len(reasoning)}'
-              )
+              raise RuntimeError(f'Qwen did not satisfy the bounded READY probe; finish_reason={finish}')
           with open('agent-evidence/qwen-smoke.json','w') as f:
-              json.dump({'model_ids':ids,'max_tokens':8,'answer':answer},f,indent=2)
+              json.dump({'model_ids':ids,'max_tokens':limit,'finish_reason':result['choices'][0].get('finish_reason'),'answer':answer},f,indent=2)
               f.write('\n')
           PY
       - name: Run bounded Hermes review with no GitHub credentials
@@ -235,7 +232,7 @@ jobs:
               bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env" \
               python "$RUNNER_TEMP/hermes-source/hermes" chat \
               --oneshot --query-file agent-context/task.md \
-              --model p50-qwen35-review --toolsets file,terminal --max-turns 4 --quiet
+              --model p50-qwen35-review --toolsets file --max-turns 4
           ) > "$GITHUB_WORKSPACE/agent-evidence/hermes-session.log" 2>&1
           rc=$?
           set -e
@@ -246,7 +243,7 @@ jobs:
         run: |
           set +e
           mkdir -p agent-evidence
-          git -C agent-work status --short > agent-evidence/worktree-status.txt 2>&1
+          GIT_OPTIONAL_LOCKS=0 git -C agent-work status --porcelain --untracked-files=all > agent-evidence/worktree-status.txt 2>&1
           git -C agent-work diff --binary > agent-evidence/proposal.patch 2>&1
           if test -f "$RUNNER_TEMP/p50-qwen35-server.log"; then
             tail -n 160 "$RUNNER_TEMP/p50-qwen35-server.log" > agent-evidence/qwen-server.log
@@ -271,4 +268,5 @@ jobs:
         run: |
           test -f agent-evidence/hermes-exit-code.txt
           test "$(cat agent-evidence/hermes-exit-code.txt)" = 0
-          test -z "$(git -C agent-work status --porcelain)"
+          test -z "$(find agent-work -perm /222 -print -quit)"
+          test -z "$(GIT_OPTIONAL_LOCKS=0 git -C agent-work status --porcelain --untracked-files=all)"
