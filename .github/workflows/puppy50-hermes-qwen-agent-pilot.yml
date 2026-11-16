@@ -1,4 +1,4 @@
-name: Puppy50 Hermes review with local Qwen CPU
+name: Puppy50 Hermes review with native-context Qwen CPU
 on:
   push:
     branches: [main, puppy50-boot-measurement-integrity-20261116]
@@ -47,38 +47,80 @@ jobs:
           cp lab-state/experiments/puppy50-autolab/state.json agent-work/agent-context/
           cp lab-state/research_lab/queue.json agent-work/agent-context/
           cat > agent-work/agent-context/task.md <<'TASK'
-          Review the Puppy50 experiment branch as a cautious software verifier.
-          Use the local files and the terminal tool only. The model is a small
-          Qwen 1.5B CPU pilot; do not claim it is Qwen3.8 or an independent model.
-          Inspect the current boot workflow, matched-control builder, measurement
-          code, tests, and the supplied experiment history. Check whether the
-          latest kernel preservation audit compares both kernel paths in the
-          authenticated base ISO against the final candidate ISO and matched
-          control. Run only offline tests and syntax checks; do not build or boot
-          an ISO. Do not edit files, use the network, commit, push, merge, release,
-          or publish anything. Do not infer an outcome for any workflow still in
-          progress. Return a short report with checks performed, any concrete
-          defect or missing evidence, and limitations. Do not reveal private
-          reasoning; report conclusions only.
+          Review this Puppy50 research branch as a read-only engineering verifier.
+          You are Qwen3.5-0.8B Q4_0 on CPU through Hermes: a small triage worker,
+          not an independently proven OS engineer. Read the supplied results and
+          state, then inspect the boot workflow and measurement/controller tests.
+          Report whether the latest persisted matched comparison agrees with its
+          raw values and identify one concrete measurement limitation. Run only
+          offline checks if needed; do not build or boot an ISO. Do not modify
+          files, use network access, commit, push, publish, or request credentials.
+          Do not infer pending runs. Return at most 160 words with actions actually
+          performed, exact evidence paths/run, finding, and limitations. Do not
+          provide private reasoning.
           TASK
           git -C agent-work init -q
           git -C agent-work config user.name 'Puppy50 isolated Hermes review'
           git -C agent-work config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C agent-work add -A
           git -C agent-work commit -qm 'temporary review baseline'
-      - name: Restore or cache the pinned Qwen CPU model
+      - name: Restore or cache pinned Qwen3.5 reviewer
         uses: actions/cache@v4
         id: qwen-cache
         with:
-          path: models/coder.gguf
-          key: puppy50-qwen-coder-q4km-cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046
-      - name: Download and verify Qwen Coder model
+          path: models/qwen35-review.gguf
+          key: puppy50-qwen35-0.8b-q4_0-004fd086eccea9f7cf867aa07ba328773beef81d
+      - name: Download and verify pinned Qwen3.5 reviewer
+        shell: bash
         run: |
           set -euo pipefail
-          if ! test -f models/coder.gguf || ! echo 'cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046  models/coder.gguf' | sha256sum -c - >/dev/null 2>&1; then
-            curl -fL --retry 2 --connect-timeout 25 --max-time 420               'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'               -o models/coder.gguf
+          model='models/qwen35-review.gguf'
+          size=0
+          if test -f "$model"; then size="$(stat -c%s "$model")"; fi
+          if [ "$size" -lt 500000000 ] || [ "$size" -gt 620000000 ]; then
+            rm -f "$model"
+            curl -fL --retry 2 --connect-timeout 25 --max-time 600 \
+              'https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/004fd086eccea9f7cf867aa07ba328773beef81d/Qwen3.5-0.8B-Q4_0.gguf?download=true' \
+              -o "$model"
           fi
-          echo 'cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046  models/coder.gguf' | sha256sum -c -
+          size="$(stat -c%s "$model")"
+          test "$size" -ge 500000000
+          test "$size" -le 620000000
+          sha256sum "$model" | tee agent-evidence/qwen-model.sha256
+          printf '%s\n' \
+            'repository=ggml-org/Qwen3.5-0.8B-GGUF' \
+            'revision=004fd086eccea9f7cf867aa07ba328773beef81d' \
+            'file=Qwen3.5-0.8B-Q4_0.gguf' \
+            'native_context_tokens=262144' \
+            'served_context_tokens=65536' \
+            > agent-evidence/qwen-model-provenance.txt
+      - name: Restore or cache pinned llama.cpp CPU server
+        uses: actions/cache@v4
+        id: llama-cache
+        with:
+          path: llama-b12438-bin-ubuntu-x64.tar.gz
+          key: puppy50-llama-server-b12438-ubuntu-x64-8210f3f746e70ebfd2b79c6b76ffc3d76c8fd272d822cf766691bdc789063949
+      - name: Download and verify pinned llama.cpp server
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset='llama-b12438-bin-ubuntu-x64.tar.gz'
+          digest='8210f3f746e70ebfd2b79c6b76ffc3d76c8fd272d822cf766691bdc789063949'
+          if ! echo "$digest  $asset" | sha256sum -c - >/dev/null 2>&1; then
+            rm -f "$asset"
+            curl -fL --retry 2 --connect-timeout 25 --max-time 300 \
+              'https://github.com/ggml-org/llama.cpp/releases/download/b12438/llama-b12438-bin-ubuntu-x64.tar.gz' \
+              -o "$asset"
+          fi
+          echo "$digest  $asset" | sha256sum -c -
+          test "$(stat -c%s "$asset")" -eq 23466824
+          mkdir -p llama-dist
+          tar -xzf "$asset" -C llama-dist
+          server_bin="$(find llama-dist -type f -name llama-server -print -quit)"
+          test -n "$server_bin"
+          printf '%s\n' "$server_bin" > agent-evidence/llama-server-path.txt
+          printf '%s\n' 'llama.cpp release=b12438' 'source_commit=e1925b3695b8d2f2acd162fb10ad0748da0d921b' \
+            > agent-evidence/llama-server-provenance.txt
       - name: Bootstrap pinned Hermes source runtime
         shell: bash
         run: |
@@ -92,38 +134,78 @@ jobs:
           cd "$src"
           source ./activate
           hermes --version
-      - name: Configure Hermes to use only the local Qwen server
+      - name: Configure Hermes to use the verified 64K local Qwen server
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/hermes-home/config.yaml" <<'CONFIG'
           model:
             provider: custom
-            default: p50-coder
+            default: p50-qwen35-review
             base_url: http://127.0.0.1:8088/v1
             api_key: local-cpu-only
+            context_length: 65536
           terminal:
             backend: local
             timeout: 120
           agent:
-            max_turns: 6
+            max_turns: 4
           CONFIG
-      - name: Start sandboxed local CPU inference server
+      - name: Start bounded local Qwen3.5 CPU server and verify inference
+        shell: bash
         run: |
           set -euo pipefail
-          img='ghcr.io/ggml-org/llama.cpp@sha256:89fe93c2ef53ea2d09ca9f53db8878a8f57bb6b143eb63c76a9c218fb583b392'
-          docker pull "$img"
-          docker run -d --name p50-hermes-qwen --memory 5g --cpus 2 --pids-limit 128             --cap-drop ALL --security-opt no-new-privileges --user 65534:65534             --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m             -p 127.0.0.1:8088:8080 -v "$PWD/models:/models:ro" "$img"             -m /models/coder.gguf --alias p50-coder --host 0.0.0.0 --port 8080             --ctx-size 8192 --threads 2 --parallel 1 --jinja --n-gpu-layers 0
+          server_bin="$(cat agent-evidence/llama-server-path.txt)"
+          bin_dir="$(dirname "$server_bin")"
+          lib_dirs="$(find llama-dist -type f -name 'libggml*.so*' -printf '%h\n' | sort -u | paste -sd:)"
+          export LD_LIBRARY_PATH="$bin_dir${lib_dirs:+:$lib_dirs}"
+          "$server_bin" --version | tee agent-evidence/llama-server-version.txt
+          ldd "$server_bin" > agent-evidence/llama-server-ldd.txt
+          if grep -q 'not found' agent-evidence/llama-server-ldd.txt; then
+            cat agent-evidence/llama-server-ldd.txt
+            exit 1
+          fi
+          ulimit -v 5242880
+          env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/hermes-home" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            "$server_bin" -m "$PWD/models/qwen35-review.gguf" --alias p50-qwen35-review \
+            --host 127.0.0.1 --port 8088 --ctx-size 65536 --threads 2 --parallel 1 \
+            --jinja --n-gpu-layers 0 -n 256 \
+            > "$RUNNER_TEMP/p50-qwen35-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/p50-qwen35-server.pid"
           python3 - <<'PY'
           import json,time,urllib.request
-          deadline=time.monotonic()+120
+          base='http://127.0.0.1:8088'
+          deadline=time.monotonic()+150
           while time.monotonic()<deadline:
               try:
-                  with urllib.request.urlopen('http://127.0.0.1:8088/health',timeout=3) as r:
-                      if json.load(r).get('status')=='ok': break
+                  with urllib.request.urlopen(base+'/health',timeout=3) as r:
+                      health=json.load(r)
+                  if health.get('status')=='ok':
+                      break
               except Exception:
                   time.sleep(2)
           else:
-              raise RuntimeError('Local Qwen CPU server did not become healthy')
+              raise RuntimeError('Pinned Qwen3.5 CPU server did not become healthy')
+          with urllib.request.urlopen(base+'/v1/models',timeout=5) as r:
+              models=json.load(r)
+          ids=[m.get('id') for m in models.get('data',[])]
+          if 'p50-qwen35-review' not in ids:
+              raise RuntimeError(f'Unexpected Qwen server model IDs: {ids}')
+          payload=json.dumps({
+              'model':'p50-qwen35-review',
+              'messages':[{'role':'user','content':'Reply with READY.'}],
+              'temperature':0,
+              'max_tokens':8
+          }).encode()
+          request=urllib.request.Request(base+'/v1/chat/completions',data=payload,
+              headers={'Content-Type':'application/json'})
+          with urllib.request.urlopen(request,timeout=60) as r:
+              result=json.load(r)
+          answer=result['choices'][0]['message'].get('content','')
+          if not answer.strip():
+              raise RuntimeError('Qwen smoke request returned an empty answer')
+          with open('agent-evidence/qwen-smoke.json','w') as f:
+              json.dump({'model_ids':ids,'max_tokens':8,'answer':answer},f,indent=2)
+              f.write('\n')
           PY
       - name: Run bounded Hermes review with no GitHub credentials
         run: |
@@ -135,8 +217,12 @@ jobs:
           set +e
           (
             cd "$GITHUB_WORKSPACE/agent-work"
-            cd "$GITHUB_WORKSPACE/agent-work"
-            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home"               HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" PATH=/usr/bin:/bin               bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env"               python "$RUNNER_TEMP/hermes-source/hermes" chat               --oneshot --query-file agent-context/task.md               --model p50-coder --toolsets file,terminal --max-turns 6 --quiet
+            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" \
+              HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" PATH=/usr/bin:/bin \
+              bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env" \
+              python "$RUNNER_TEMP/hermes-source/hermes" chat \
+              --oneshot --query-file agent-context/task.md \
+              --model p50-qwen35-review --toolsets file,terminal --max-turns 4 --quiet
           ) > "$GITHUB_WORKSPACE/agent-evidence/hermes-session.log" 2>&1
           rc=$?
           set -e
@@ -149,7 +235,9 @@ jobs:
           mkdir -p agent-evidence
           git -C agent-work status --short > agent-evidence/worktree-status.txt 2>&1
           git -C agent-work diff --binary > agent-evidence/proposal.patch 2>&1
-          docker logs p50-hermes-qwen --tail 100 > agent-evidence/qwen-server.log 2>&1
+          if test -f "$RUNNER_TEMP/p50-qwen35-server.log"; then
+            tail -n 160 "$RUNNER_TEMP/p50-qwen35-server.log" > agent-evidence/qwen-server.log
+          fi
           set -e
       - uses: actions/upload-artifact@v4
         if: always()
@@ -160,7 +248,11 @@ jobs:
           if-no-files-found: warn
       - name: Stop temporary local inference server
         if: always()
-        run: docker rm -f p50-hermes-qwen 2>/dev/null || true
+        shell: bash
+        run: |
+          if test -s "$RUNNER_TEMP/p50-qwen35-server.pid"; then
+            kill "$(cat "$RUNNER_TEMP/p50-qwen35-server.pid")" 2>/dev/null || true
+          fi
       - name: Enforce review-only behavior
         if: always()
         run: |
