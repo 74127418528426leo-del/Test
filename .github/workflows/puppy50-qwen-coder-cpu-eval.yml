@@ -2,7 +2,7 @@ name: Puppy50 Qwen Coder bounded CPU smoke
 on:
   push:
     branches: [puppy50-boot-measurement-integrity-20261116]
-    paths: ['.github/workflows/puppy50-qwen-coder-cpu-eval.yml']
+    paths: ['.github/workflows/puppy50-qwen-coder-cpu-eval.yml', '.github/workflows/puppy50-autonomous-research.yml', 'research_lab/build_matched_control.sh']
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -12,8 +12,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Test bounded parser without executing generated code
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest research_lab.test_coder_smoke -v
+      - name: Run offline code and boot-integrity checks
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q
+          bash -n research_lab/build_matched_control.sh
       - name: Download official Qwen Coder quantization and verify its checksum
         run: |
           set -euo pipefail

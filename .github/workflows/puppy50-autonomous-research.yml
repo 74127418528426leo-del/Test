@@ -1,7 +1,7 @@
 name: Puppy50 autonomous guarded VM experimentation
 on:
   push:
-    branches: [main]
+    branches: [main, puppy50-boot-measurement-integrity-20261116]
     paths:
       - '.github/workflows/puppy50-autonomous-research.yml'
   schedule:
@@ -82,7 +82,15 @@ jobs:
       - name: Build QEMU-only pre-PID1 authenticated X11 without weakening Firefox sandbox
         run: |
           set -euo pipefail
-          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/original.squashfs -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          mkdir -p out/original-live
+          xorriso -osirrox on -indev input/base.iso \
+            -extract /live/initrd.img out/original.initrd \
+            -extract /live/initrd-full.img out/original-full.initrd \
+            -extract /live/filesystem.squashfs out/original.squashfs \
+            -extract /sha256sum.txt out/original.sha256sum.txt \
+            -extract /live/vmlinuz out/original-live/vmlinuz \
+            -extract /live/vmlinuz-6.12.115+deb13.1-amd64 out/original-live/vmlinuz-6.12.115+deb13.1-amd64 \
+            >out/reports/extract.log 2>&1
           # Exact two-part initrd layout from the original v115 build evidence.
           head -c 36154880 out/original.initrd >out/early-prefix
           tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
@@ -471,10 +479,14 @@ jobs:
             -extract /live/initrd.img out/v151-check/initrd \
             -extract /live/initrd-full.img out/v151-check/fallback \
             -extract /live/filesystem.squashfs out/v151-check/root \
+            -extract /live/vmlinuz out/v151-check/vmlinuz \
+            -extract /live/vmlinuz-6.12.115+deb13.1-amd64 out/v151-check/vmlinuz-6.12.115+deb13.1-amd64 \
             -extract /sha256sum.txt out/v151-check/manifest >out/reports/v151-recheck.log 2>&1
           cmp out/v151.initrd out/v151-check/initrd
           cmp out/original-full.initrd out/v151-check/fallback
           cmp out/original.squashfs out/v151-check/root
+          cmp out/original-live/vmlinuz out/v151-check/vmlinuz
+          cmp out/original-live/vmlinuz-6.12.115+deb13.1-amd64 out/v151-check/vmlinuz-6.12.115+deb13.1-amd64
           cmp out/v151.manifest out/v151-check/manifest
           sha256sum out/v149.iso out/v151.iso >out/reports/v151-ISO-SHA256.txt
           echo P50_V151_IDENTICAL_FIREFOX_KERNEL_ROOT_SANDBOX_RECOVERY_ONLY_PRIORITY_CHANGED
