@@ -36,7 +36,7 @@ def sample_report():
 
 def sample_transcript(report=None, tool_calls=1, successful_read=True, json_prefix=False):
     trace = (
-        "📖 Read research_lab/agent-context/review-input.json L1-6\n"
+        "📖 Read review-input.json L1-6\n"
         if successful_read else
         "✗ Read review-input.json [File not found]\n"
     )

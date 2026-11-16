@@ -49,7 +49,7 @@ jobs:
           set -euo pipefail
           mkdir -p models agent-work agent-evidence "$RUNNER_TEMP/hermes-home"
           git archive HEAD | tar -x -C agent-work
-          mkdir -p agent-work/agent-context agent-work/research_lab/agent-context
+          mkdir -p agent-work/agent-context
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -70,12 +70,12 @@ jobs:
               "test_summary": "Offline regression and shell syntax checks passed.",
               "limitation": "One same-host run; independent replication is still required. Timing is page detection, not exact Firefox paint."
           }
-          Path("agent-work/research_lab/agent-context/review-input.json").write_text(
+          Path("agent-work/review-input.json").write_text(
               json.dumps(packet, indent=2, sort_keys=True) + "\n")
           PY
           cat > agent-work/agent-context/task.md <<'TASK'
           Use Hermes read_file exactly once to read:
-          research_lab/agent-context/review-input.json
+          review-input.json
           Copy all six values exactly into one raw JSON object with exactly these keys:
           run_id, candidate_mean_seconds, control_mean_seconds, goal_verified,
           test_summary, limitation.

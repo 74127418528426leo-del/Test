@@ -1,8 +1,11 @@
 # Qwen + Hermes / OpenClaude / OpenCode integration
 
-**Status:** adapter deployed. A real GPU model endpoint or hosted Qwen
-provider must be supplied by the operator. We have **not** installed,
-provisioned or exercised actual Qwen inference or Hermes/OpenClaude servers.
+**Status (updated November 16, 2026):** A pinned Qwen3.5-0.8B Q4 CPU
+model behind llama.cpp and the Hermes CLI have been exercised in bounded,
+credential-free GitHub Actions jobs. The Hermes tool-use pilot is inconsistent;
+this is not an always-on supervisor. No Qwen3.8 GPU host or endpoint is
+provisioned, and OpenClaude has not been exercised. A separate GPU deployment
+still requires operator-owned, appropriately sized infrastructure.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
