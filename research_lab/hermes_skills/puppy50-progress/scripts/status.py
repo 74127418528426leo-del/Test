@@ -20,12 +20,13 @@ BASE = "https://api.github.com/repos/" + REPOSITORY
 STATE = "experiments/puppy50-autolab/state.json"
 QUEUE = "research_lab/queue.json"
 BRANCH = "puppy50-autolab-state"
-ALLOWED_COMMANDS = ("progress","latest","fastest","failures","comparison","help")
+ALLOWED_COMMANDS = ("progress","latest","fastest","failures","comparison","tasks","help")
 WORKFLOWS = (
     "Puppy50 autonomous guarded VM experimentation",
     "Puppy50 AI Research Laboratory",
     "Puppy50 Qwen 128 Tasks Across Four Servers",
     "Puppy50 Qwen 4B Engineering Quality Pilot",
+    "Puppy50 isolated measurement and prefetch replication",
 )
 
 def fetch_json(path):
@@ -71,6 +72,15 @@ def numeric_frames(item):
 
 def snapshot(state,queue,runs):
     history=[x for x in state.get("history",[]) if isinstance(x,dict)]
+    candidate=state.get("vm_goal_candidate")
+    digest=state.get("vm_goal_iso_sha256")
+    matching_runs={str(x.get("run_id")) for x in history
+                   if x.get("candidate_id")==candidate and x.get("iso_sha256")==digest
+                   and x.get("vm_passed") is True and x.get("benchmark_timing_schema")==2
+                   and x.get("run_id")}
+    verified=(state.get("vm_goal_verified") is True and isinstance(digest,str) and
+              len(digest)==64 and all(c in "0123456789abcdef" for c in digest) and
+              bool(candidate) and len(matching_runs)>=2)
     latest_runs={}
     for r in runs.get("workflow_runs",[]):
         if not isinstance(r,dict): continue
@@ -97,8 +107,8 @@ def snapshot(state,queue,runs):
     return {
       "checked_utc":datetime.now(timezone.utc).isoformat(),
       "source_repository":REPOSITORY,
-      "vm_goal_verified":state.get("vm_goal_verified") is True,
-      "vm_goal_candidate":state.get("vm_goal_candidate") if state.get("vm_goal_verified") is True else None,
+      "vm_goal_verified":verified,
+      "vm_goal_candidate":candidate if verified else None,
       "vm_experiments_recorded":len(history),
       "model_hypotheses_queued":candidate_count,
       "latest_candidate":str(latest.get("candidate_id","unknown"))[:65],
@@ -121,9 +131,18 @@ def snapshot(state,queue,runs):
 
 def format_text(data,command):
     if command=="help":
-        return ("Puppy50 status commands: progress, latest, fastest, failures, comparison, help. "
+        return ("Puppy50 status commands: progress, latest, fastest, failures, comparison, tasks, help. "
             "Read-only reports: no builds are started or stopped.")
     vm="VERIFIED" if data["vm_goal_verified"] else "NOT VERIFIED"
+    if command=="tasks":
+        runs=data.get("latest_workflow_runs",{})
+        details=[]
+        for title,name in (("VM experiment",WORKFLOWS[0]),("AI research",WORKFLOWS[1]),
+                           ("Isolated measurement",WORKFLOWS[4])):
+            run=runs.get(name,{})
+            details.append(f"{title}: {run.get('conclusion') or run.get('status') or 'unknown'}")
+        return ("Latest workflow tasks: "+"; ".join(details)+". "
+                "Workflow state is not evidence of persistent independent agents or a running Hermes supervisor.")
     if command=="comparison":
         matched=data.get("latest_same_host_comparison")
         if not isinstance(matched,dict):
@@ -135,7 +154,8 @@ def format_text(data,command):
             f"{matched.get('candidate_prefetch_mib')} MiB mean "
             f"{matched.get('mean_candidate_seconds')}s. "
             f"Control minus candidate: {matched.get('mean_control_minus_candidate_seconds')}s. "
-            f"One four-pair exploratory batch only; 5s and physical Acer goals NOT certified."
+            f"Sampled home-page detections; independent replication is needed. "
+            f"5s and physical Acer goals NOT certified."
         )
     if command=="latest":
         f=data["latest_observed_frames"]
@@ -179,10 +199,16 @@ def main():
             "puppy50-ai-research-lab.yml",
             "puppy50-qwen-distributed-128.yml",
             "puppy50-qwen-4b-pilot.yml",
+            "puppy50-measurement-experiment.yml",
         )
         combined=[]
         for wf in files:
-            obj=fetch_json("/actions/workflows/"+wf+"/runs?per_page=1")
+            try:
+                obj=fetch_json("/actions/workflows/"+wf+"/runs?per_page=1")
+            except error.HTTPError as exc:
+                if wf=="puppy50-measurement-experiment.yml" and exc.code==404:
+                    continue
+                raise
             items=obj.get("workflow_runs",[])
             if isinstance(items,list):combined.extend(items[:1])
         runs={"workflow_runs":combined}

@@ -17,6 +17,30 @@ partial=load("p50_partial",ROOT/"collect_vm_evidence.py")
 prefetch=load("p50_prefetch",ROOT/"patch_libxul_prefetch.py")
 
 class StatusTests(unittest.TestCase):
+    def test_unsubstantiated_goal_flag_is_not_reported_as_verified(self):
+        state={"vm_goal_verified":True,"vm_goal_candidate":"candidate",
+               "vm_goal_iso_sha256":"a"*64,
+               "history":[{"candidate_id":"candidate","vm_passed":True,
+                           "iso_sha256":"a"*64,"run_id":"1",
+                           "benchmark_timing_schema":2}]}
+        got=status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})
+        self.assertFalse(got["vm_goal_verified"])
+        self.assertIn("NOT VERIFIED",status.format_text(got,"progress"))
+        second=dict(state["history"][0],run_id="2")
+        state["history"].append(second)
+        self.assertTrue(status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})["vm_goal_verified"])
+
+    def test_tasks_report_workflows_without_inventing_agent_workers(self):
+        runs={"workflow_runs":[{"name":"Puppy50 isolated measurement and prefetch replication",
+              "status":"in_progress","conclusion":None,
+              "html_url":"https://github.com/example/run"}]}
+        got=status.snapshot({"vm_goal_verified":False,"history":[]},
+                            {"candidates":[]},runs)
+        message=status.format_text(got,"tasks")
+        self.assertIn("in_progress",message)
+        self.assertIn("Isolated measurement",message)
+        self.assertIn("not evidence",message.lower())
+
     def test_successful_ci_is_not_five_second_os(self):
         state={"vm_goal_verified":False,"history":[
             {"candidate_id":"nice-10_zstd3","vm_passed":False,

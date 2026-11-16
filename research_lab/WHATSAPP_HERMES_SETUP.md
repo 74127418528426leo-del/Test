@@ -74,7 +74,8 @@ https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp
 7. Message **yourself** in WhatsApp (self-chat mode) or send a message
    to the bot's dedicated number. Ask:
    `/puppy50-progress progress`
-   or `/puppy50-progress latest`, `/puppy50-progress fastest`, or `/puppy50-progress comparison`.
+   or `/puppy50-progress latest`, `/puppy50-progress fastest`,
+   `/puppy50-progress comparison`, or `/puppy50-progress tasks`.
 
 No QR can be scanned or personal WhatsApp session established by
 ChatGPT in this conversation. Never paste the WhatsApp session data or
@@ -98,6 +99,8 @@ Business account and properly configured webhook instead.
   four-boot trial. This avoids reporting a cherry-picked fast BIOS boot.
 - **Puppy50 comparison** → same-run 256 MiB control versus candidate first-frame means if a matched experiment has completed; never a five-second certification.
 - **Puppy50 failures** → last failed experiment and evidence URL.
+- **Puppy50 tasks** → latest research and VM workflow states; this is not proof
+  that persistent agents or a Hermes supervisor are running.
 
 Green AI-research CI does **not** mean the OS reached five seconds.
 The report requires a complete independently verified BIOS+UEFI

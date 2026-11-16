@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import json
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,6 +127,30 @@ class VerificationIntegrityTests(unittest.TestCase):
         spec.loader.exec_module(patcher)
         with self.assertRaises(ValueError):
             patcher.patch_text("# unknown harness\n")
+
+    def test_paired_analysis_uses_host_receipts_not_guest_uptime(self):
+        path = ROOT / "research_lab/analyze_paired_boots.py"
+        self.assertTrue(path.is_file())
+        spec = importlib.util.spec_from_file_location("paired_analysis", path)
+        analysis = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(analysis)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for prefix, home, receipt in (("", 8.0, 3.0), ("matched_", 9.0, 3.5)):
+                p = root / (prefix + "bios1")
+                p.mkdir()
+                (p / "result.json").write_text(json.dumps({
+                    "virtual_firmware":"bios", "errors":[],
+                    "post_eject_browser_http200_confirmed":True,
+                    "media_ejected":True,
+                    "home_frame_observation":{"first_matching_probe_end_seconds":home},
+                    "serial_marker_first_seen_seconds":{"P50_V127_FIREFOX_DIRECT_EXEC":receipt}}))
+                (p / "serial.log").write_text("P50_V127_FIREFOX_DIRECT_EXEC 103.0 0.0\n")
+            got = analysis.analyze(root, ["bios1"])
+            pair = got["pairs"][0]
+            self.assertEqual(pair["candidate"]["host_exec_receipt_to_home_observation_seconds"], 5.0)
+            self.assertEqual(pair["control_minus_candidate_seconds"], 1.0)
+            self.assertFalse(got["five_second_goal_verified"])
 
 
 if __name__ == "__main__":
