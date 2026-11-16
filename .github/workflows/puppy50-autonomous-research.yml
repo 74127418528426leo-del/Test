@@ -52,7 +52,8 @@ jobs:
           path: input/source
       - uses: actions/checkout@v4
         with:
-          ref: puppy50-v159-verified-browser-httpsafe-experimental
+          # Pin the exact previously inspected v159 research patches.
+          ref: a9e73787e1dca62e9b733e36b8fe2dabfa985f05
           path: input/patches
       - name: Install isolated VM and ISO tools
         run: |
@@ -429,6 +430,8 @@ jobs:
           p.write_text(s)
           print('P50_AUTOLAB_PRIORITY',nice)
           PY
+          # The same non-secret telemetry is included in both A/B conditions.
+          sudo python3 lab-control/research_lab/patch_guest_telemetry.py out/main
           sudo cp out/main/usr/lib/live/boot/9990-main.sh out/matched-control-hook.sh
           sudo --preserve-env=P50_PREFETCH_MIB python3 lab-control/research_lab/patch_libxul_prefetch.py out/main
           sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
@@ -511,6 +514,12 @@ jobs:
           grep -Fq 'post_eject_browser_http200_confirmed' input/source/web109/boot_bench_ahci.py
           grep -Fq "no fake host GET substituted" input/source/web109/boot_bench_ahci.py
           echo P50_V159_REAL_BROWSER_NETWORK_PROOF_REQUIRED
+      - name: Instrument host-clock frame observations and serial receipts
+        run: |
+          set -euo pipefail
+          cp lab-control/research_lab/measurement_probe.py input/source/web109/p50_measurement_probe.py
+          python3 lab-control/research_lab/patch_benchmark_timing.py input/source/web109/boot_bench_ahci.py
+          python3 -m py_compile input/source/web109/boot_bench_ahci.py input/source/web109/p50_measurement_probe.py
       - name: Start local offline/online browser fixture
         env:
           P50_NONCE: P50-${{ github.run_id }}
@@ -518,7 +527,7 @@ jobs:
           nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
           nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
           python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
-      - name: Four independent real Firefox cold boots on shipping v159 ISO BIOS UEFI BIOS UEFI
+      - name: Real Firefox cold boots on experimental candidate and matched control
         timeout-minutes: 34
         run: |
           set -euo pipefail
@@ -547,6 +556,8 @@ jobs:
               r=json.loads((Path('out')/n/'result.json').read_text())
               assert r['virtual_firmware']==n.rstrip('12'),(n,r)
               assert r['first_home_seen_seconds'] is not None,(n,'actual Firefox framebuffer missing')
+              assert r.get('frame_probe_trace') and r.get('home_frame_observation'),(n,'missing frame observation trace')
+              assert r['home_frame_observation']['first_matching_probe_end_seconds']>0,(n,'invalid host observation')
               assert r['staged_ram_ready_seconds'] is not None,(n,'verified RAM transition missing')
               assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
               assert r.get('post_eject_browser_http200_confirmed') is True,(n,'Actual guest browser HTTP200 not confirmed')
@@ -576,13 +587,15 @@ jobs:
           assert len(hits)==expected_hits,('missing real browser HTTP 200 after eject',len(hits),expected_hits)
           iso=Path('out/v151.iso')
           report={
-            'scope':'four REAL cold QEMU boots of EXACT shipping ISO (2 BIOS and 2 UEFI)',
+            'scope':'four real cold QEMU boots of the experimental candidate ISO (2 BIOS and 2 UEFI)',
             'sha256':hashlib.sha256(iso.read_bytes()).hexdigest(),
+            'benchmark_timing_schema':2,
             'first_visible_Firefox_frame_seconds':{n:d[n]['first_home_seen_seconds'] for n in names},
+            'home_frame_observation_upper_seconds':{n:d[n]['home_frame_observation']['first_matching_probe_end_seconds'] for n in names},
             'checksum_verified_whole_root_in_RAM_all_four':True,
             'virtual_CD_removed_after_RAM_all_four':True,
             'real_browser_HTTP200_receipts_after_CD_removal':4,
-            'all_four_real_Firefox_under_five_seconds':all(d[n]['first_home_seen_seconds']<5 for n in names),
+            'all_four_real_Firefox_under_five_seconds':all(d[n]['home_frame_observation']['first_matching_probe_end_seconds']<5 for n in names),
             'original_Zstd_root_and_full_RAM_recovery_preserved':True,
             'physical_Acer_i3_540_tested':False,
             'full_RAM_in_384MiB_possible':False
@@ -595,11 +608,17 @@ jobs:
                   cr=json.loads((Path('out')/cn/'result.json').read_text())
                   assert cr['virtual_firmware']==n.rstrip('12'),(cn,'wrong firmware')
                   assert cr['first_home_seen_seconds'] is not None,(cn,'missing actual frame')
+                  assert cr.get('frame_probe_trace') and cr.get('home_frame_observation'),(cn,'missing frame observation trace')
                   assert cr['staged_ram_ready_seconds'] is not None,(cn,'missing RAM READY')
                   assert cr.get('post_eject_browser_http200_confirmed') is True,(cn,'missing browser HTTP200')
                   assert cr['media_ejected'] and cr['qemu_running_at_end'] and not cr['errors'],(cn,'broken control')
                   serial=(Path('out')/cn/'serial.log').read_text(errors='replace')
-                  assert 'P50_V133_PREFETCH_256MB_STARTED' in serial,(cn,'not actual 256MiB baseline')
+                  for marker in ('P50_V133_PREFETCH_256MB_STARTED',
+                                 'P50_STAGE_COPY_VERIFIED','P50_STAGE_READY',
+                                 'P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED',
+                                 'P50_V127_FIREFOX_DIRECT_EXEC','P50_V144_XORG_VT7_SELECTED',
+                                 'P50_V149_WEBRENDER_USERJS_READY'):
+                      assert marker in serial,(cn,'control prerequisite',marker)
                   controls[n]=cr
                   paired[n]=round(cr['first_home_seen_seconds']-d[n]['first_home_seen_seconds'],3)
               ctl=Path('out/matched-control.iso')
@@ -628,7 +647,7 @@ jobs:
               Path('out/reports/matched-prefetch-AB.json').write_text(json.dumps(matched,indent=2)+'\n')
               print('P50_SAME_HOST_MATCHED_PREFETCH_AB',json.dumps(matched,indent=2))
           Path('out/reports/v159-exact-ISO-release-smoke.json').write_text(json.dumps(report,indent=2)+'\n')
-          print('P50_V159_EXACT_ISO_RELEASE_GATE_PASS',json.dumps(report,indent=2))
+          print('P50_EXPERIMENTAL_VM_BATCH_RECORDED_NOT_A_RELEASE',json.dumps(report,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()

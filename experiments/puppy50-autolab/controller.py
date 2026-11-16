@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Puppy50 bounded VM experiment controller; does not run AI model agents."""
-import argparse, base64, json, os, urllib.error, urllib.request
+import argparse, base64, json, math, os, urllib.error, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,6 +52,26 @@ def save_state(state,sha):
 def trials(state,id):
     return [x for x in state["history"] if x["candidate_id"]==id]
 
+def independently_verified_iso(history, candidate):
+    """Return the exact ISO with two successful distinct-run batches, if any.
+
+    A candidate ID describes parameters, not immutable build bytes. Two
+    independently executed jobs testing different ISO hashes cannot certify
+    the same image. This does not itself publish or review an ISO.
+    """
+    runs_by_sha={}
+    for item in history:
+        if (not isinstance(item,dict) or item.get("candidate_id")!=candidate or
+                item.get("vm_passed") is not True or item.get("benchmark_timing_schema")!=2):
+            continue
+        digest=item.get("iso_sha256")
+        run=str(item.get("run_id") or "")
+        if (not run or not isinstance(digest,str) or len(digest)!=64 or
+                any(c not in "0123456789abcdef" for c in digest)):
+            continue
+        runs_by_sha.setdefault(digest,set()).add(run)
+    return next((digest for digest,runs in runs_by_sha.items() if len(runs)>=2),None)
+
 def queued_candidates():
     """Only load allowlisted numeric AI hypotheses. Never execute agent code."""
     try:
@@ -92,10 +112,19 @@ def choose(state):
 
 def verify(report):
     if not isinstance(report,dict): return False,"no valid VM report"
+    if report.get("benchmark_timing_schema")!=2:
+        return False,"high-precision frame observation evidence missing"
     f=report.get("first_visible_Firefox_frame_seconds")
     if not isinstance(f,dict) or set(f)!=BOOTS: return False,"missing genuine BIOS/UEFI frame timestamps"
     if any(type(v) not in (int,float) or not 0<v<5 for v in f.values()):
         return False,"not all four Firefox frames strictly below five seconds"
+    upper=report.get("home_frame_observation_upper_seconds")
+    if not isinstance(upper,dict) or set(upper)!=BOOTS:
+        return False,"missing host-monotonic frame-observation upper bounds"
+    if any(type(v) not in (int,float) or not math.isfinite(v) or not 0<v<5 for v in upper.values()):
+        return False,"not all frame observation upper bounds strictly below five seconds"
+    if any(abs(f[k]-upper[k])>0.02 for k in BOOTS):
+        return False,"frame timestamps disagree with observation evidence"
     for key in ("checksum_verified_whole_root_in_RAM_all_four",
                 "virtual_CD_removed_after_RAM_all_four",
                 "original_Zstd_root_and_full_RAM_recovery_preserved",
@@ -160,13 +189,16 @@ def main():
                    "ram_ready_seconds":(partial.get("ram_ready_seconds") if isinstance(partial,dict) else None),
                    "post_eject_http200_by_boot":(partial.get("post_eject_http200_by_boot") if isinstance(partial,dict) else None),
                    "iso_sha256":report.get("sha256") if isinstance(report,dict) else None,
+                   "benchmark_timing_schema":report.get("benchmark_timing_schema") if isinstance(report,dict) else None,
+                   "home_frame_observation_upper_seconds":report.get("home_frame_observation_upper_seconds") if isinstance(report,dict) else None,
                    "matched_prefetch_control":(report.get("matched_prefetch_control")
                       if isinstance(report,dict) else None)}
             state["history"].append(entry)
-            successes=[x for x in trials(state,a.candidate) if x["vm_passed"]]
-            if len({x["run_id"] for x in successes})>=2:
+            verified_sha=independently_verified_iso(state["history"],a.candidate)
+            if verified_sha:
                 state["vm_goal_verified"]=True
                 state["vm_goal_candidate"]=a.candidate
+                state["vm_goal_iso_sha256"]=verified_sha
                 state["vm_goal_verified_at"]=utc()
             save_state(state,sha)
             info={"recorded":True,"passed":passed,
