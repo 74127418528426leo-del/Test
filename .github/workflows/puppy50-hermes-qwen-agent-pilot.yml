@@ -75,14 +75,14 @@ jobs:
         run: |
           set -euo pipefail
           model='models/qwen35-review.gguf'
-          size=0
-          if test -f "$model"; then size="$(stat -c%s "$model")"; fi
-          if [ "$size" -lt 500000000 ] || [ "$size" -gt 620000000 ]; then
+          digest='57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf'
+          if ! echo "$digest  $model" | sha256sum -c - >/dev/null 2>&1; then
             rm -f "$model"
             curl -fL --retry 2 --connect-timeout 25 --max-time 600 \
               'https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/004fd086eccea9f7cf867aa07ba328773beef81d/Qwen3.5-0.8B-Q4_0.gguf?download=true' \
               -o "$model"
           fi
+          echo "$digest  $model" | sha256sum -c -
           size="$(stat -c%s "$model")"
           test "$size" -ge 500000000
           test "$size" -le 620000000
@@ -121,6 +121,11 @@ jobs:
           printf '%s\n' "$server_bin" > agent-evidence/llama-server-path.txt
           printf '%s\n' 'llama.cpp release=b12438' 'source_commit=e1925b3695b8d2f2acd162fb10ad0748da0d921b' \
             > agent-evidence/llama-server-provenance.txt
+      - name: Restore pinned Hermes runtime tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/hermes-home/tools
+          key: puppy50-hermes-tools-3b421578588243f920886e6fe79a6faa87ea026e-py313-ubuntu24
       - name: Bootstrap pinned Hermes source runtime
         shell: bash
         run: |
@@ -148,6 +153,7 @@ jobs:
             backend: local
             timeout: 120
           agent:
+            reasoning_effort: none
             max_turns: 4
           CONFIG
       - name: Start bounded local Qwen3.5 CPU server and verify inference
@@ -194,15 +200,22 @@ jobs:
               'model':'p50-qwen35-review',
               'messages':[{'role':'user','content':'Reply with READY.'}],
               'temperature':0,
-              'max_tokens':8
+              'reasoning_effort':'none',
+              'max_tokens':16
           }).encode()
           request=urllib.request.Request(base+'/v1/chat/completions',data=payload,
               headers={'Content-Type':'application/json'})
           with urllib.request.urlopen(request,timeout=60) as r:
               result=json.load(r)
-          answer=result['choices'][0]['message'].get('content','')
+          message=result['choices'][0]['message']
+          answer=message.get('content','')
           if not answer.strip():
-              raise RuntimeError('Qwen smoke request returned an empty answer')
+              reasoning=message.get('reasoning_content','')
+              finish=result['choices'][0].get('finish_reason')
+              raise RuntimeError(
+                  f'Qwen returned no final text; finish_reason={finish}; '
+                  f'reasoning_chars={len(reasoning)}'
+              )
           with open('agent-evidence/qwen-smoke.json','w') as f:
               json.dump({'model_ids':ids,'max_tokens':8,'answer':answer},f,indent=2)
               f.write('\n')
