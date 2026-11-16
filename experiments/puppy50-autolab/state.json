@@ -423,6 +423,33 @@
       "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827102441",
       "artifact_id": 14207596699,
       "notes": "One runner at 3072 MiB, three BIOS and two UEFI boots per condition. The guest cookie wait shortened but total boot timings were mixed; independent replication required."
+    },
+    {
+      "at": "2026-11-16T08:10:00Z",
+      "candidate_id": "nice-10_zstd3_prefetch0",
+      "run_id": "43827649806",
+      "source_job_id": "133165188490",
+      "vm_passed": false,
+      "iso_sha256": "a45443d2216cc60b3a3e644ac8995af3e4a8c21d3b222e859364a64e02b0c184",
+      "frames": {
+        "bios1": 9.7,
+        "uefi1": 13.32,
+        "bios2": 8.21,
+        "uefi2": 13.12,
+        "bios3": 8.63
+      },
+      "reason": "Five candidate and five control boots passed recorded RAM, media and local HTTP gates; candidate sampled mean 10.596s vs control 10.288s. Under-five target not met.",
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "uefi1": true,
+        "bios2": true,
+        "uefi2": true,
+        "bios3": true
+      },
+      "vm_diagnostics": {},
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827649806",
+      "artifact_id": 14208330466,
+      "benchmark_timing_schema": 2
     }
   ],
   "schema": 1,
