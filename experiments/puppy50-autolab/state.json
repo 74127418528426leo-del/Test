@@ -450,6 +450,75 @@
       "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827649806",
       "artifact_id": 14208330466,
       "benchmark_timing_schema": 2
+    },
+    {
+      "at": "2026-11-16T13:28:03Z",
+      "candidate_id": "nice-10_zstd3_prefetch32",
+      "run_id": "43874157306",
+      "vm_passed": false,
+      "benchmark_timing_schema": 2,
+      "frames": {
+        "bios1": 9.55,
+        "uefi1": 10.85,
+        "bios2": 7.71,
+        "uefi2": 11.04
+      },
+      "frame_observation_upper_seconds": {
+        "bios1": 9.552255,
+        "uefi1": 10.851301,
+        "bios2": 7.706401,
+        "uefi2": 11.040953
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.69,
+        "uefi1": 18.98,
+        "bios2": 15.33,
+        "uefi2": 18.68
+      },
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "uefi1": true,
+        "bios2": true,
+        "uefi2": true
+      },
+      "iso_sha256": "af4664dd365aea797d9e2d8184ac70de1badaa57eb4fd292873b89eb7f4b7fe9",
+      "matched_prefetch_control": {
+        "scope": "one host, alternating 4+4 genuine QEMU cold boots, two BIOS and two UEFI per condition",
+        "reference_prefetch_mib": 256,
+        "candidate_prefetch_mib": 32,
+        "fixed_firefox_nice": -10,
+        "fixed_zstd_level": 3,
+        "reference_iso_sha256": "ec387ad71614588fd08a4c9de8cf4a3f49848f64fe601df725939db0c7958e27",
+        "candidate_iso_sha256": "af4664dd365aea797d9e2d8184ac70de1badaa57eb4fd292873b89eb7f4b7fe9",
+        "control_frame_seconds": {
+          "bios1": 7.71,
+          "uefi1": 11.07,
+          "bios2": 7.93,
+          "uefi2": 10.86
+        },
+        "candidate_frame_seconds": {
+          "bios1": 9.55,
+          "uefi1": 10.85,
+          "bios2": 7.71,
+          "uefi2": 11.04
+        },
+        "matched_control_minus_candidate_seconds": {
+          "bios1": -1.84,
+          "uefi1": 0.22,
+          "bios2": 0.22,
+          "uefi2": -0.18
+        },
+        "mean_control_seconds": 9.393,
+        "mean_candidate_seconds": 9.787,
+        "mean_control_minus_candidate_seconds": -0.395,
+        "control_and_candidate_functional": true,
+        "not_five_second_certification": true,
+        "not_randomized_across_hosts": true,
+        "interpretation": "Candidate was 0.395 s slower on mean in this one same-host ABBA-like test; one nonblinded run, independent reproduction required."
+      },
+      "artifact_id": 14229756794,
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43874157306",
+      "reason": "All four candidate QEMU boots passed recorded browser, RAM-migration and post-eject HTTP checks, but candidate mean 9.787 s was 0.395 s slower than the 256 MiB control mean 9.393 s. Not under-five-second; no promotion."
     }
   ],
   "schema": 1,
