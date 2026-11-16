@@ -40,6 +40,10 @@ class StatusTests(unittest.TestCase):
         self.assertIn("in_progress",message)
         self.assertIn("X11 cookie experiment",message)
         self.assertIn("not evidence",message.lower())
+        runs["workflow_runs"][0]["name"]="Puppy50 zero-prefetch independent replication"
+        got=status.snapshot({"vm_goal_verified":False,"history":[]},
+                            {"candidates":[]},runs)
+        self.assertIn("Zero-prefetch replication: in_progress",status.format_text(got,"tasks"))
 
     def test_successful_ci_is_not_five_second_os(self):
         state={"vm_goal_verified":False,"history":[

@@ -25,6 +25,8 @@ jobs:
       prefetch: ${{ steps.plan.outputs.prefetch }}
     steps:
       - uses: actions/checkout@v4
+      - name: Run offline safety and measurement regression tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q
       - name: Select next unverified candidate from persistent history
         id: plan
         env:

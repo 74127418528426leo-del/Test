@@ -52,6 +52,20 @@ def save_state(state,sha):
 def trials(state,id):
     return [x for x in state["history"] if x["candidate_id"]==id]
 
+def needs_measurement(state, candidate):
+    """Seek two complete timing batches, but cap all attempts at three."""
+    attempts=trials(state,candidate["id"])
+    if len(attempts)>=3:
+        return False
+    complete=0
+    for item in attempts:
+        frames=item.get("frames")
+        if (isinstance(frames,dict) and BOOTS.issubset(frames) and
+                all(type(frames[k]) in (int,float) and math.isfinite(frames[k]) and
+                    0<frames[k]<600 for k in BOOTS)):
+            complete+=1
+    return complete<2
+
 def independently_verified_iso(history, candidate):
     """Return the exact ISO with two successful distinct-run batches, if any.
 
@@ -119,13 +133,13 @@ def choose(state):
     # Test one-variable prefetch hypotheses once each before broad numeric sweeps.
     # Failed hypotheses are not automatically repeated unless they passed once.
     for c in PREFETCH_CANDIDATES:
-        if len(trials(state,c["id"]))<2:
+        if needs_measurement(state,c):
             return c,"independent structural prefetch replication and same-host matched control"
     # AI-proposed numeric parameters receive priority, but still obey all VM gates.
     for c in queued_candidates():
-        if len(trials(state,c["id"]))<2:
+        if needs_measurement(state,c):
             return c,"research-lab proposed, allowlisted VM candidate"
-    pending=[c for c in CANDIDATES if len(trials(state,c["id"]))<2]
+    pending=[c for c in CANDIDATES if needs_measurement(state,c)]
     if not pending: return None,"candidate catalog exhausted; new hypotheses required"
     pending.sort(key=lambda c:len(trials(state,c["id"])))
     return pending[0],"next candidate"

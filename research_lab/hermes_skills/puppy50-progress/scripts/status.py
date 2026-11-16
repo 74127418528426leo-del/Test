@@ -28,6 +28,7 @@ WORKFLOWS = (
     "Puppy50 Qwen 4B Engineering Quality Pilot",
     "Puppy50 isolated measurement and prefetch replication",
     "Puppy50 parallel secure X11 cookie experiment",
+    "Puppy50 zero-prefetch independent replication",
 )
 
 def fetch_json(path):
@@ -140,7 +141,8 @@ def format_text(data,command):
         details=[]
         for title,name in (("VM experiment",WORKFLOWS[0]),("AI research",WORKFLOWS[1]),
                            ("Isolated measurement",WORKFLOWS[4]),
-                           ("X11 cookie experiment",WORKFLOWS[5])):
+                           ("X11 cookie experiment",WORKFLOWS[5]),
+                           ("Zero-prefetch replication",WORKFLOWS[6])):
             run=runs.get(name,{})
             details.append(f"{title}: {run.get('conclusion') or run.get('status') or 'unknown'}")
         return ("Latest workflow tasks: "+"; ".join(details)+". "
@@ -203,13 +205,15 @@ def main():
             "puppy50-qwen-4b-pilot.yml",
             "puppy50-measurement-experiment.yml",
             "puppy50-parallel-cookie-experiment.yml",
+            "puppy50-zero-prefetch-replication.yml",
         )
         combined=[]
         for wf in files:
             try:
                 obj=fetch_json("/actions/workflows/"+wf+"/runs?per_page=1")
             except error.HTTPError as exc:
-                if wf in ("puppy50-measurement-experiment.yml", "puppy50-parallel-cookie-experiment.yml") and exc.code==404:
+                if wf in ("puppy50-measurement-experiment.yml", "puppy50-parallel-cookie-experiment.yml",
+                          "puppy50-zero-prefetch-replication.yml") and exc.code==404:
                     continue
                 raise
             items=obj.get("workflow_runs",[])

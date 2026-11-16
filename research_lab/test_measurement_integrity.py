@@ -83,6 +83,22 @@ class VerificationIntegrityTests(unittest.TestCase):
         candidate, _ = controller.choose(state)
         self.assertIsNone(candidate)
 
+    def test_infrastructure_failure_does_not_count_as_completed_replication(self):
+        zero = controller.PREFETCH_CANDIDATES[0]["id"]
+        thirtytwo = controller.PREFETCH_CANDIDATES[1]["id"]
+        frames = {k: 10.0 for k in controller.BOOTS}
+        history = [{"candidate_id":zero,"run_id":str(n),"vm_passed":False,"frames":frames}
+                   for n in (1,2)]
+        history.extend([
+            {"candidate_id":thirtytwo,"run_id":"3","vm_passed":False,"frames":{}},
+            {"candidate_id":thirtytwo,"run_id":"4","vm_passed":False,"frames":frames},
+        ])
+        selected, _ = controller.choose({"vm_goal_verified":False,"history":history})
+        self.assertEqual(selected["id"], thirtytwo)
+        history.append({"candidate_id":thirtytwo,"run_id":"5","vm_passed":False,"frames":{}})
+        selected, _ = controller.choose({"vm_goal_verified":False,"history":history})
+        self.assertEqual(selected["id"], controller.PREFETCH_CANDIDATES[2]["id"])
+
     def test_frame_probes_keep_host_clock_bracket_and_exact_capture(self):
         path = ROOT / "research_lab/measurement_probe.py"
         self.assertTrue(path.is_file())
