@@ -357,6 +357,72 @@
       "run_id": "43827409340",
       "vm_diagnostics": {},
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-16T08:07:38Z",
+      "candidate_id": "parallel-secure-x11-cookie",
+      "run_id": "43827102441",
+      "source_job_id": "133163428236",
+      "vm_passed": false,
+      "iso_sha256": "f5204b9ac71c49dcf17231c371eed3a2da1ee602a6f6c8936ba3e587ee148ec2",
+      "frames": {
+        "bios1": 9.37,
+        "uefi1": 11.09,
+        "bios2": 7.92,
+        "uefi2": 10.64,
+        "bios3": 7.71
+      },
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "uefi1": true,
+        "bios2": true,
+        "uefi2": true,
+        "bios3": true
+      },
+      "vm_diagnostics": {},
+      "reason": "Five candidate and five matched-control QEMU boots met the recorded RAM/media/local-HTTP checks; sampled home-page times exceeded five seconds. Candidate mean was 0.234 s slower in this one batch.",
+      "matched_cookie_control": {
+        "scope": "one host, alternating 5+5 genuine QEMU cold boots, three BIOS and two UEFI per condition",
+        "reference_prefetch_mib": 256,
+        "candidate_prefetch_mib": 256,
+        "experiment": "generate a fresh X11 cookie in parallel with DRM setup",
+        "fixed_firefox_nice": -10,
+        "fixed_zstd_level": 3,
+        "reference_iso_sha256": "7ebfaf6a4728871f67b929cd6aa23bf97a9baa9dcf06d7835954b16d0242a07e",
+        "candidate_iso_sha256": "f5204b9ac71c49dcf17231c371eed3a2da1ee602a6f6c8936ba3e587ee148ec2",
+        "control_frame_seconds": {
+          "bios1": 7.73,
+          "uefi1": 11.08,
+          "bios2": 7.75,
+          "uefi2": 11.08,
+          "bios3": 7.92
+        },
+        "candidate_frame_seconds": {
+          "bios1": 9.37,
+          "uefi1": 11.09,
+          "bios2": 7.92,
+          "uefi2": 10.64,
+          "bios3": 7.71
+        },
+        "matched_control_minus_candidate_seconds": {
+          "bios1": -1.64,
+          "uefi1": -0.01,
+          "bios2": -0.17,
+          "uefi2": 0.44,
+          "bios3": 0.21
+        },
+        "mean_control_seconds": 9.112,
+        "mean_candidate_seconds": 9.346,
+        "mean_control_minus_candidate_seconds": -0.234,
+        "control_and_candidate_functional": true,
+        "not_five_second_certification": true,
+        "not_randomized_across_hosts": true,
+        "interpretation": "Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required."
+      },
+      "benchmark_timing_schema": 2,
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827102441",
+      "artifact_id": 14207596699,
+      "notes": "One runner at 3072 MiB, three BIOS and two UEFI boots per condition. The guest cookie wait shortened but total boot timings were mixed; independent replication required."
     }
   ],
   "schema": 1,
