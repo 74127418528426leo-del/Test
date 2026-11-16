@@ -2,8 +2,10 @@
 
 **Status (updated November 16, 2026):** A pinned Qwen3.5-0.8B Q4 CPU
 model behind llama.cpp and the Hermes CLI have been exercised in bounded,
-credential-free GitHub Actions jobs. The Hermes tool-use pilot is inconsistent;
-this is not an always-on supervisor. No Qwen3.8 GPU host or endpoint is
+credential-free GitHub Actions jobs. Hermes has read a root-level packet in a
+recent run, but its answer omitted a required timing caveat and failed
+validation; earlier attempts missed or failed the read. This remains a
+bounded pilot, not an always-on supervisor. No Qwen3.8 GPU host or endpoint is
 provisioned, and OpenClaude has not been exercised. A separate GPU deployment
 still requires operator-owned, appropriately sized infrastructure.
 

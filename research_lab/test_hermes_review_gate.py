@@ -60,6 +60,17 @@ class HermesReviewGateTests(unittest.TestCase):
         self.assertFalse(result["goal_verified"])
         self.assertEqual(result["agent_tool_calls"], 1)
 
+    def test_accepts_compact_limitation_with_both_measurement_caveats(self):
+        report = sample_report()
+        report["limitation"] = (
+            "One same-host run; sampled page detection, not exact first Firefox frame; "
+            "independent replication required."
+        )
+        parsed, calls = gate.parse_hermes_transcript(sample_transcript(report))
+        result = gate.validate_report(parsed, sample_state(), calls)
+        self.assertIn("page detection", result["limitation"])
+        self.assertIn("first Firefox frame", result["limitation"])
+
     def test_accepts_bare_json_label_prefix(self):
         report, calls = gate.parse_hermes_transcript(sample_transcript(json_prefix=True))
         result = gate.validate_report(report, sample_state(), calls)
@@ -101,6 +112,7 @@ class HermesReviewGateTests(unittest.TestCase):
         for key, value in (
             ("test_summary", "Critical path simulation completed; 1.5s achieved."),
             ("limitation", "None."),
+            ("limitation", "One same-host run; independent replication is still required."),
         ):
             report = sample_report()
             report[key] = value

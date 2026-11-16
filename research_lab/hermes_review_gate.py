@@ -15,10 +15,7 @@ SUCCESSFUL_READ = re.compile(r"(?m)^\s*📖\s+Read\s+.*\breview-input\.json\b")
 SEPARATOR = re.compile(r"(?m)^\s*[─━]{8,}\s*$")
 MINIMUM_FILE_TOOL_CALLS = 1
 EXPECTED_TEST_SUMMARY = "Offline regression and shell syntax checks passed."
-EXPECTED_LIMITATION = (
-    "One same-host run; independent replication is still required. "
-    "Timing is page detection, not exact Firefox paint."
-)
+EXPECTED_LIMITATION = "One same-host run; sampled page detection, not exact first Firefox frame; independent replication required."
 FIELDS = {
     "run_id", "candidate_mean_seconds", "control_mean_seconds",
     "goal_verified", "test_summary", "limitation",
