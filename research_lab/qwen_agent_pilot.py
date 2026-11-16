@@ -16,6 +16,7 @@ MAX_PACKET_BYTES = 4096
 MAX_TOOL_CALLS = 1
 MAX_LLM_CALLS = 3
 MAX_OUTPUT_TOKENS = 512
+TOOL_PARAMETERS: list[dict] = []
 MODEL_ID = "p50-qwen35-review"
 EXPECTED_TEST_SUMMARY = "Offline regression and shell syntax checks passed."
 EXPECTED_LIMITATION = (
@@ -24,7 +25,8 @@ EXPECTED_LIMITATION = (
 )
 SYSTEM_MESSAGE = (
     "You are a read-only evidence reviewer. Call p50_read_review_input exactly "
-    "once with path review-input.json; this call is required. After the tool "
+    "once with an empty JSON object {}; this tool accepts no arguments and "
+    "chooses the fixed packet itself. Do not provide a path. After the tool "
     "returns, copy all six values exactly into one minified raw JSON object with "
     "keys run_id, candidate_mean_seconds, control_mean_seconds, goal_verified, "
     "test_summary, limitation. Output no explanation, markdown, or invented "
@@ -40,16 +42,16 @@ def _parse_tool_args(params: str | dict) -> dict:
             raise ValueError("tool arguments must be JSON") from exc
     if not isinstance(params, dict):
         raise ValueError("tool arguments must be an object")
-    if set(params) != {"path"} or params.get("path") != PACKET_NAME:
-        raise ValueError("tool may read only review-input.json")
-    return params
+    if params:
+        raise ValueError("tool accepts no arguments; packet path is fixed")
+    return {"path": PACKET_NAME}
 
 
 def safe_read_review_packet(root: str | Path, params: str | dict,
                             audit: list[dict], max_calls: int = MAX_TOOL_CALLS) -> str:
     """Read one fixed regular file, recording allowed and denied tool attempts."""
     if isinstance(params, dict):
-        shown_path = params.get("path", "<missing>")
+        shown_path = params.get("path", PACKET_NAME)
     elif isinstance(params, str):
         shown_path = params[:120]
     else:
@@ -63,7 +65,8 @@ def safe_read_review_packet(root: str | Path, params: str | dict,
     audit.append(event)
     if event["call"] > max_calls:
         raise ValueError("tool call limit exceeded")
-    _parse_tool_args(params)
+    fixed_args = _parse_tool_args(params)
+    event["path"] = fixed_args["path"]
 
     base = Path(root).resolve(strict=True)
     target = base / PACKET_NAME
@@ -215,12 +218,7 @@ def run_agent(base_url: str, packet: Path, state: dict, diagnostics: dict | None
     class ReviewInputTool(BaseTool):
         name = TOOL_NAME
         description = "Read the fixed, read-only Puppy50 review packet once."
-        parameters = [{
-            "name": "path",
-            "type": "string",
-            "description": "Must be exactly review-input.json.",
-            "required": True,
-        }]
+        parameters = TOOL_PARAMETERS
 
         def call(self, params, **kwargs):
             return safe_read_review_packet(packet_root, params, audit)

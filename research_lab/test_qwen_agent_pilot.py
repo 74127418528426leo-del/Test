@@ -35,6 +35,18 @@ def sample_report():
 
 
 class QwenAgentPilotTests(unittest.TestCase):
+    def test_tool_schema_is_argument_free_and_normalizes_to_fixed_packet(self):
+        self.assertEqual(pilot.TOOL_PARAMETERS, [])
+        self.assertEqual(pilot._parse_tool_args({}), {"path": "review-input.json"})
+        self.assertEqual(pilot._parse_tool_args("{}"), {"path": "review-input.json"})
+        for params in (
+            {"path": "review-input.json"},
+            {"path": "path-review-input.json"},
+            {"path": "../review-input.json"},
+        ):
+            with self.subTest(params=params), self.assertRaises(ValueError):
+                pilot._parse_tool_args(params)
+
     def test_read_tool_opens_only_the_fixed_packet_and_records_hash(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -42,7 +54,7 @@ class QwenAgentPilotTests(unittest.TestCase):
             (root / "review-input.json").write_text(payload)
             audit = []
             self.assertEqual(
-                pilot.safe_read_review_packet(root, {"path": "review-input.json"}, audit),
+                pilot.safe_read_review_packet(root, {}, audit),
                 payload,
             )
             self.assertEqual(audit, [{
@@ -62,6 +74,7 @@ class QwenAgentPilotTests(unittest.TestCase):
                 {"path": "../review-input.json"},
                 {"path": str(root / "review-input.json")},
                 {"path": "review-input.json", "other": "x"},
+                {"path": "path-review-input.json"},
             ):
                 with self.subTest(params=params), self.assertRaises(ValueError):
                     pilot.safe_read_review_packet(root, params, [])
@@ -73,13 +86,13 @@ class QwenAgentPilotTests(unittest.TestCase):
             target.write_text("{}")
             (root / "review-input.json").symlink_to(target)
             with self.assertRaises(ValueError):
-                pilot.safe_read_review_packet(root, {"path": "review-input.json"}, [])
+                pilot.safe_read_review_packet(root, {}, [])
             (root / "review-input.json").unlink()
             (root / "review-input.json").write_text("{}")
             audit = []
-            pilot.safe_read_review_packet(root, {"path": "review-input.json"}, audit)
+            pilot.safe_read_review_packet(root, {}, audit)
             with self.assertRaises(ValueError):
-                pilot.safe_read_review_packet(root, {"path": "review-input.json"}, audit)
+                pilot.safe_read_review_packet(root, {}, audit)
             self.assertEqual(len(audit), 2)
             self.assertEqual(audit[1]["status"], "denied")
 
@@ -91,7 +104,7 @@ class QwenAgentPilotTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "byte limit"):
                 pilot.safe_read_review_packet(
-                    root, {"path": "review-input.json"}, []
+                    root, {}, []
                 )
 
     def test_run_rejects_packet_symlink_before_loading_agent_framework(self):

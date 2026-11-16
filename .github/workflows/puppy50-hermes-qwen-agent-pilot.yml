@@ -7,6 +7,7 @@ on:
       - '.github/workflows/puppy50-autonomous-research.yml'
       - 'research_lab/hermes_review_gate.py'
       - 'research_lab/test_hermes_review_gate.py'
+      - 'research_lab/test_hermes_workflow_contract.py'
       - 'research_lab/qwen_toolcall_probe.py'
       - 'research_lab/test_qwen_toolcall_probe.py'
       - 'research_lab/qwen_agent_pilot.py'
@@ -47,13 +48,11 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q 2>&1 | tee "$RUNNER_TEMP/p50-offline-tests.txt"
           bash -n research_lab/build_matched_control.sh
           printf '%s\n' 'PASS: bash -n research_lab/build_matched_control.sh' >> "$RUNNER_TEMP/p50-offline-tests.txt"
-      - name: Prepare a credential-free one-file review packet
+      - name: Prepare minimal credential-free Hermes/Qwen review packet
         run: |
           set -euo pipefail
-          mkdir -p models agent-work agent-evidence "$RUNNER_TEMP/hermes-home"
-          git archive HEAD | tar -x -C agent-work
-          mkdir -p agent-work/agent-context
-          rm -f agent-work/review-input.json
+          rm -rf agent-work
+          mkdir -p models agent-work/agent-context agent-evidence "$RUNNER_TEMP/hermes-home"
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -79,13 +78,49 @@ jobs:
           PY
           cat > agent-work/agent-context/task.md <<'TASK'
           Use Hermes read_file exactly once to read:
-          review-input.json
+          Review-Input.json
           Copy all six values exactly into one raw JSON object with exactly these keys:
           run_id, candidate_mean_seconds, control_mean_seconds, goal_verified,
           test_summary, limitation.
           Do not read any other file, call another tool, invent facts, or add prose.
           Do not claim that this packet independently verifies a Puppy50 boot.
           TASK
+          cp agent-work/review-input.json agent-work/Review-Input.json
+          cat > "$RUNNER_TEMP/hermes-home/config.yaml" <<CONFIG
+          model:
+            provider: custom
+            default: p50-qwen35-review
+            base_url: http://127.0.0.1:8088/v1
+            api_key: local-cpu-only
+            context_length: 65536
+          agent:
+            reasoning_effort: none
+            max_turns: 4
+          terminal:
+            cwd: "$GITHUB_WORKSPACE/agent-work"
+          CONFIG
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = (Path(os.environ["GITHUB_WORKSPACE"]) / "agent-work").resolve()
+          expected = {
+              "review-input.json",
+              "Review-Input.json",
+              "agent-context/task.md",
+          }
+          actual = {
+              p.relative_to(root).as_posix()
+              for p in root.rglob("*") if p.is_file() or p.is_symlink()
+          }
+          if actual != expected:
+              raise SystemExit(f"unexpected agent workspace files: {sorted(actual)}")
+          if (root / "review-input.json").read_bytes() != (root / "Review-Input.json").read_bytes():
+              raise SystemExit("Hermes/Qwen packet aliases differ")
+          config = Path(os.environ["RUNNER_TEMP"]) / "hermes-home/config.yaml"
+          if f'  cwd: "{root}"' not in config.read_text(encoding="utf-8"):
+              raise SystemExit("Hermes terminal.cwd is not the isolated review workspace")
+          print(f"PASS: minimal review workspace and Hermes cwd: {root}")
+          PY
           git -C agent-work init -q
           git -C agent-work config user.name 'Puppy50 isolated Hermes review'
           git -C agent-work config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -168,20 +203,6 @@ jobs:
           cd "$src"
           source ./activate
           hermes --version
-      - name: Configure Hermes to use the verified 64K local Qwen server
-        run: |
-          set -euo pipefail
-          cat > "$RUNNER_TEMP/hermes-home/config.yaml" <<'CONFIG'
-          model:
-            provider: custom
-            default: p50-qwen35-review
-            base_url: http://127.0.0.1:8088/v1
-            api_key: local-cpu-only
-            context_length: 65536
-          agent:
-            reasoning_effort: none
-            max_turns: 4
-          CONFIG
       - name: Start bounded local Qwen3.5 CPU server and verify inference
         shell: bash
         run: |
@@ -263,7 +284,7 @@ jobs:
             cd "$GITHUB_WORKSPACE/agent-work"
             env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" \
               HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" \
-              TERMINAL_CWD="$GITHUB_WORKSPACE/agent-work" PATH=/usr/bin:/bin \
+              PATH=/usr/bin:/bin \
               bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env" \
               python "$RUNNER_TEMP/hermes-source/hermes" chat \
               --oneshot --query-file agent-context/task.md \

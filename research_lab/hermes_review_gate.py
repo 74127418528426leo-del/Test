@@ -11,7 +11,9 @@ from typing import Any
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 FOOTER = re.compile(r"(?m)^\s*Messages:\s*\d+\s*\(\s*\d+\s+user,\s*(\d+)\s+tool calls?\s*\)\s*$")
 BANNER = re.compile(r"(?m)^\s*☤\s+Hermes\s*$")
-SUCCESSFUL_READ = re.compile(r"(?m)^\s*📖\s+Read\s+.*\breview-input\.json\b")
+SUCCESSFUL_READ = re.compile(
+    r"(?m)^\s*📖\s+Read\s+.*\breview-input\.json\b", re.IGNORECASE
+)
 SEPARATOR = re.compile(r"(?m)^\s*[─━]{8,}\s*$")
 MINIMUM_FILE_TOOL_CALLS = 1
 EXPECTED_TEST_SUMMARY = "Offline regression and shell syntax checks passed."
