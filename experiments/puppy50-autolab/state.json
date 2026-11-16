@@ -359,166 +359,227 @@
       "vm_passed": false
     },
     {
+      "artifact_id": 14207596699,
       "at": "2026-11-16T08:07:38Z",
+      "benchmark_timing_schema": 2,
       "candidate_id": "parallel-secure-x11-cookie",
-      "run_id": "43827102441",
-      "source_job_id": "133163428236",
-      "vm_passed": false,
-      "iso_sha256": "f5204b9ac71c49dcf17231c371eed3a2da1ee602a6f6c8936ba3e587ee148ec2",
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827102441",
       "frames": {
         "bios1": 9.37,
-        "uefi1": 11.09,
         "bios2": 7.92,
-        "uefi2": 10.64,
-        "bios3": 7.71
+        "bios3": 7.71,
+        "uefi1": 11.09,
+        "uefi2": 10.64
       },
-      "post_eject_http200_by_boot": {
-        "bios1": true,
-        "uefi1": true,
-        "bios2": true,
-        "uefi2": true,
-        "bios3": true
-      },
-      "vm_diagnostics": {},
-      "reason": "Five candidate and five matched-control QEMU boots met the recorded RAM/media/local-HTTP checks; sampled home-page times exceeded five seconds. Candidate mean was 0.234 s slower in this one batch.",
+      "iso_sha256": "f5204b9ac71c49dcf17231c371eed3a2da1ee602a6f6c8936ba3e587ee148ec2",
       "matched_cookie_control": {
-        "scope": "one host, alternating 5+5 genuine QEMU cold boots, three BIOS and two UEFI per condition",
-        "reference_prefetch_mib": 256,
+        "candidate_frame_seconds": {
+          "bios1": 9.37,
+          "bios2": 7.92,
+          "bios3": 7.71,
+          "uefi1": 11.09,
+          "uefi2": 10.64
+        },
+        "candidate_iso_sha256": "f5204b9ac71c49dcf17231c371eed3a2da1ee602a6f6c8936ba3e587ee148ec2",
         "candidate_prefetch_mib": 256,
+        "control_and_candidate_functional": true,
+        "control_frame_seconds": {
+          "bios1": 7.73,
+          "bios2": 7.75,
+          "bios3": 7.92,
+          "uefi1": 11.08,
+          "uefi2": 11.08
+        },
         "experiment": "generate a fresh X11 cookie in parallel with DRM setup",
         "fixed_firefox_nice": -10,
         "fixed_zstd_level": 3,
-        "reference_iso_sha256": "7ebfaf6a4728871f67b929cd6aa23bf97a9baa9dcf06d7835954b16d0242a07e",
-        "candidate_iso_sha256": "f5204b9ac71c49dcf17231c371eed3a2da1ee602a6f6c8936ba3e587ee148ec2",
-        "control_frame_seconds": {
-          "bios1": 7.73,
-          "uefi1": 11.08,
-          "bios2": 7.75,
-          "uefi2": 11.08,
-          "bios3": 7.92
-        },
-        "candidate_frame_seconds": {
-          "bios1": 9.37,
-          "uefi1": 11.09,
-          "bios2": 7.92,
-          "uefi2": 10.64,
-          "bios3": 7.71
-        },
+        "interpretation": "Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required.",
         "matched_control_minus_candidate_seconds": {
           "bios1": -1.64,
-          "uefi1": -0.01,
           "bios2": -0.17,
-          "uefi2": 0.44,
-          "bios3": 0.21
+          "bios3": 0.21,
+          "uefi1": -0.01,
+          "uefi2": 0.44
         },
-        "mean_control_seconds": 9.112,
         "mean_candidate_seconds": 9.346,
         "mean_control_minus_candidate_seconds": -0.234,
-        "control_and_candidate_functional": true,
+        "mean_control_seconds": 9.112,
         "not_five_second_certification": true,
         "not_randomized_across_hosts": true,
-        "interpretation": "Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required."
+        "reference_iso_sha256": "7ebfaf6a4728871f67b929cd6aa23bf97a9baa9dcf06d7835954b16d0242a07e",
+        "reference_prefetch_mib": 256,
+        "scope": "one host, alternating 5+5 genuine QEMU cold boots, three BIOS and two UEFI per condition"
       },
-      "benchmark_timing_schema": 2,
-      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827102441",
-      "artifact_id": 14207596699,
-      "notes": "One runner at 3072 MiB, three BIOS and two UEFI boots per condition. The guest cookie wait shortened but total boot timings were mixed; independent replication required."
+      "notes": "One runner at 3072 MiB, three BIOS and two UEFI boots per condition. The guest cookie wait shortened but total boot timings were mixed; independent replication required.",
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "bios3": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "reason": "Five candidate and five matched-control QEMU boots met the recorded RAM/media/local-HTTP checks; sampled home-page times exceeded five seconds. Candidate mean was 0.234 s slower in this one batch.",
+      "run_id": "43827102441",
+      "source_job_id": "133163428236",
+      "vm_diagnostics": {},
+      "vm_passed": false
     },
     {
+      "artifact_id": 14208330466,
       "at": "2026-11-16T08:10:00Z",
+      "benchmark_timing_schema": 2,
       "candidate_id": "nice-10_zstd3_prefetch0",
-      "run_id": "43827649806",
-      "source_job_id": "133165188490",
-      "vm_passed": false,
-      "iso_sha256": "a45443d2216cc60b3a3e644ac8995af3e4a8c21d3b222e859364a64e02b0c184",
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827649806",
       "frames": {
         "bios1": 9.7,
-        "uefi1": 13.32,
         "bios2": 8.21,
-        "uefi2": 13.12,
-        "bios3": 8.63
+        "bios3": 8.63,
+        "uefi1": 13.32,
+        "uefi2": 13.12
+      },
+      "iso_sha256": "a45443d2216cc60b3a3e644ac8995af3e4a8c21d3b222e859364a64e02b0c184",
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "bios3": true,
+        "uefi1": true,
+        "uefi2": true
       },
       "reason": "Five candidate and five control boots passed recorded RAM, media and local HTTP gates; candidate sampled mean 10.596s vs control 10.288s. Under-five target not met.",
-      "post_eject_http200_by_boot": {
-        "bios1": true,
-        "uefi1": true,
-        "bios2": true,
-        "uefi2": true,
-        "bios3": true
-      },
+      "run_id": "43827649806",
+      "source_job_id": "133165188490",
       "vm_diagnostics": {},
-      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43827649806",
-      "artifact_id": 14208330466,
-      "benchmark_timing_schema": 2
+      "vm_passed": false
     },
     {
+      "artifact_id": 14229756794,
       "at": "2026-11-16T13:28:03Z",
-      "candidate_id": "nice-10_zstd3_prefetch32",
-      "run_id": "43874157306",
-      "vm_passed": false,
       "benchmark_timing_schema": 2,
-      "frames": {
-        "bios1": 9.55,
-        "uefi1": 10.85,
-        "bios2": 7.71,
-        "uefi2": 11.04
-      },
+      "candidate_id": "nice-10_zstd3_prefetch32",
+      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43874157306",
       "frame_observation_upper_seconds": {
         "bios1": 9.552255,
-        "uefi1": 10.851301,
         "bios2": 7.706401,
+        "uefi1": 10.851301,
         "uefi2": 11.040953
       },
-      "ram_ready_seconds": {
-        "bios1": 17.69,
-        "uefi1": 18.98,
-        "bios2": 15.33,
-        "uefi2": 18.68
-      },
-      "post_eject_http200_by_boot": {
-        "bios1": true,
-        "uefi1": true,
-        "bios2": true,
-        "uefi2": true
+      "frames": {
+        "bios1": 9.55,
+        "bios2": 7.71,
+        "uefi1": 10.85,
+        "uefi2": 11.04
       },
       "iso_sha256": "af4664dd365aea797d9e2d8184ac70de1badaa57eb4fd292873b89eb7f4b7fe9",
       "matched_prefetch_control": {
-        "scope": "one host, alternating 4+4 genuine QEMU cold boots, two BIOS and two UEFI per condition",
-        "reference_prefetch_mib": 256,
-        "candidate_prefetch_mib": 32,
-        "fixed_firefox_nice": -10,
-        "fixed_zstd_level": 3,
-        "reference_iso_sha256": "ec387ad71614588fd08a4c9de8cf4a3f49848f64fe601df725939db0c7958e27",
-        "candidate_iso_sha256": "af4664dd365aea797d9e2d8184ac70de1badaa57eb4fd292873b89eb7f4b7fe9",
-        "control_frame_seconds": {
-          "bios1": 7.71,
-          "uefi1": 11.07,
-          "bios2": 7.93,
-          "uefi2": 10.86
-        },
         "candidate_frame_seconds": {
           "bios1": 9.55,
-          "uefi1": 10.85,
           "bios2": 7.71,
+          "uefi1": 10.85,
           "uefi2": 11.04
         },
+        "candidate_iso_sha256": "af4664dd365aea797d9e2d8184ac70de1badaa57eb4fd292873b89eb7f4b7fe9",
+        "candidate_prefetch_mib": 32,
+        "control_and_candidate_functional": true,
+        "control_frame_seconds": {
+          "bios1": 7.71,
+          "bios2": 7.93,
+          "uefi1": 11.07,
+          "uefi2": 10.86
+        },
+        "fixed_firefox_nice": -10,
+        "fixed_zstd_level": 3,
+        "interpretation": "Candidate was 0.395 s slower on mean in this one same-host ABBA-like test; one nonblinded run, independent reproduction required.",
         "matched_control_minus_candidate_seconds": {
           "bios1": -1.84,
-          "uefi1": 0.22,
           "bios2": 0.22,
+          "uefi1": 0.22,
           "uefi2": -0.18
         },
-        "mean_control_seconds": 9.393,
         "mean_candidate_seconds": 9.787,
         "mean_control_minus_candidate_seconds": -0.395,
-        "control_and_candidate_functional": true,
+        "mean_control_seconds": 9.393,
         "not_five_second_certification": true,
         "not_randomized_across_hosts": true,
-        "interpretation": "Candidate was 0.395 s slower on mean in this one same-host ABBA-like test; one nonblinded run, independent reproduction required."
+        "reference_iso_sha256": "ec387ad71614588fd08a4c9de8cf4a3f49848f64fe601df725939db0c7958e27",
+        "reference_prefetch_mib": 256,
+        "scope": "one host, alternating 4+4 genuine QEMU cold boots, two BIOS and two UEFI per condition"
       },
-      "artifact_id": 14229756794,
-      "evidence_url": "https://github.com/74127418528426leo-del/Test/actions/runs/43874157306",
-      "reason": "All four candidate QEMU boots passed recorded browser, RAM-migration and post-eject HTTP checks, but candidate mean 9.787 s was 0.395 s slower than the 256 MiB control mean 9.393 s. Not under-five-second; no promotion."
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.69,
+        "bios2": 15.33,
+        "uefi1": 18.98,
+        "uefi2": 18.68
+      },
+      "reason": "All four candidate QEMU boots passed recorded browser, RAM-migration and post-eject HTTP checks, but candidate mean 9.787 s was 0.395 s slower than the 256 MiB control mean 9.393 s. Not under-five-second; no promotion.",
+      "run_id": "43874157306",
+      "vm_passed": false
+    },
+    {
+      "at": "2026-11-16T23:04:11.306882+00:00",
+      "candidate_id": "nice-10_zstd3_prefetch96",
+      "frames": {
+        "bios1": 8.96,
+        "bios2": 7.69,
+        "uefi1": 11.03,
+        "uefi2": 10.86
+      },
+      "iso_sha256": "59110fe3cca3944623da40a7ad1052171d63912ef07a0d812ec82c256ae12ed9",
+      "matched_prefetch_control": {
+        "candidate_frame_seconds": {
+          "bios1": 8.96,
+          "bios2": 7.69,
+          "uefi1": 11.03,
+          "uefi2": 10.86
+        },
+        "candidate_iso_sha256": "59110fe3cca3944623da40a7ad1052171d63912ef07a0d812ec82c256ae12ed9",
+        "candidate_prefetch_mib": 96,
+        "control_and_candidate_functional": true,
+        "control_frame_seconds": {
+          "bios1": 7.7,
+          "bios2": 7.71,
+          "uefi1": 11.04,
+          "uefi2": 10.86
+        },
+        "fixed_firefox_nice": -10,
+        "fixed_zstd_level": 3,
+        "interpretation": "Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required.",
+        "matched_control_minus_candidate_seconds": {
+          "bios1": -1.26,
+          "bios2": 0.02,
+          "uefi1": 0.01,
+          "uefi2": 0.0
+        },
+        "mean_candidate_seconds": 9.635,
+        "mean_control_minus_candidate_seconds": -0.307,
+        "mean_control_seconds": 9.328,
+        "not_five_second_certification": true,
+        "not_randomized_across_hosts": true,
+        "reference_iso_sha256": "70cb36dd7ce35dabb27518462772bf72badae1b6b40fd11089e1ec63f447de7f",
+        "reference_prefetch_mib": 256,
+        "scope": "one host, alternating 4+4 genuine QEMU cold boots, two BIOS and two UEFI per condition"
+      },
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.1,
+        "bios2": 15.33,
+        "uefi1": 18.66,
+        "uefi2": 18.5
+      },
+      "reason": "not all four Firefox frames strictly below five seconds; observed 4/4 frames, worst 11.03s; 0 functional diagnostics; NOT a passing VM experiment",
+      "run_id": "43974095457",
+      "vm_diagnostics": {},
+      "vm_passed": false
     }
   ],
   "schema": 1,
