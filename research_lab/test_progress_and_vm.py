@@ -4,6 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parent
 def load(name,path):
@@ -17,6 +18,49 @@ partial=load("p50_partial",ROOT/"collect_vm_evidence.py")
 prefetch=load("p50_prefetch",ROOT/"patch_libxul_prefetch.py")
 
 class StatusTests(unittest.TestCase):
+    def test_recent_experimental_runs_use_one_shared_api_query(self):
+        self.assertTrue(hasattr(status,"read_workflow_runs"))
+        calls=[]
+        def fake(path):
+            calls.append(path)
+            return {"workflow_runs":[]}
+        with patch.object(status,"fetch_json",side_effect=fake):
+            self.assertEqual(status.read_workflow_runs(),{"workflow_runs":[]})
+        self.assertEqual(len(calls),5)
+        self.assertIn("/actions/runs?per_page=100",calls)
+
+    def test_unsubstantiated_goal_flag_is_not_reported_as_verified(self):
+        state={"vm_goal_verified":True,"vm_goal_candidate":"candidate",
+               "vm_goal_iso_sha256":"a"*64,
+               "history":[{"candidate_id":"candidate","vm_passed":True,
+                           "iso_sha256":"a"*64,"run_id":"1",
+                           "benchmark_timing_schema":2}]}
+        got=status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})
+        self.assertFalse(got["vm_goal_verified"])
+        self.assertIn("NOT VERIFIED",status.format_text(got,"progress"))
+        second=dict(state["history"][0],run_id="2")
+        state["history"].append(second)
+        self.assertTrue(status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})["vm_goal_verified"])
+
+    def test_tasks_report_workflows_without_inventing_agent_workers(self):
+        runs={"workflow_runs":[{"name":"Puppy50 parallel secure X11 cookie experiment",
+              "status":"in_progress","conclusion":None,
+              "html_url":"https://github.com/example/run"}]}
+        got=status.snapshot({"vm_goal_verified":False,"history":[]},
+                            {"candidates":[]},runs)
+        message=status.format_text(got,"tasks")
+        self.assertIn("in_progress",message)
+        self.assertIn("X11 cookie experiment",message)
+        self.assertIn("not evidence",message.lower())
+        runs["workflow_runs"][0]["name"]="Puppy50 zero-prefetch independent replication"
+        got=status.snapshot({"vm_goal_verified":False,"history":[]},
+                            {"candidates":[]},runs)
+        self.assertIn("Zero-prefetch replication: in_progress",status.format_text(got,"tasks"))
+        runs["workflow_runs"][0]["name"]="Puppy50 Qwen Coder bounded CPU smoke"
+        got=status.snapshot({"vm_goal_verified":False,"history":[]},
+                            {"candidates":[]},runs)
+        self.assertIn("Qwen Coder smoke: in_progress",status.format_text(got,"tasks"))
+
     def test_successful_ci_is_not_five_second_os(self):
         state={"vm_goal_verified":False,"history":[
             {"candidate_id":"nice-10_zstd3","vm_passed":False,
@@ -35,6 +79,7 @@ class StatusTests(unittest.TestCase):
         self.assertFalse(got["best_complete_4boot_candidate"]["strict_vm_goal_passed"])
         self.assertIn("NOT VERIFIED",status.format_text(got,"progress"))
         self.assertIn("21.03s",status.format_text(got,"fastest"))
+        self.assertIn("not recorded",status.format_text(got,"fastest").lower())
         self.assertEqual(got["vm_experiments_recorded"],1)
 
     def test_only_partial_frame_evidence_is_not_complete(self):
@@ -65,6 +110,19 @@ class StatusTests(unittest.TestCase):
         self.assertIn("2.6s",t)
         self.assertIn("NOT certified",t)
         self.assertFalse(data["vm_goal_verified"])
+
+    def test_latest_cookie_comparison_is_not_described_as_prefetch(self):
+        comparison={"experiment":"generate a fresh X11 cookie in parallel with DRM setup",
+                    "mean_control_seconds":9.112,"mean_candidate_seconds":9.346,
+                    "mean_control_minus_candidate_seconds":-0.234}
+        state={"vm_goal_verified":False,"history":[{
+            "candidate_id":"parallel-secure-x11-cookie", "vm_passed":False,
+            "matched_cookie_control":comparison}]}
+        data=status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})
+        output=status.format_text(data,"comparison")
+        self.assertIn("cookie",output.lower())
+        self.assertIn("9.346",output)
+        self.assertNotIn("None MiB",output)
 
     def test_live_http_requests_must_use_fixed_github_host(self):
         for path in ("http://evil.invalid","//evil.invalid","/x/../y"):

@@ -12,7 +12,7 @@ metadata:
 # Puppy50 Progress Skill
 
 Use this when the owner messages from WhatsApp (or Hermes CLI) asking for
-"Puppy50 status", "fastest", "latest", "failures", "progress", "what's happening?",
+"Puppy50 status", "fastest", "latest", "failures", "progress", "tasks", "what's happening?",
 or "are you done?". This skill is **read-only**: it never launches, cancels,
 or modifies a job.
 
@@ -28,6 +28,8 @@ Supported commands:
 - `terminal(command="python3 ${HERMES_SKILL_DIR}/scripts/status.py latest", timeout=45)`
 - `terminal(command="python3 ${HERMES_SKILL_DIR}/scripts/status.py fastest", timeout=45)`
 - `terminal(command="python3 ${HERMES_SKILL_DIR}/scripts/status.py failures", timeout=45)`
+- `terminal(command="python3 ${HERMES_SKILL_DIR}/scripts/status.py comparison", timeout=45)`
+- `terminal(command="python3 ${HERMES_SKILL_DIR}/scripts/status.py tasks", timeout=45)`
 - `terminal(command="python3 ${HERMES_SKILL_DIR}/scripts/status.py progress --json", timeout=45)`
 
 If the terminal tool is not available, do NOT invent a live response.
@@ -37,8 +39,10 @@ command in their dedicated gateway environment.
 ## Safety and accuracy
 
 - Differentiate between successful CI (build, model response), successful
-  QEMU boots (Firefox render, RAM, post-eject HTTPS), and the strict
+  QEMU boots (Firefox render, RAM, and a post-eject HTTP fixture response), and the strict
   **all four boots < 5 seconds**, repeated independently milestone.
+- A local HTTP fixture response is not proof of certificate-verified public HTTPS.
+- Workflow state is not proof of persistent autonomous model workers.
 - Physical Acer firmware-to-browser timing is **not** certified.
 - If any API call fails, explicitly say that status could not be checked.
 - Report actual GitHub evidence links with failures and candidate IDs.

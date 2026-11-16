@@ -15,6 +15,23 @@ test -f out/v149.manifest
 test -f out/early-prefix
 test -f out/original-full.initrd
 test -f out/original.squashfs
+test -f input/base.iso
+if ! test -f out/original-live/vmlinuz || ! test -f out/original-live/vmlinuz-6.12.115+deb13.1-amd64; then
+  mkdir -p out/original-live
+  xorriso -osirrox on -indev input/base.iso \
+    -extract /live/vmlinuz out/original-live/vmlinuz \
+    -extract /live/vmlinuz-6.12.115+deb13.1-amd64 out/original-live/vmlinuz-6.12.115+deb13.1-amd64 \
+    >out/reports/original-kernel-extract.log 2>&1
+fi
+test -f out/original-live/vmlinuz
+test -f out/original-live/vmlinuz-6.12.115+deb13.1-amd64
+mkdir -p out/candidate-kernel-check
+xorriso -osirrox on -indev out/v151.iso \
+  -extract /live/vmlinuz out/candidate-kernel-check/vmlinuz \
+  -extract /live/vmlinuz-6.12.115+deb13.1-amd64 out/candidate-kernel-check/vmlinuz-6.12.115+deb13.1-amd64 \
+  >out/reports/candidate-kernel-check.log 2>&1
+cmp out/original-live/vmlinuz out/candidate-kernel-check/vmlinuz
+cmp out/original-live/vmlinuz-6.12.115+deb13.1-amd64 out/candidate-kernel-check/vmlinuz-6.12.115+deb13.1-amd64
 sudo cp out/matched-control-hook.sh out/main/usr/lib/live/boot/9990-main.sh
 sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
 grep -Fq 'P50_V133_PREFETCH_256MB_STARTED' out/matched-control-hook.sh

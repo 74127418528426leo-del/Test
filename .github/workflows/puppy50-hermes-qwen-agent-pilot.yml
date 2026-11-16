@@ -1,0 +1,389 @@
+name: Puppy50 Hermes and Qwen-Agent review with local Qwen CPU
+on:
+  push:
+    branches: [main, puppy50-boot-measurement-integrity-20261116]
+    paths:
+      - '.github/workflows/puppy50-hermes-qwen-agent-pilot.yml'
+      - '.github/workflows/puppy50-autonomous-research.yml'
+      - 'research_lab/hermes_review_gate.py'
+      - 'research_lab/test_hermes_review_gate.py'
+      - 'research_lab/test_hermes_workflow_contract.py'
+      - 'research_lab/qwen_toolcall_probe.py'
+      - 'research_lab/test_qwen_toolcall_probe.py'
+      - 'research_lab/qwen_agent_pilot.py'
+      - 'research_lab/test_qwen_agent_pilot.py'
+      - 'research_lab/AI_AGENT_AND_PROVIDER_RESEARCH.md'
+      - 'research_lab/critical_path.py'
+      - 'research_lab/test_measurement_integrity.py'
+      - 'research_lab/QWEN_HERMES_SETUP.md'
+      - 'experiments/puppy50-autolab/controller.py'
+  schedule:
+    # Daily bounded worker; scheduled events run from the default branch.
+    - cron: '17 5 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: puppy50-hermes-qwen-review
+  cancel-in-progress: false
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-autolab-state
+          path: lab-state
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Run offline regression and shell checks
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q 2>&1 | tee "$RUNNER_TEMP/p50-offline-tests.txt"
+          bash -n research_lab/build_matched_control.sh
+          printf '%s\n' 'PASS: bash -n research_lab/build_matched_control.sh' >> "$RUNNER_TEMP/p50-offline-tests.txt"
+      - name: Prepare minimal credential-free Hermes/Qwen review packet
+        run: |
+          set -euo pipefail
+          rm -rf agent-work
+          mkdir -p models agent-work/agent-context agent-evidence "$RUNNER_TEMP/hermes-home"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          state = json.loads(Path("lab-state/experiments/puppy50-autolab/state.json").read_text())
+          if type(state.get("vm_goal_verified")) is not bool:
+              raise SystemExit("persistent goal flag is not boolean")
+          rows = [row for row in state.get("history", [])
+                  if isinstance(row, dict) and isinstance(row.get("matched_prefetch_control"), dict)]
+          if not rows:
+              raise SystemExit("persistent state has no matched comparison")
+          row = rows[-1]
+          comparison = row["matched_prefetch_control"]
+          packet = {
+              "run_id": str(row["run_id"]),
+              "candidate_mean_seconds": comparison["mean_candidate_seconds"],
+              "control_mean_seconds": comparison["mean_control_seconds"],
+              "goal_verified": state["vm_goal_verified"],
+              "test_summary": "Offline regression and shell syntax checks passed.",
+              "limitation": "One same-host run; sampled page detection, not exact first Firefox frame; independent replication required."
+          }
+          Path("agent-work/packet.json").write_text(
+              json.dumps(packet, indent=2, sort_keys=True) + "\n")
+          PY
+          cat > agent-work/agent-context/task.md <<'TASK'
+          Call Hermes read_file exactly once with the path packet.json.
+          Use that exact filename; do not list or search for files.
+          Copy all six values exactly into one raw JSON object with exactly these keys:
+          run_id, candidate_mean_seconds, control_mean_seconds, goal_verified,
+          test_summary, limitation.
+          Do not read any other file, call another tool, invent facts, or add prose.
+          Do not claim that this packet independently verifies a Puppy50 boot.
+          TASK
+          cat > "$RUNNER_TEMP/hermes-home/config.yaml" <<CONFIG
+          model:
+            provider: custom
+            default: p50-qwen35-review
+            base_url: http://127.0.0.1:8088/v1
+            api_key: local-cpu-only
+            context_length: 65536
+          agent:
+            reasoning_effort: none
+            max_turns: 4
+          terminal:
+            cwd: "$GITHUB_WORKSPACE/agent-work"
+          CONFIG
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = (Path(os.environ["GITHUB_WORKSPACE"]) / "agent-work").resolve()
+          expected = {
+              "packet.json",
+              "agent-context/task.md",
+          }
+          actual = {
+              p.relative_to(root).as_posix()
+              for p in root.rglob("*") if p.is_file() or p.is_symlink()
+          }
+          if actual != expected:
+              raise SystemExit(f"unexpected agent workspace files: {sorted(actual)}")
+          config = Path(os.environ["RUNNER_TEMP"]) / "hermes-home/config.yaml"
+          if f'  cwd: "{root}"' not in config.read_text(encoding="utf-8"):
+              raise SystemExit("Hermes terminal.cwd is not the isolated review workspace")
+          print(f"PASS: minimal review workspace and Hermes cwd: {root}")
+          PY
+          git -C agent-work init -q
+          git -C agent-work config user.name 'Puppy50 isolated Hermes review'
+          git -C agent-work config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C agent-work add -A
+          git -C agent-work commit -qm 'temporary read-only review baseline'
+          chmod -R a-w agent-work
+          test -z "$(find agent-work -perm /222 -print -quit)"
+      - name: Restore or cache pinned Qwen3.5 reviewer
+        uses: actions/cache@v4
+        id: qwen-cache
+        with:
+          path: models/qwen35-review.gguf
+          key: puppy50-qwen35-0.8b-q4_0-004fd086eccea9f7cf867aa07ba328773beef81d
+      - name: Download and verify pinned Qwen3.5 reviewer
+        shell: bash
+        run: |
+          set -euo pipefail
+          model='models/qwen35-review.gguf'
+          digest='57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf'
+          if ! echo "$digest  $model" | sha256sum -c - >/dev/null 2>&1; then
+            rm -f "$model"
+            curl -fL --retry 2 --connect-timeout 25 --max-time 600 \
+              'https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/004fd086eccea9f7cf867aa07ba328773beef81d/Qwen3.5-0.8B-Q4_0.gguf?download=true' \
+              -o "$model"
+          fi
+          echo "$digest  $model" | sha256sum -c -
+          size="$(stat -c%s "$model")"
+          test "$size" -ge 500000000
+          test "$size" -le 620000000
+          sha256sum "$model" | tee agent-evidence/qwen-model.sha256
+          printf '%s\n' \
+            'repository=ggml-org/Qwen3.5-0.8B-GGUF' \
+            'revision=004fd086eccea9f7cf867aa07ba328773beef81d' \
+            'file=Qwen3.5-0.8B-Q4_0.gguf' \
+            'native_context_tokens=262144' \
+            'served_context_tokens=65536' \
+            > agent-evidence/qwen-model-provenance.txt
+      - name: Restore or cache pinned llama.cpp CPU server
+        uses: actions/cache@v4
+        id: llama-cache
+        with:
+          path: llama-b12438-bin-ubuntu-x64.tar.gz
+          key: puppy50-llama-server-b12438-ubuntu-x64-8210f3f746e70ebfd2b79c6b76ffc3d76c8fd272d822cf766691bdc789063949
+      - name: Download and verify pinned llama.cpp server
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset='llama-b12438-bin-ubuntu-x64.tar.gz'
+          digest='8210f3f746e70ebfd2b79c6b76ffc3d76c8fd272d822cf766691bdc789063949'
+          if ! echo "$digest  $asset" | sha256sum -c - >/dev/null 2>&1; then
+            rm -f "$asset"
+            curl -fL --retry 2 --connect-timeout 25 --max-time 300 \
+              'https://github.com/ggml-org/llama.cpp/releases/download/b12438/llama-b12438-bin-ubuntu-x64.tar.gz' \
+              -o "$asset"
+          fi
+          echo "$digest  $asset" | sha256sum -c -
+          test "$(stat -c%s "$asset")" -eq 23466824
+          mkdir -p llama-dist
+          tar -xzf "$asset" -C llama-dist
+          server_bin="$(find llama-dist -type f -name llama-server -print -quit)"
+          test -n "$server_bin"
+          printf '%s\n' "$server_bin" > agent-evidence/llama-server-path.txt
+          printf '%s\n' 'llama.cpp release=b12438' 'source_commit=e1925b3695b8d2f2acd162fb10ad0748da0d921b' \
+            > agent-evidence/llama-server-provenance.txt
+      - name: Restore pinned Hermes runtime tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/hermes-home/tools
+          key: puppy50-hermes-tools-3b421578588243f920886e6fe79a6faa87ea026e-py313-ubuntu24
+      - name: Bootstrap pinned Hermes source runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/hermes-source"
+          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git "$src"
+          git -C "$src" checkout --detach 3b421578588243f920886e6fe79a6faa87ea026e
+          test "$(git -C "$src" rev-parse HEAD)" = 3b421578588243f920886e6fe79a6faa87ea026e
+          export HERMES_HOME="$RUNNER_TEMP/hermes-home"
+          export HERMES_RUNTIME_DIR="$HERMES_HOME/tools"
+          cd "$src"
+          source ./activate
+          hermes --version
+      - name: Start bounded local Qwen3.5 CPU server and verify inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          server_bin="$(cat agent-evidence/llama-server-path.txt)"
+          bin_dir="$(dirname "$server_bin")"
+          lib_dirs="$(find llama-dist -type f -name 'libggml*.so*' -printf '%h\n' | sort -u | paste -sd:)"
+          export LD_LIBRARY_PATH="$bin_dir${lib_dirs:+:$lib_dirs}"
+          "$server_bin" --version | tee agent-evidence/llama-server-version.txt
+          ldd "$server_bin" > agent-evidence/llama-server-ldd.txt
+          if grep -q 'not found' agent-evidence/llama-server-ldd.txt; then
+            cat agent-evidence/llama-server-ldd.txt
+            exit 1
+          fi
+          ulimit -v 5242880
+          env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/hermes-home" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            "$server_bin" -m "$PWD/models/qwen35-review.gguf" --alias p50-qwen35-review \
+            --host 127.0.0.1 --port 8088 --ctx-size 65536 --threads 2 --parallel 1 \
+            --jinja --n-gpu-layers 0 -n 512 \
+            > "$RUNNER_TEMP/p50-qwen35-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/p50-qwen35-server.pid"
+          python3 - <<'PY'
+          import json,time,urllib.request
+          base='http://127.0.0.1:8088'
+          deadline=time.monotonic()+150
+          while time.monotonic()<deadline:
+              try:
+                  with urllib.request.urlopen(base+'/health',timeout=3) as r:
+                      health=json.load(r)
+                  if health.get('status')=='ok':
+                      break
+              except Exception:
+                  time.sleep(2)
+          else:
+              raise RuntimeError('Pinned Qwen3.5 CPU server did not become healthy')
+          with urllib.request.urlopen(base+'/v1/models',timeout=5) as r:
+              models=json.load(r)
+          ids=[m.get('id') for m in models.get('data',[])]
+          if 'p50-qwen35-review' not in ids:
+              raise RuntimeError(f'Unexpected Qwen server model IDs: {ids}')
+          limit=16
+          payload=json.dumps({
+              'model':'p50-qwen35-review',
+              'messages':[{'role':'user','content':'Reply with READY.'}],
+              'temperature':0,
+              'reasoning_effort':'none',
+              'max_tokens':limit
+          }).encode()
+          request=urllib.request.Request(base+'/v1/chat/completions',data=payload,
+              headers={'Content-Type':'application/json'})
+          with urllib.request.urlopen(request,timeout=60) as r:
+              result=json.load(r)
+          message=result['choices'][0]['message']
+          answer=message.get('content','')
+          if not answer.strip() or 'ready' not in answer.lower():
+              finish=result['choices'][0].get('finish_reason')
+              raise RuntimeError(f'Qwen did not satisfy the bounded READY probe; finish_reason={finish}')
+          with open('agent-evidence/qwen-smoke.json','w') as f:
+              json.dump({'model_ids':ids,'max_tokens':limit,'finish_reason':result['choices'][0].get('finish_reason'),'answer':answer},f,indent=2)
+              f.write('\n')
+          PY
+      - name: Check direct Qwen tool-call support
+        id: qwen-tool-canary
+        run: |
+          set -euo pipefail
+          python3 research_lab/qwen_toolcall_probe.py \
+            --base-url http://127.0.0.1:8088 \
+            --output agent-evidence/qwen-toolcall-probe.json
+      - name: Run bounded Hermes review with no GitHub credentials
+        if: steps.qwen-tool-canary.outcome == 'success'
+        run: |
+          set -euo pipefail
+          export HERMES_HOME="$RUNNER_TEMP/hermes-home"
+          export HERMES_RUNTIME_DIR="$HERMES_HOME/tools"
+          cd "$RUNNER_TEMP/hermes-source"
+          source ./activate
+          set +e
+          (
+            cd "$GITHUB_WORKSPACE/agent-work"
+            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" \
+              HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" \
+              PATH=/usr/bin:/bin \
+              bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env" \
+              python "$RUNNER_TEMP/hermes-source/hermes" chat \
+              --oneshot --query-file agent-context/task.md \
+              --model p50-qwen35-review --toolsets file --max-turns 4
+          ) > "$GITHUB_WORKSPACE/agent-evidence/hermes-session.log" 2>&1
+          rc=$?
+          set -e
+          printf '%s\n' "$rc" > "$GITHUB_WORKSPACE/agent-evidence/hermes-exit-code.txt"
+          test "$rc" -eq 0
+      - name: Validate Hermes report against durable experiment state
+        if: always() && steps.qwen-tool-canary.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 research_lab/hermes_review_gate.py \
+            --transcript agent-evidence/hermes-session.log \
+            --state lab-state/experiments/puppy50-autolab/state.json \
+            --output agent-evidence/hermes-review-verified.json
+      - name: Install and run pinned Qwen-Agent with the local Qwen model
+        if: always() && steps.qwen-tool-canary.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          framework_commit='31a4d36d123688581a9e9744427272b33ce940e0'
+          python_bin="$RUNNER_TEMP/qwen-agent-venv/bin/python"
+          mkdir -p agent-evidence
+          if ! python3 -m venv "$RUNNER_TEMP/qwen-agent-venv"; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"venv creation failed"}' \
+              > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          # Qwen-Agent 0.0.34 eagerly imports python_executor and shared audio utilities;
+          # these imports are needed even though the worker exposes no Python execution tool.
+          if ! "$python_bin" -m pip install --disable-pip-version-check --no-input \
+            "qwen-agent @ git+https://github.com/QwenLM/Qwen-Agent.git@$framework_commit" \
+            "numpy==2.5.4" "soundfile==0.14.0" "tqdm==4.70.1" \
+            "python-dateutil==2.9.0.post0"; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"pinned framework or missing runtime dependency installation failed"}' > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          "$python_bin" -m pip freeze > agent-evidence/qwen-agent-python-freeze.txt
+          if ! "$python_bin" -c 'from qwen_agent.agents import Assistant; from qwen_agent.tools import BaseTool; import qwen_agent; assert callable(Assistant) and isinstance(BaseTool, type); print(qwen_agent.__version__)' > agent-evidence/qwen-agent-import.txt 2>&1; then
+            cat agent-evidence/qwen-agent-import.txt
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"framework import failed; see qwen-agent-import.txt"}' > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          version="$(cat agent-evidence/qwen-agent-import.txt)"
+          if test "$version" != '0.0.34'; then
+            printf '%s\n' '{"passed":false,"framework":"Qwen-Agent","error":"unexpected package version"}' > agent-evidence/qwen-agent-review.json
+            exit 1
+          fi
+          {
+            printf 'source_commit=%s\n' "$framework_commit"
+            printf 'package_version=%s\n' "$version"
+            printf 'numpy_version=%s\n' "$("$python_bin" -c 'import numpy; print(numpy.__version__)')"
+            printf 'soundfile_version=%s\n' "$("$python_bin" -c 'import soundfile; print(soundfile.__version__)')"
+            printf 'tqdm_version=%s\n' "$("$python_bin" -c 'import tqdm; print(tqdm.__version__)')"
+            printf 'python_dateutil_version=%s\n' "$("$python_bin" -c 'import dateutil; print(dateutil.__version__)')"
+          } > agent-evidence/qwen-agent-provenance.txt
+          set +e
+          mkdir -p "$RUNNER_TEMP/qwen-agent-home"
+          timeout --signal=TERM --kill-after=10s 180s \
+            env -i HOME="$RUNNER_TEMP/qwen-agent-home" PATH=/usr/bin:/bin \
+              PYTHONDONTWRITEBYTECODE=1 \
+              "$python_bin" research_lab/qwen_agent_pilot.py \
+                --base-url http://127.0.0.1:8088/v1 \
+                --packet agent-work/packet.json \
+                --state lab-state/experiments/puppy50-autolab/state.json \
+                --output agent-evidence/qwen-agent-review.json \
+            > agent-evidence/qwen-agent-run.log 2>&1
+          rc=$?
+          set -e
+          cat agent-evidence/qwen-agent-run.log
+          test "$rc" -eq 0
+          python3 -c 'import json; d=json.load(open("agent-evidence/qwen-agent-review.json")); assert d.get("passed") is True'
+      - name: Capture review output and local model diagnostics
+        if: always()
+        run: |
+          set +e
+          mkdir -p agent-evidence
+          GIT_OPTIONAL_LOCKS=0 git -C agent-work status --porcelain --untracked-files=all > agent-evidence/worktree-status.txt 2>&1
+          git -C agent-work diff --binary > agent-evidence/proposal.patch 2>&1
+          if test -f "$RUNNER_TEMP/p50-qwen35-server.log"; then
+            tail -n 160 "$RUNNER_TEMP/p50-qwen35-server.log" > agent-evidence/qwen-server.log
+          fi
+          set -e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-hermes-qwen-review-${{ github.run_id }}
+          path: agent-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Stop temporary local inference server
+        if: always()
+        shell: bash
+        run: |
+          if test -s "$RUNNER_TEMP/p50-qwen35-server.pid"; then
+            kill "$(cat "$RUNNER_TEMP/p50-qwen35-server.pid")" 2>/dev/null || true
+          fi
+      - name: Enforce review-only behavior
+        if: always() && steps.qwen-tool-canary.outcome == 'success'
+        run: |
+          test -f agent-evidence/hermes-exit-code.txt
+          test "$(cat agent-evidence/hermes-exit-code.txt)" = 0
+          test -z "$(find agent-work -perm /222 -print -quit)"
+          test -z "$(GIT_OPTIONAL_LOCKS=0 git -C agent-work status --porcelain --untracked-files=all)"

@@ -1,7 +1,7 @@
 name: Puppy50 autonomous guarded VM experimentation
 on:
   push:
-    branches: [main]
+    branches: [main, puppy50-boot-measurement-integrity-20261116]
     paths:
       - '.github/workflows/puppy50-autonomous-research.yml'
   schedule:
@@ -25,6 +25,8 @@ jobs:
       prefetch: ${{ steps.plan.outputs.prefetch }}
     steps:
       - uses: actions/checkout@v4
+      - name: Run offline safety and measurement regression tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q
       - name: Select next unverified candidate from persistent history
         id: plan
         env:
@@ -52,7 +54,8 @@ jobs:
           path: input/source
       - uses: actions/checkout@v4
         with:
-          ref: puppy50-v159-verified-browser-httpsafe-experimental
+          # Pin the exact previously inspected v159 research patches.
+          ref: a9e73787e1dca62e9b733e36b8fe2dabfa985f05
           path: input/patches
       - name: Install isolated VM and ISO tools
         run: |
@@ -79,7 +82,15 @@ jobs:
       - name: Build QEMU-only pre-PID1 authenticated X11 without weakening Firefox sandbox
         run: |
           set -euo pipefail
-          xorriso -osirrox on -indev input/base.iso -extract /live/initrd.img out/original.initrd -extract /live/initrd-full.img out/original-full.initrd -extract /live/filesystem.squashfs out/original.squashfs -extract /sha256sum.txt out/original.sha256sum.txt >out/reports/extract.log 2>&1
+          mkdir -p out/original-live
+          xorriso -osirrox on -indev input/base.iso \
+            -extract /live/initrd.img out/original.initrd \
+            -extract /live/initrd-full.img out/original-full.initrd \
+            -extract /live/filesystem.squashfs out/original.squashfs \
+            -extract /sha256sum.txt out/original.sha256sum.txt \
+            -extract /live/vmlinuz out/original-live/vmlinuz \
+            -extract /live/vmlinuz-6.12.115+deb13.1-amd64 out/original-live/vmlinuz-6.12.115+deb13.1-amd64 \
+            >out/reports/extract.log 2>&1
           # Exact two-part initrd layout from the original v115 build evidence.
           head -c 36154880 out/original.initrd >out/early-prefix
           tail -c +36154881 out/original.initrd | zstd -q -dc >out/main.cpio
@@ -429,6 +440,8 @@ jobs:
           p.write_text(s)
           print('P50_AUTOLAB_PRIORITY',nice)
           PY
+          # The same non-secret telemetry is included in both A/B conditions.
+          sudo python3 lab-control/research_lab/patch_guest_telemetry.py out/main
           sudo cp out/main/usr/lib/live/boot/9990-main.sh out/matched-control-hook.sh
           sudo --preserve-env=P50_PREFETCH_MIB python3 lab-control/research_lab/patch_libxul_prefetch.py out/main
           sudo sh -n out/main/usr/lib/live/boot/9990-main.sh
@@ -466,10 +479,14 @@ jobs:
             -extract /live/initrd.img out/v151-check/initrd \
             -extract /live/initrd-full.img out/v151-check/fallback \
             -extract /live/filesystem.squashfs out/v151-check/root \
+            -extract /live/vmlinuz out/v151-check/vmlinuz \
+            -extract /live/vmlinuz-6.12.115+deb13.1-amd64 out/v151-check/vmlinuz-6.12.115+deb13.1-amd64 \
             -extract /sha256sum.txt out/v151-check/manifest >out/reports/v151-recheck.log 2>&1
           cmp out/v151.initrd out/v151-check/initrd
           cmp out/original-full.initrd out/v151-check/fallback
           cmp out/original.squashfs out/v151-check/root
+          cmp out/original-live/vmlinuz out/v151-check/vmlinuz
+          cmp out/original-live/vmlinuz-6.12.115+deb13.1-amd64 out/v151-check/vmlinuz-6.12.115+deb13.1-amd64
           cmp out/v151.manifest out/v151-check/manifest
           sha256sum out/v149.iso out/v151.iso >out/reports/v151-ISO-SHA256.txt
           echo P50_V151_IDENTICAL_FIREFOX_KERNEL_ROOT_SANDBOX_RECOVERY_ONLY_PRIORITY_CHANGED
@@ -511,6 +528,12 @@ jobs:
           grep -Fq 'post_eject_browser_http200_confirmed' input/source/web109/boot_bench_ahci.py
           grep -Fq "no fake host GET substituted" input/source/web109/boot_bench_ahci.py
           echo P50_V159_REAL_BROWSER_NETWORK_PROOF_REQUIRED
+      - name: Instrument host-clock frame observations and serial receipts
+        run: |
+          set -euo pipefail
+          cp lab-control/research_lab/measurement_probe.py input/source/web109/p50_measurement_probe.py
+          python3 lab-control/research_lab/patch_benchmark_timing.py input/source/web109/boot_bench_ahci.py
+          python3 -m py_compile input/source/web109/boot_bench_ahci.py input/source/web109/p50_measurement_probe.py
       - name: Start local offline/online browser fixture
         env:
           P50_NONCE: P50-${{ github.run_id }}
@@ -518,7 +541,7 @@ jobs:
           nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
           nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
           python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
-      - name: Four independent real Firefox cold boots on shipping v159 ISO BIOS UEFI BIOS UEFI
+      - name: Real Firefox cold boots on experimental candidate and matched control
         timeout-minutes: 34
         run: |
           set -euo pipefail
@@ -547,6 +570,8 @@ jobs:
               r=json.loads((Path('out')/n/'result.json').read_text())
               assert r['virtual_firmware']==n.rstrip('12'),(n,r)
               assert r['first_home_seen_seconds'] is not None,(n,'actual Firefox framebuffer missing')
+              assert r.get('frame_probe_trace') and r.get('home_frame_observation'),(n,'missing frame observation trace')
+              assert r['home_frame_observation']['first_matching_probe_end_seconds']>0,(n,'invalid host observation')
               assert r['staged_ram_ready_seconds'] is not None,(n,'verified RAM transition missing')
               assert r['media_ejected'] and r['input_sent_after_eject'] and r['qemu_running_at_end'] and not r['errors'],(n,r)
               assert r.get('post_eject_browser_http200_confirmed') is True,(n,'Actual guest browser HTTP200 not confirmed')
@@ -576,13 +601,15 @@ jobs:
           assert len(hits)==expected_hits,('missing real browser HTTP 200 after eject',len(hits),expected_hits)
           iso=Path('out/v151.iso')
           report={
-            'scope':'four REAL cold QEMU boots of EXACT shipping ISO (2 BIOS and 2 UEFI)',
+            'scope':'four real cold QEMU boots of the experimental candidate ISO (2 BIOS and 2 UEFI)',
             'sha256':hashlib.sha256(iso.read_bytes()).hexdigest(),
+            'benchmark_timing_schema':2,
             'first_visible_Firefox_frame_seconds':{n:d[n]['first_home_seen_seconds'] for n in names},
+            'home_frame_observation_upper_seconds':{n:d[n]['home_frame_observation']['first_matching_probe_end_seconds'] for n in names},
             'checksum_verified_whole_root_in_RAM_all_four':True,
             'virtual_CD_removed_after_RAM_all_four':True,
             'real_browser_HTTP200_receipts_after_CD_removal':4,
-            'all_four_real_Firefox_under_five_seconds':all(d[n]['first_home_seen_seconds']<5 for n in names),
+            'all_four_real_Firefox_under_five_seconds':all(d[n]['home_frame_observation']['first_matching_probe_end_seconds']<5 for n in names),
             'original_Zstd_root_and_full_RAM_recovery_preserved':True,
             'physical_Acer_i3_540_tested':False,
             'full_RAM_in_384MiB_possible':False
@@ -595,11 +622,17 @@ jobs:
                   cr=json.loads((Path('out')/cn/'result.json').read_text())
                   assert cr['virtual_firmware']==n.rstrip('12'),(cn,'wrong firmware')
                   assert cr['first_home_seen_seconds'] is not None,(cn,'missing actual frame')
+                  assert cr.get('frame_probe_trace') and cr.get('home_frame_observation'),(cn,'missing frame observation trace')
                   assert cr['staged_ram_ready_seconds'] is not None,(cn,'missing RAM READY')
                   assert cr.get('post_eject_browser_http200_confirmed') is True,(cn,'missing browser HTTP200')
                   assert cr['media_ejected'] and cr['qemu_running_at_end'] and not cr['errors'],(cn,'broken control')
                   serial=(Path('out')/cn/'serial.log').read_text(errors='replace')
-                  assert 'P50_V133_PREFETCH_256MB_STARTED' in serial,(cn,'not actual 256MiB baseline')
+                  for marker in ('P50_V133_PREFETCH_256MB_STARTED',
+                                 'P50_STAGE_COPY_VERIFIED','P50_STAGE_READY',
+                                 'P50_V125_EARLY_DRM_READY','P50_V126_EARLY_SOCKET_PRESERVED',
+                                 'P50_V127_FIREFOX_DIRECT_EXEC','P50_V144_XORG_VT7_SELECTED',
+                                 'P50_V149_WEBRENDER_USERJS_READY'):
+                      assert marker in serial,(cn,'control prerequisite',marker)
                   controls[n]=cr
                   paired[n]=round(cr['first_home_seen_seconds']-d[n]['first_home_seen_seconds'],3)
               ctl=Path('out/matched-control.iso')
@@ -628,7 +661,7 @@ jobs:
               Path('out/reports/matched-prefetch-AB.json').write_text(json.dumps(matched,indent=2)+'\n')
               print('P50_SAME_HOST_MATCHED_PREFETCH_AB',json.dumps(matched,indent=2))
           Path('out/reports/v159-exact-ISO-release-smoke.json').write_text(json.dumps(report,indent=2)+'\n')
-          print('P50_V159_EXACT_ISO_RELEASE_GATE_PASS',json.dumps(report,indent=2))
+          print('P50_EXPERIMENTAL_VM_BATCH_RECORDED_NOT_A_RELEASE',json.dumps(report,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()

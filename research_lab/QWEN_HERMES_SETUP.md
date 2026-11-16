@@ -1,8 +1,22 @@
 # Qwen + Hermes / OpenClaude / OpenCode integration
 
-**Status:** adapter deployed. A real GPU model endpoint or hosted Qwen
-provider must be supplied by the operator. We have **not** installed,
-provisioned or exercised actual Qwen inference or Hermes/OpenClaude servers.
+**Status (updated November 16, 2026):** Hermes passed its credential-free
+review gate in runs 43906628085, 43913391779, and 43914318295. It made zero
+file-tool calls in runs 43912198706 and 43917314867; the latest transcript says
+it could not find the packet because `TERMINAL_CWD` was removed from its
+isolated environment. The workflow now supplies the prepared review workspace
+as Hermes' explicit terminal cwd. These checks do not certify Puppy50 boots
+or provide an always-on supervisor.
+
+The Qwen3.5-0.8B CPU workflow now imports and invokes pinned Qwen-Agent 0.0.34.
+Run 43917314867 reached the local model, but the final report failed JSON
+parsing at the 256-token cap. The prior failure record omitted the assistant
+preview and tool audit, so tool execution is unconfirmed. The next attempt
+raises the cap to 512, disables reasoning output, and records bounded
+diagnostics. Run 43919905873 stopped at the offline suite because a diagnostic test was
+wired into the wrong test module; no agent or VM stage ran. The draft moves it
+to the Qwen-Agent test suite. No Qwen3.8 GPU host, persistent Hermes service,
+or OpenClaude worker is provisioned.
 
 ## Model selection (verified November 15, 2026)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
@@ -92,3 +106,28 @@ The GPU model may propose creative architecture designs, but the current
 automated VM bridge only directly tests bounded Firefox nice and initramfs
 Zstd levels. Arbitrary kernel/compiler/Xorg patches need a separate reviewed
 build workflow and approval gates; this is intentional.
+
+
+## Qwen-Agent worker trial
+
+The experimental workflow installs Qwen-Agent from immutable source commit
+`31a4d36d123688581a9e9744427272b33ce940e0` (package version 0.0.34) and runs
+its Assistant/function-calling loop against the loopback llama.cpp endpoint.
+The worker is limited to one tool that reads exactly `review-input.json`, one
+successful tool execution, three local model calls, a 512-token output cap,
+and a 180-second wall-clock limit. The process receives no GitHub token, uses
+the loopback model endpoint, and has no shell or write tool. It is not
+network-namespace isolated. The deterministic gate rejects missing/extra tool
+calls, invalid reports, and disagreement with durable state.
+
+Runs 439121, 439133, and 439143 failed during eager imports on NumPy, SoundFile,
+and tqdm. Run 439173 passed import and reached the local model but failed final
+JSON parsing at the 256-token cap; the response and tool audit were not kept.
+The workflow raises the output cap, disables reasoning output, and adds bounded
+failure diagnostics. It also fixes Hermes' explicit review-workspace cwd. The
+full transitive dependency set is not locked, so this pilot is not ready for
+persistent deployment.
+
+See [AI agent and provider research](AI_AGENT_AND_PROVIDER_RESEARCH.md) for
+provider costs, open-source integration boundaries, and the recommended worker
+architecture. No hosted provider is enabled by this experiment.
