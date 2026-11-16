@@ -13,6 +13,8 @@ GUEST_MARKERS = {
     "launch_request": "P50_V123_INITRD_LAUNCH_REQUEST",
     "launcher_enter": "P50_TRACE_LAUNCHER_ENTER",
     "cookie_ready": "P50_TRACE_COOKIE_READY",
+    "cookie_bg_start": "P50_TRACE_COOKIE_BG_START",
+    "cookie_bg_ready": "P50_TRACE_COOKIE_BG_READY",
     "xauth_begin": "P50_TRACE_XAUTH_BEGIN",
     "xauth_ready": "P50_TRACE_XAUTH_READY",
     "xorg_start": "P50_V123_XORG_START",
@@ -47,6 +49,7 @@ def summarize_boot(root, label):
         ("drm_ready_to_xorg", "drm_ready", "xorg_start"),
         ("launch_request_to_launcher_enter", "launch_request", "launcher_enter"),
         ("launcher_enter_to_cookie_ready", "launcher_enter", "cookie_ready"),
+        ("background_cookie_generation", "cookie_bg_start", "cookie_bg_ready"),
         ("xauth_begin_to_ready", "xauth_begin", "xauth_ready"),
         ("xorg_to_firefox_exec", "xorg_start", "firefox_exec"),
     ):

@@ -16,6 +16,7 @@ def patch_text(src):
          "    markers += ['P50_V118_EARLY_USER_READY', 'P50_V125_DRM_GATE_START',\n"
          "                'P50_V125_EARLY_DRM_READY', 'P50_V123_INITRD_LAUNCH_REQUEST',\n"
          "                'P50_TRACE_LAUNCHER_ENTER', 'P50_TRACE_COOKIE_READY',\n"
+         "                'P50_TRACE_COOKIE_BG_START', 'P50_TRACE_COOKIE_BG_READY',\n"
          "                'P50_TRACE_XAUTH_BEGIN', 'P50_TRACE_XAUTH_READY',\n"
          "                'P50_V123_XORG_START', 'P50_V127_FIREFOX_DIRECT_EXEC',\n"
          "                'P50_STAGE_COPY_VERIFIED', 'P50_STAGE_READY']\n"
@@ -36,6 +37,16 @@ def patch_text(src):
          "                        serial_text = serial.read_text(errors='replace') if serial.exists() else ''\n"
          "                        observe_markers(serial_text, result, markers, time.monotonic(), started)\n"
          "                        state = migration_status(serial_text)\n"),
+        ("                    if result['post_eject_browser_http200_confirmed'] or args.mode != 'online':\n"
+         "                        break\n",
+         "                    if result['post_eject_browser_http200_confirmed'] or args.mode != 'online':\n"
+         "                        break\n"
+         "                    try:\n"
+         "                        failed_name = f'failed_navigation_{attempt}.png'\n"
+         "                        capture(monitor, out, failed_name)\n"
+         "                        result['screenshots'].append(failed_name)\n"
+         "                    except Exception as exc:\n"
+         "                        result['errors'].append('failed-navigation screenshot: ' + repr(exc))\n"),
     ]
     for old, new in replacements:
         if src.count(old) != 1:

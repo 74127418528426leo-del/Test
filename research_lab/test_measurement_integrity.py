@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 import json
+import shlex
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,6 +153,47 @@ class VerificationIntegrityTests(unittest.TestCase):
             self.assertEqual(pair["candidate"]["host_exec_receipt_to_home_observation_seconds"], 5.0)
             self.assertEqual(pair["control_minus_candidate_seconds"], 1.0)
             self.assertFalse(got["five_second_goal_verified"])
+
+    def test_cookie_experiment_keeps_fresh_secret_and_authenticated_launch(self):
+        path = ROOT / "research_lab/patch_parallel_cookie.py"
+        self.assertTrue(path.is_file())
+        spec = importlib.util.spec_from_file_location("parallel_cookie", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = '''# P50_V125_DRM_PREREQ
+printf 'P50_V125_DRM_GATE_START %s\\n' "$(cat /proc/uptime)" >/dev/ttyS0
+p50_cookie="$(mcookie)"
+xauth -f /home/user/.Xauthority add :0 . "$p50_cookie"
+/usr/lib/xorg/Xorg :0 -auth /home/user/.Xauthority -nolisten tcp
+chroot "$p50_root" /usr/local/sbin/p50-v123-start-x >/dev/ttyS0 2>&1 &
+'''
+        modified = module.patch_text(original)
+        self.assertIn('chroot "$p50_root" /usr/bin/mcookie', modified)
+        self.assertIn('xauth -f /home/user/.Xauthority add :0 . "$p50_cookie"', modified)
+        self.assertIn('P50_EARLY_COOKIE_DIR=', modified)
+        self.assertIn('rmdir "$P50_EARLY_COOKIE_DIR"', modified)
+        self.assertNotIn('p50_cookie="$(mcookie)"', modified)
+        self.assertIn('/usr/lib/xorg/Xorg :0 -auth /home/user/.Xauthority -nolisten tcp', modified)
+        with self.assertRaises(ValueError):
+            module.patch_text(modified)
+
+    def test_cookie_overlap_waits_and_fails_closed_when_generator_fails(self):
+        path = ROOT / "research_lab/patch_parallel_cookie.py"
+        self.assertTrue(path.is_file())
+        spec = importlib.util.spec_from_file_location("parallel_cookie", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "run").mkdir()
+            for generator, expected in (("printf '%s\\n' 0123456789abcdef0123456789abcdef", 0),
+                                        ("return 1", 23)):
+                script = ("set -eu\np50_root=" + shlex.quote(temp) + "\n"
+                          "panic() { exit 98; }\nchroot() { " + generator + "; }\n" +
+                          module.START.replace(">/dev/ttyS0", ">/dev/null") +
+                          "P50_EARLY_COOKIE_DIR=$p50_cookie_dir\n" + module.WAIT +
+                          "\n[ ! -e \"$p50_cookie_dir\" ]\nwait\n")
+                proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+                self.assertEqual(proc.returncode, expected, proc.stderr)
 
 
 if __name__ == "__main__":
