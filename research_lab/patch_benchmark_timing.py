@@ -13,7 +13,8 @@ def patch_text(src):
         ("'virtual_firmware': args.firmware, 'virtual_media': args.media,",
          "'virtual_firmware': args.firmware, 'virtual_media': 'ahci-cd',"),
         ("    with (out / 'qemu.log').open('wb') as log:\n",
-         "    markers += ['P50_V118_EARLY_USER_READY', 'P50_V125_DRM_GATE_START',\n"
+         "    markers += ['BdsDxe: loading Boot', 'BdsDxe: starting Boot',\n"
+         "                'P50_V118_EARLY_USER_READY', 'P50_V125_DRM_GATE_START',\n"
          "                'P50_V125_EARLY_DRM_READY', 'P50_V123_INITRD_LAUNCH_REQUEST',\n"
          "                'P50_TRACE_LAUNCHER_ENTER', 'P50_TRACE_COOKIE_READY',\n"
          "                'P50_TRACE_COOKIE_BG_START', 'P50_TRACE_COOKIE_BG_READY',\n"

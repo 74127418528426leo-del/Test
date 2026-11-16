@@ -29,6 +29,7 @@ WORKFLOWS = (
     "Puppy50 isolated measurement and prefetch replication",
     "Puppy50 parallel secure X11 cookie experiment",
     "Puppy50 zero-prefetch independent replication",
+    "Puppy50 Qwen Coder bounded CPU smoke",
 )
 
 def fetch_json(path):
@@ -71,6 +72,20 @@ def numeric_frames(item):
         if type(v) in (int,float) and math.isfinite(v) and 0<v<600:
             found.append((key,round(float(v),3)))
     return found
+
+def read_workflow_runs():
+    # Core workflows are looked up individually so Pages activity cannot hide
+    # them. One shared recent-runs query covers experimental branch workflows
+    # without consuming one rate-limited GitHub request per experiment.
+    files=("puppy50-autonomous-research.yml", "puppy50-ai-research-lab.yml",
+           "puppy50-qwen-distributed-128.yml", "puppy50-qwen-4b-pilot.yml")
+    combined=[]
+    for wf in files:
+        items=fetch_json("/actions/workflows/"+wf+"/runs?per_page=1").get("workflow_runs",[])
+        if isinstance(items,list):combined.extend(items[:1])
+    recent=fetch_json("/actions/runs?per_page=100").get("workflow_runs",[])
+    if isinstance(recent,list):combined.extend(recent)
+    return {"workflow_runs":combined}
 
 def snapshot(state,queue,runs):
     history=[x for x in state.get("history",[]) if isinstance(x,dict)]
@@ -142,7 +157,8 @@ def format_text(data,command):
         for title,name in (("VM experiment",WORKFLOWS[0]),("AI research",WORKFLOWS[1]),
                            ("Isolated measurement",WORKFLOWS[4]),
                            ("X11 cookie experiment",WORKFLOWS[5]),
-                           ("Zero-prefetch replication",WORKFLOWS[6])):
+                           ("Zero-prefetch replication",WORKFLOWS[6]),
+                           ("Qwen Coder smoke",WORKFLOWS[7])):
             run=runs.get(name,{})
             details.append(f"{title}: {run.get('conclusion') or run.get('status') or 'unknown'}")
         return ("Latest workflow tasks: "+"; ".join(details)+". "
@@ -196,29 +212,7 @@ def main():
     try:
         state=read_branch_file(STATE)
         queue=read_branch_file(QUEUE)
-        # Each workflow is queried directly so GitHub Pages builds cannot
-        # push actual VM results out of a generic recent-runs list.
-        files=(
-            "puppy50-autonomous-research.yml",
-            "puppy50-ai-research-lab.yml",
-            "puppy50-qwen-distributed-128.yml",
-            "puppy50-qwen-4b-pilot.yml",
-            "puppy50-measurement-experiment.yml",
-            "puppy50-parallel-cookie-experiment.yml",
-            "puppy50-zero-prefetch-replication.yml",
-        )
-        combined=[]
-        for wf in files:
-            try:
-                obj=fetch_json("/actions/workflows/"+wf+"/runs?per_page=1")
-            except error.HTTPError as exc:
-                if wf in ("puppy50-measurement-experiment.yml", "puppy50-parallel-cookie-experiment.yml",
-                          "puppy50-zero-prefetch-replication.yml") and exc.code==404:
-                    continue
-                raise
-            items=obj.get("workflow_runs",[])
-            if isinstance(items,list):combined.extend(items[:1])
-        runs={"workflow_runs":combined}
+        runs=read_workflow_runs()
         result=snapshot(state,queue,runs)
         print(json.dumps(result,indent=2) if args.json else format_text(result,args.command))
         return 0

@@ -4,6 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parent
 def load(name,path):
@@ -17,6 +18,17 @@ partial=load("p50_partial",ROOT/"collect_vm_evidence.py")
 prefetch=load("p50_prefetch",ROOT/"patch_libxul_prefetch.py")
 
 class StatusTests(unittest.TestCase):
+    def test_recent_experimental_runs_use_one_shared_api_query(self):
+        self.assertTrue(hasattr(status,"read_workflow_runs"))
+        calls=[]
+        def fake(path):
+            calls.append(path)
+            return {"workflow_runs":[]}
+        with patch.object(status,"fetch_json",side_effect=fake):
+            self.assertEqual(status.read_workflow_runs(),{"workflow_runs":[]})
+        self.assertEqual(len(calls),5)
+        self.assertIn("/actions/runs?per_page=100",calls)
+
     def test_unsubstantiated_goal_flag_is_not_reported_as_verified(self):
         state={"vm_goal_verified":True,"vm_goal_candidate":"candidate",
                "vm_goal_iso_sha256":"a"*64,
@@ -44,6 +56,10 @@ class StatusTests(unittest.TestCase):
         got=status.snapshot({"vm_goal_verified":False,"history":[]},
                             {"candidates":[]},runs)
         self.assertIn("Zero-prefetch replication: in_progress",status.format_text(got,"tasks"))
+        runs["workflow_runs"][0]["name"]="Puppy50 Qwen Coder bounded CPU smoke"
+        got=status.snapshot({"vm_goal_verified":False,"history":[]},
+                            {"candidates":[]},runs)
+        self.assertIn("Qwen Coder smoke: in_progress",status.format_text(got,"tasks"))
 
     def test_successful_ci_is_not_five_second_os(self):
         state={"vm_goal_verified":False,"history":[
