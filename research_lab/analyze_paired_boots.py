@@ -20,6 +20,8 @@ GUEST_MARKERS = {
     "xorg_start": "P50_V123_XORG_START",
     "firefox_exec": "P50_V127_FIREFOX_DIRECT_EXEC",
 }
+MATCHED_CONFIGURATION = ("guest_ram_mib", "virtual_cpu_model", "virtual_media",
+                         "network_mode", "virtual_read_cap_bytes_per_second")
 
 
 def number(value):
@@ -31,14 +33,22 @@ def number(value):
 def summarize_boot(root, label):
     p = root / label
     result = json.loads((p / "result.json").read_text())
-    if result.get("errors") or result.get("media_ejected") is not True or result.get("post_eject_browser_http200_confirmed") is not True:
+    if (result.get("errors") or result.get("media_ejected") is not True or
+            result.get("post_eject_browser_http200_confirmed") is not True or
+            result.get("input_sent_after_eject") is not True or
+            result.get("qemu_running_at_end") is not True or
+            number(result.get("staged_ram_ready_seconds")) <= 0):
         raise ValueError(label + ": missing successful functional observations")
+    if any(key not in result for key in MATCHED_CONFIGURATION):
+        raise ValueError(label + ": missing VM configuration")
     host = result.get("serial_marker_first_seen_seconds", {})
     home = number(result["home_frame_observation"]["first_matching_probe_end_seconds"])
-    receipt = number(host["P50_V127_FIREFOX_DIRECT_EXEC"])
-    if receipt > home:
-        raise ValueError(label + ": host receipt follows frame observation")
+    receipt_raw = host.get("P50_V127_FIREFOX_DIRECT_EXEC")
+    receipt = number(receipt_raw) if receipt_raw is not None else None
     serial = (p / "serial.log").read_text(errors="replace")
+    if any(marker not in serial for marker in ("P50_STAGE_COPY_VERIFIED", "P50_STAGE_READY",
+                                                "P50_V127_FIREFOX_DIRECT_EXEC")):
+        raise ValueError(label + ": missing RAM verification or Firefox execution evidence")
     guest = {}
     for key, tag in GUEST_MARKERS.items():
         hits = re.findall(r"^" + re.escape(tag) + r"\s+(\d+(?:\.\d+)?)\b", serial, re.M)
@@ -58,9 +68,12 @@ def summarize_boot(root, label):
     return {
         "firmware": result.get("virtual_firmware"),
         "guest_ram_mib": result.get("guest_ram_mib"),
+        "vm_configuration": {key:result[key] for key in MATCHED_CONFIGURATION},
         "sampled_home_observation_upper_seconds": home,
         "host_firefox_exec_receipt_seconds": receipt,
-        "host_exec_receipt_to_home_observation_seconds": round(home - receipt, 6),
+        # A marker may be emitted before the frame but first read by the host
+        # during the later RAM polling loop. Its receipt is not event order.
+        "host_exec_receipt_to_home_observation_seconds": round(home - receipt, 6) if receipt is not None and receipt <= home else None,
         "guest_uptime_markers_seconds": guest,
         "guest_only_stage_deltas_seconds": guest_deltas,
         "host_serial_marker_receipts_seconds": host,
@@ -79,6 +92,8 @@ def analyze(root, labels):
         expected = re.sub(r"[0-9]+$", "", label)
         if candidate["firmware"] != expected or control["firmware"] != expected:
             raise ValueError(label + ": firmware mismatch")
+        if candidate["vm_configuration"] != control["vm_configuration"]:
+            raise ValueError(label + ": machine configuration mismatch")
         pairs.append({"label":label, "candidate":candidate, "control":control,
                       "control_minus_candidate_seconds":round(
                           control["sampled_home_observation_upper_seconds"] -
@@ -90,7 +105,7 @@ def analyze(root, labels):
             diffs = [p["control_minus_candidate_seconds"] for p in group]
             by_firmware[fw] = {"pairs":len(group), "median_control_minus_candidate_seconds":median(diffs),
                                "min_seconds":min(diffs), "max_seconds":max(diffs)}
-    return {"scope":"diagnostic matched QEMU observations from one runner",
+    return {"scope":"diagnostic QEMU pairing recorded by one workflow job; provenance is not independently attested",
             "pairs":pairs, "firmware_comparison":by_firmware,
             "timing_note":"Host receipt-to-screenshot differences use host monotonic time; "
                           "guest stage differences use guest uptime only. Both are sampled observations, "

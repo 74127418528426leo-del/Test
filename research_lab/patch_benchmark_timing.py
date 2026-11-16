@@ -17,6 +17,8 @@ def patch_text(src):
          "                'P50_V125_EARLY_DRM_READY', 'P50_V123_INITRD_LAUNCH_REQUEST',\n"
          "                'P50_TRACE_LAUNCHER_ENTER', 'P50_TRACE_COOKIE_READY',\n"
          "                'P50_TRACE_COOKIE_BG_START', 'P50_TRACE_COOKIE_BG_READY',\n"
+         "                'P50_TRACE_COOKIE_BG_GENERATED', 'P50_TRACE_COOKIE_BG_FAILED',\n"
+         "                'P50_TRACE_COOKIE_WAIT_FAILED', 'P50_TRACE_COOKIE_WAIT_TIMEOUT',\n"
          "                'P50_TRACE_XAUTH_BEGIN', 'P50_TRACE_XAUTH_READY',\n"
          "                'P50_V123_XORG_START', 'P50_V127_FIREFOX_DIRECT_EXEC',\n"
          "                'P50_STAGE_COPY_VERIFIED', 'P50_STAGE_READY']\n"

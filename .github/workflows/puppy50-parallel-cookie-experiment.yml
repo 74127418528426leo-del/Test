@@ -1,4 +1,5 @@
 name: Puppy50 parallel secure X11 cookie experiment
+# Retry after moving cookie publication into the guest root and adding failure markers.
 on:
   push:
     branches: [puppy50-boot-measurement-integrity-20261116]

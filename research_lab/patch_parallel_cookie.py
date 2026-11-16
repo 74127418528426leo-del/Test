@@ -15,25 +15,31 @@ COOKIE = 'p50_cookie="$(mcookie)"'
 LAUNCH = 'chroot "$p50_root" /usr/local/sbin/p50-v123-start-x >/dev/ttyS0 2>&1 &'
 
 START = r'''# P50_PARALLEL_SECURE_XAUTH_COOKIE: fresh per boot, never log the secret.
-p50_cookie_dir="$p50_root/run/p50-cookie.$$"
+p50_cookie_guest="/run/p50-cookie.$$"
+p50_cookie_dir="$p50_root$p50_cookie_guest"
 mkdir -m 0700 "$p50_cookie_dir" || panic "cookie: cannot create private directory"
 printf 'P50_TRACE_COOKIE_BG_START %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
-(
+chroot "$p50_root" /bin/sh -c '
+    p50_cookie_guest="$1"
     umask 077
-    if chroot "$p50_root" /usr/bin/mcookie > "$p50_cookie_dir/pending" &&
-       mv "$p50_cookie_dir/pending" "$p50_cookie_dir/ready"; then
-        printf 'P50_TRACE_COOKIE_BG_READY %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
-    else
-        rm -f "$p50_cookie_dir/pending"
-        : > "$p50_cookie_dir/failed"
+    if /usr/bin/mcookie > "$p50_cookie_guest/pending"; then
+        printf "P50_TRACE_COOKIE_BG_GENERATED %s\n" "$(cat /proc/uptime)" >/dev/ttyS0
+        if mv "$p50_cookie_guest/pending" "$p50_cookie_guest/ready"; then
+            printf "P50_TRACE_COOKIE_BG_READY %s\n" "$(cat /proc/uptime)" >/dev/ttyS0
+            exit 0
+        fi
     fi
-) &
+    rm -f "$p50_cookie_guest/pending"
+    : > "$p50_cookie_guest/failed"
+    printf "P50_TRACE_COOKIE_BG_FAILED %s\n" "$(cat /proc/uptime)" >/dev/ttyS0
+    exit 1
+' p50-cookie "$p50_cookie_guest" &
 '''
 WAIT = r'''[ -n "${P50_EARLY_COOKIE_DIR:-}" ] || exit 22
 p50_cookie_attempt=0
 while [ ! -f "$P50_EARLY_COOKIE_DIR/ready" ]; do
-    [ ! -f "$P50_EARLY_COOKIE_DIR/failed" ] || exit 23
-    [ "$p50_cookie_attempt" -lt 300 ] || exit 24
+    [ ! -f "$P50_EARLY_COOKIE_DIR/failed" ] || { printf 'P50_TRACE_COOKIE_WAIT_FAILED\n' >/dev/ttyS0; exit 23; }
+    [ "$p50_cookie_attempt" -lt 300 ] || { printf 'P50_TRACE_COOKIE_WAIT_TIMEOUT\n' >/dev/ttyS0; exit 24; }
     sleep .05
     p50_cookie_attempt=$((p50_cookie_attempt+1))
 done
@@ -55,7 +61,7 @@ def patch_text(src):
     src = src.replace(DRM_ANCHOR, START + DRM_ANCHOR, 1)
     src = src.replace(COOKIE, WAIT, 1)
     src = src.replace(LAUNCH,
-        'P50_EARLY_COOKIE_DIR="/run/p50-cookie.$$" ' + LAUNCH, 1)
+        'P50_EARLY_COOKIE_DIR="$p50_cookie_guest" ' + LAUNCH, 1)
     return src
 
 

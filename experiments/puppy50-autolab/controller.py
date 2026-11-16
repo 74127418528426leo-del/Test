@@ -72,6 +72,25 @@ def independently_verified_iso(history, candidate):
         runs_by_sha.setdefault(digest,set()).add(run)
     return next((digest for digest,runs in runs_by_sha.items() if len(runs)>=2),None)
 
+def valid_recorded_goal(state):
+    digest=state.get("vm_goal_iso_sha256")
+    candidate=state.get("vm_goal_candidate")
+    matching=[x for x in state.get("history",[]) if isinstance(x,dict) and x.get("iso_sha256")==digest]
+    return bool(state.get("vm_goal_verified") is True and digest and candidate and
+                independently_verified_iso(matching,candidate)==digest)
+
+def clear_stale_goal(state):
+    """Invalidate old claims without deleting the experiment history."""
+    if state.get("vm_goal_verified") is True and not valid_recorded_goal(state):
+        state["invalidated_legacy_goal"]={
+            "candidate":state.get("vm_goal_candidate"),
+            "iso_sha256":state.get("vm_goal_iso_sha256"),
+            "reason":"missing two distinct same-ISO runs with timing schema 2"}
+        state["vm_goal_verified"]=False
+        state["vm_goal_candidate"]=None
+        state.pop("vm_goal_iso_sha256",None)
+        state.pop("vm_goal_verified_at",None)
+
 def queued_candidates():
     """Only load allowlisted numeric AI hypotheses. Never execute agent code."""
     try:
@@ -92,7 +111,8 @@ def queued_candidates():
     return found
 
 def choose(state):
-    if state["vm_goal_verified"]: return None,"VM verification complete; physical verification still required"
+    if valid_recorded_goal(state):
+        return None,"VM verification complete; physical verification still required"
     for c in CANDIDATES:
         t=trials(state,c["id"])
         if len(t)==1 and t[0]["vm_passed"]: return c,"repeat promising result on independent run"
@@ -116,8 +136,8 @@ def verify(report):
         return False,"high-precision frame observation evidence missing"
     f=report.get("first_visible_Firefox_frame_seconds")
     if not isinstance(f,dict) or set(f)!=BOOTS: return False,"missing genuine BIOS/UEFI frame timestamps"
-    if any(type(v) not in (int,float) or not 0<v<5 for v in f.values()):
-        return False,"not all four Firefox frames strictly below five seconds"
+    if any(type(v) not in (int,float) or not math.isfinite(v) or v<=0 for v in f.values()):
+        return False,"invalid displayed Firefox frame timestamp"
     upper=report.get("home_frame_observation_upper_seconds")
     if not isinstance(upper,dict) or set(upper)!=BOOTS:
         return False,"missing host-monotonic frame-observation upper bounds"
@@ -158,6 +178,7 @@ def main():
         with open(os.environ["GITHUB_OUTPUT"],"a") as out:
             for k,v in output.items(): print(f"{k}={v}",file=out)
     else:
+        clear_stale_goal(state)
         if a.candidate not in {c["id"] for c in CANDIDATES}:
             raise ValueError("unknown candidate")
         if not a.run_id: raise ValueError("missing GitHub run id")

@@ -42,6 +42,12 @@ class VerificationIntegrityTests(unittest.TestCase):
         r["home_frame_observation_upper_seconds"]["uefi1"] = float("nan")
         self.assertFalse(controller.verify(r)[0])
 
+    def test_unrounded_upper_bound_controls_strict_five_second_gate(self):
+        r = report()
+        r["first_visible_Firefox_frame_seconds"]["uefi1"] = 5.00
+        r["home_frame_observation_upper_seconds"]["uefi1"] = 4.999
+        self.assertTrue(controller.verify(r)[0])
+
     def test_independent_runs_must_test_same_iso(self):
         self.assertTrue(hasattr(controller, "independently_verified_iso"))
         qualify = controller.independently_verified_iso
@@ -59,6 +65,23 @@ class VerificationIntegrityTests(unittest.TestCase):
         del old["benchmark_timing_schema"]
         self.assertIsNone(qualify([item("1", a), old], "candidate"))
         self.assertEqual(qualify([item("1", a), item("2", a)], "candidate"), a)
+
+    def test_legacy_goal_flag_cannot_stop_future_experiments(self):
+        state={"vm_goal_verified":True,"vm_goal_candidate":"legacy", "history":[]}
+        candidate, _ = controller.choose(state)
+        self.assertIsNotNone(candidate)
+        self.assertTrue(hasattr(controller, "clear_stale_goal"))
+        controller.clear_stale_goal(state)
+        self.assertFalse(state["vm_goal_verified"])
+        self.assertEqual(state["history"], [])
+        cid = controller.PREFETCH_CANDIDATES[0]["id"]
+        digest = "a" * 64
+        state.update({"vm_goal_verified":True,"vm_goal_candidate":cid,"vm_goal_iso_sha256":digest,
+                      "history":[{"candidate_id":cid,"vm_passed":True,
+                                  "iso_sha256":digest,"benchmark_timing_schema":2,
+                                  "run_id":run} for run in ("1", "2")]})
+        candidate, _ = controller.choose(state)
+        self.assertIsNone(candidate)
 
     def test_frame_probes_keep_host_clock_bracket_and_exact_capture(self):
         path = ROOT / "research_lab/measurement_probe.py"
@@ -143,16 +166,45 @@ class VerificationIntegrityTests(unittest.TestCase):
                 p.mkdir()
                 (p / "result.json").write_text(json.dumps({
                     "virtual_firmware":"bios", "errors":[],
+                    "guest_ram_mib":3072, "virtual_cpu_model":"i3-540-conservative",
+                    "virtual_media":"ahci-cd", "network_mode":"online",
+                    "virtual_read_cap_bytes_per_second":None,
+                    "qemu_running_at_end":True, "input_sent_after_eject":True,
+                    "staged_ram_ready_seconds":14.0,
                     "post_eject_browser_http200_confirmed":True,
                     "media_ejected":True,
                     "home_frame_observation":{"first_matching_probe_end_seconds":home},
                     "serial_marker_first_seen_seconds":{"P50_V127_FIREFOX_DIRECT_EXEC":receipt}}))
-                (p / "serial.log").write_text("P50_V127_FIREFOX_DIRECT_EXEC 103.0 0.0\n")
+                (p / "serial.log").write_text("P50_V127_FIREFOX_DIRECT_EXEC 103.0 0.0\nP50_STAGE_COPY_VERIFIED\nP50_STAGE_READY\n")
             got = analysis.analyze(root, ["bios1"])
             pair = got["pairs"][0]
             self.assertEqual(pair["candidate"]["host_exec_receipt_to_home_observation_seconds"], 5.0)
             self.assertEqual(pair["control_minus_candidate_seconds"], 1.0)
             self.assertFalse(got["five_second_goal_verified"])
+            path = root / "bios1/result.json"
+            delayed = json.loads(path.read_text())
+            delayed["serial_marker_first_seen_seconds"]["P50_V127_FIREFOX_DIRECT_EXEC"] = 8.2
+            path.write_text(json.dumps(delayed))
+            try:
+                later = analysis.analyze(root, ["bios1"])["pairs"][0]["candidate"]
+            except ValueError as exc:
+                self.fail(f"delayed host serial receipt should remain diagnostic: {exc}")
+            self.assertIsNone(later["host_exec_receipt_to_home_observation_seconds"])
+            delayed["serial_marker_first_seen_seconds"] = {}
+            path.write_text(json.dumps(delayed))
+            missing = analysis.analyze(root, ["bios1"])["pairs"][0]["candidate"]
+            self.assertIsNone(missing["host_exec_receipt_to_home_observation_seconds"])
+            mismatch = root / "matched_bios1/result.json"
+            control = json.loads(mismatch.read_text())
+            control["guest_ram_mib"] = 512
+            mismatch.write_text(json.dumps(control))
+            with self.assertRaises(ValueError):
+                analysis.analyze(root, ["bios1"])
+            control["guest_ram_mib"] = 3072
+            mismatch.write_text(json.dumps(control))
+            (root / "matched_bios1/serial.log").write_text("P50_STAGE_READY\n")
+            with self.assertRaises(ValueError):
+                analysis.analyze(root, ["bios1"])
 
     def test_cookie_experiment_keeps_fresh_secret_and_authenticated_launch(self):
         path = ROOT / "research_lab/patch_parallel_cookie.py"
@@ -168,7 +220,8 @@ xauth -f /home/user/.Xauthority add :0 . "$p50_cookie"
 chroot "$p50_root" /usr/local/sbin/p50-v123-start-x >/dev/ttyS0 2>&1 &
 '''
         modified = module.patch_text(original)
-        self.assertIn('chroot "$p50_root" /usr/bin/mcookie', modified)
+        self.assertIn('chroot "$p50_root" /bin/sh -c', modified)
+        self.assertIn('/usr/bin/mcookie > "$p50_cookie_guest/pending"', modified)
         self.assertIn('xauth -f /home/user/.Xauthority add :0 . "$p50_cookie"', modified)
         self.assertIn('P50_EARLY_COOKIE_DIR=', modified)
         self.assertIn('rmdir "$P50_EARLY_COOKIE_DIR"', modified)
@@ -187,10 +240,19 @@ chroot "$p50_root" /usr/local/sbin/p50-v123-start-x >/dev/ttyS0 2>&1 &
             (Path(temp) / "run").mkdir()
             for generator, expected in (("printf '%s\\n' 0123456789abcdef0123456789abcdef", 0),
                                         ("return 1", 23)):
+                fake = Path(temp) / "fake-mcookie"
+                fake.write_text("#!/bin/sh\n" + ("exit 1" if generator == "return 1" else generator) + "\n")
+                fake.chmod(0o700)
+                simulated_start = (module.START.replace(">/dev/ttyS0", ">/dev/null")
+                                   .replace('p50_cookie_guest="/run/p50-cookie.$$"',
+                                            'p50_cookie_guest="$p50_root/run/p50-cookie.$$"')
+                                   .replace('p50_cookie_dir="$p50_root$p50_cookie_guest"',
+                                            'p50_cookie_dir="$p50_cookie_guest"')
+                                   .replace('/usr/bin/mcookie', str(fake)))
                 script = ("set -eu\np50_root=" + shlex.quote(temp) + "\n"
-                          "panic() { exit 98; }\nchroot() { " + generator + "; }\n" +
-                          module.START.replace(">/dev/ttyS0", ">/dev/null") +
-                          "P50_EARLY_COOKIE_DIR=$p50_cookie_dir\n" + module.WAIT +
+                          "panic() { exit 98; }\nchroot() { shift; \"$@\"; }\n" +
+                          simulated_start +
+                          "P50_EARLY_COOKIE_DIR=$p50_cookie_dir\n" + module.WAIT.replace(">/dev/ttyS0", ">/dev/null") +
                           "\n[ ! -e \"$p50_cookie_dir\" ]\nwait\n")
                 proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
                 self.assertEqual(proc.returncode, expected, proc.stderr)

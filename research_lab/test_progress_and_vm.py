@@ -31,14 +31,14 @@ class StatusTests(unittest.TestCase):
         self.assertTrue(status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})["vm_goal_verified"])
 
     def test_tasks_report_workflows_without_inventing_agent_workers(self):
-        runs={"workflow_runs":[{"name":"Puppy50 isolated measurement and prefetch replication",
+        runs={"workflow_runs":[{"name":"Puppy50 parallel secure X11 cookie experiment",
               "status":"in_progress","conclusion":None,
               "html_url":"https://github.com/example/run"}]}
         got=status.snapshot({"vm_goal_verified":False,"history":[]},
                             {"candidates":[]},runs)
         message=status.format_text(got,"tasks")
         self.assertIn("in_progress",message)
-        self.assertIn("Isolated measurement",message)
+        self.assertIn("X11 cookie experiment",message)
         self.assertIn("not evidence",message.lower())
 
     def test_successful_ci_is_not_five_second_os(self):
