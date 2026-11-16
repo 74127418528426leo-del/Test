@@ -91,8 +91,7 @@ jobs:
           export HERMES_RUNTIME_DIR="$HERMES_HOME/tools"
           cd "$src"
           source ./activate
-          command -v hermes-agent
-          hermes-agent --version
+          hermes --version
       - name: Configure Hermes to use only the local Qwen server
         run: |
           set -euo pipefail
@@ -136,7 +135,8 @@ jobs:
           set +e
           (
             cd "$GITHUB_WORKSPACE/agent-work"
-            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" PATH="$PATH"               hermes-agent               --query-file agent-context/task.md               --model p50-coder               --base-url http://127.0.0.1:8088/v1               --max-turns 6               --enabled-toolsets file,terminal
+            cd "$GITHUB_WORKSPACE/agent-work"
+            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home"               HERMES_RUNTIME_DIR="$RUNNER_TEMP/hermes-home/tools" PATH=/usr/bin:/bin               bash "$RUNNER_TEMP/hermes-source/scripts/run-in-hermes-env"               python "$RUNNER_TEMP/hermes-source/hermes" chat               --oneshot --query-file agent-context/task.md               --model p50-coder --toolsets file,terminal --max-turns 6 --quiet
           ) > "$GITHUB_WORKSPACE/agent-evidence/hermes-session.log" 2>&1
           rc=$?
           set -e
