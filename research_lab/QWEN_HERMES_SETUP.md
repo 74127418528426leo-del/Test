@@ -7,11 +7,11 @@ explicitly says this does not certify a boot. Earlier runs failed at tool
 selection or report formatting, so this is not a reliable always-on supervisor.
 The direct Qwen function-call canary still forces the call and executes no
 tool. This branch adds a separately gated Qwen-Agent trial against the same
-local Qwen3.5-0.8B CPU endpoint. Run 439121 exposed two separate problems:
-Hermes again made zero tool calls, and Qwen-Agent could not import because its
-package metadata omitted the NumPy dependency. Qwen-Agent did not reach model
-inference in that run. The dependency is now explicit and the bounded worker
-is being retried. Neither Qwen3.8 GPU inference nor a persistent Hermes service
+local Qwen3.5-0.8B CPU endpoint. Run 439121 exposed two problems: Hermes made zero tool calls, and Qwen-Agent
+could not import because its metadata omitted NumPy. In run 439133 Hermes again
+passed its report gate, but Qwen-Agent import then found a second undeclared
+dependency, SoundFile, after NumPy was added. Neither Qwen-Agent attempt reached
+model inference. Both packages are now explicit for the next retry. Neither Qwen3.8 GPU inference nor a persistent Hermes service
 is provisioned. OpenClaude has not been exercised.
 
 ## Model selection (verified November 15, 2026)
@@ -115,10 +115,11 @@ limit. The process receives no GitHub token, uses the loopback model endpoint,
 and has no shell or write tool. It is not network-namespace isolated. The
 deterministic gate rejects a missing or extra tool call, invalid report, or
 disagreement with durable state.
-Run 439121 installed the pinned source but failed at import because NumPy was
-not declared by Qwen-Agent's package metadata; no Qwen-Agent model request was
-made. The next run installs explicit NumPy 2.5.4, captures the resolved
-package freeze, and retries the worker. The framework source is commit-pinned,
+Runs 439121 and 439133 installed the pinned source but failed during import:
+first NumPy, then SoundFile (also omitted from package metadata). Neither run
+made a Qwen-Agent model request. The next run explicitly installs NumPy 2.5.4
+and SoundFile 0.14.0, captures the resolved package freeze before import, and
+retries the worker. The framework source is commit-pinned,
 but its transitive Python dependencies are not yet locked; this pilot is not
 ready for persistent deployment.
 

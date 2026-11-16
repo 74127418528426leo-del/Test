@@ -67,13 +67,12 @@ single read-only tool that can open only `review-input.json`, allows at most
 one successful tool execution and three local model calls, and gives the
 process no GitHub credential, shell tool, or write tool. Its model endpoint is
 loopback; the runner process is not network-namespace isolated. The report is
-compared by the existing deterministic evidence gate. Hermes' most recent
-successful check (run 43906628085) made two tool calls, read the prepared
-evidence packet, and returned matching values; the boot goal remained false.
-The next Hermes attempt (run 43912198706) made zero calls, so Hermes tool
-selection is still inconsistent. The first Qwen-Agent workflow attempt installed
-the framework but failed at import because NumPy was undeclared; it never sent
-a model request. The retry explicitly installs NumPy and is pending.
+compared by the existing deterministic evidence gate. Hermes passed its report
+gate in runs 43906628085 and 43913391779, making two calls and reading the
+prepared packet; the boot goal remained false. Run 43912198706 made zero tool
+calls, so Hermes selection is still inconsistent. Qwen-Agent has not reached
+inference: run 439121 missed undeclared NumPy, and run 439133 missed undeclared
+SoundFile. The next retry installs both explicitly.
 The earlier direct Qwen function-call canary forced the tool choice and did not
 execute a tool, so it is not counted as an agent success. The unforced
 Qwen-Agent trial has no execution result yet. Qwen-Agent results will be
