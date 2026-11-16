@@ -3,6 +3,7 @@ on:
   push:
     branches: [main, puppy50-boot-measurement-integrity-20261116]
     paths:
+      - '.github/workflows/puppy50-hermes-qwen-agent-pilot.yml'
       - '.github/workflows/puppy50-autonomous-research.yml'
       - 'research_lab/hermes_review_gate.py'
       - 'research_lab/test_hermes_review_gate.py'
