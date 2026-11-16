@@ -34,28 +34,36 @@ def sample_report():
     }
 
 
-def sample_transcript(report=None, tool_calls=5):
+def sample_transcript(report=None, tool_calls=1, successful_read=True):
+    trace = (
+        "📖 Read research_lab/agent-context/review-input.json L1-6\n"
+        if successful_read else
+        "✗ Read review-input.json [File not found]\n"
+    )
     return (
-        "Query: bounded evidence review\n\n☤ Hermes\n"
+        "Query: bounded evidence review\n" + trace + "\n☤ Hermes\n"
         + json.dumps(report or sample_report())
         + "\n────────────────────────\nResume this session with: local-session\n"
-        + f"Messages: 7 (1 user, {tool_calls} tool calls)\n"
+        + f"Messages: 3 (1 user, {tool_calls} tool call{'s' if tool_calls != 1 else ''})\n"
     )
 
 
 class HermesReviewGateTests(unittest.TestCase):
-    def test_accepts_matching_report_after_five_file_tool_calls(self):
+    def test_accepts_matching_report_after_successful_packet_read(self):
         report, calls = gate.parse_hermes_transcript(sample_transcript())
         result = gate.validate_report(report, sample_state(), calls)
         self.assertTrue(result["agent_report_consistent"])
         self.assertEqual(result["run_id"], "43874157306")
         self.assertFalse(result["goal_verified"])
-        self.assertEqual(result["agent_tool_calls"], 5)
+        self.assertEqual(result["agent_tool_calls"], 1)
 
-    def test_rejects_zero_or_insufficient_file_tool_calls(self):
-        for calls in (0, 4):
-            with self.subTest(calls=calls), self.assertRaisesRegex(ValueError, "file-tool calls"):
-                gate.parse_hermes_transcript(sample_transcript(tool_calls=calls))
+    def test_rejects_zero_file_tool_calls(self):
+        with self.assertRaisesRegex(ValueError, "file-tool call"):
+            gate.parse_hermes_transcript(sample_transcript(tool_calls=0))
+
+    def test_rejects_failed_packet_read_even_if_a_tool_was_called(self):
+        with self.assertRaisesRegex(ValueError, "successfully read"):
+            gate.parse_hermes_transcript(sample_transcript(tool_calls=1, successful_read=False))
 
     def test_rejects_hallucinated_run_mean_or_goal(self):
         for key, value in (
@@ -79,24 +87,27 @@ class HermesReviewGateTests(unittest.TestCase):
             report = sample_report()
             report[key] = value
             with self.assertRaises(ValueError):
-                gate.validate_report(report, sample_state(), 5)
+                gate.validate_report(report, sample_state(), 1)
 
     def test_rejects_missing_extra_fields_and_nonfinite_numbers(self):
         report = sample_report()
         report.pop("limitation")
         with self.assertRaisesRegex(ValueError, "fields mismatch"):
-            gate.validate_report(report, sample_state(), 5)
+            gate.validate_report(report, sample_state(), 1)
         report = sample_report()
         report["extra"] = "untrusted"
         with self.assertRaisesRegex(ValueError, "fields mismatch"):
-            gate.validate_report(report, sample_state(), 5)
+            gate.validate_report(report, sample_state(), 1)
         report = sample_report()
         report["candidate_mean_seconds"] = float("nan")
         with self.assertRaisesRegex(ValueError, "finite number"):
-            gate.validate_report(report, sample_state(), 5)
+            gate.validate_report(report, sample_state(), 1)
 
     def test_rejects_invalid_json_and_missing_footer(self):
-        bad = "☤ Hermes\nnot JSON\n────────────────\nMessages: 4 (1 user, 5 tool calls)"
+        bad = (
+            "📖 Read review-input.json L1-6\n☤ Hermes\nnot JSON\n"
+            "────────────────\nMessages: 4 (1 user, 1 tool call)"
+        )
         with self.assertRaisesRegex(ValueError, "raw JSON"):
             gate.parse_hermes_transcript(bad)
         with self.assertRaisesRegex(ValueError, "no authentic"):

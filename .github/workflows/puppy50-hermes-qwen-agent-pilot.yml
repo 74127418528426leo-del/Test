@@ -43,40 +43,49 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s research_lab -p 'test_*.py' -q 2>&1 | tee "$RUNNER_TEMP/p50-offline-tests.txt"
           bash -n research_lab/build_matched_control.sh
           printf '%s\n' 'PASS: bash -n research_lab/build_matched_control.sh' >> "$RUNNER_TEMP/p50-offline-tests.txt"
-      - name: Prepare a credential-free review copy and bounded task
+      - name: Prepare a credential-free one-file review packet
         run: |
           set -euo pipefail
           mkdir -p models agent-work agent-evidence "$RUNNER_TEMP/hermes-home"
           git archive HEAD | tar -x -C agent-work
-          mkdir -p agent-work/agent-context
-          cp research_lab/RESULTS_2026-11-16.md agent-work/agent-context/
-          cp lab-state/experiments/puppy50-autolab/state.json agent-work/agent-context/
-          cp lab-state/research_lab/queue.json agent-work/agent-context/
-          cp "$RUNNER_TEMP/p50-offline-tests.txt" agent-work/agent-context/offline-checks.txt
-
+          mkdir -p agent-work/agent-context agent-work/research_lab/agent-context
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          state = json.loads(Path("lab-state/experiments/puppy50-autolab/state.json").read_text())
+          if type(state.get("vm_goal_verified")) is not bool:
+              raise SystemExit("persistent goal flag is not boolean")
+          rows = [row for row in state.get("history", [])
+                  if isinstance(row, dict) and isinstance(row.get("matched_prefetch_control"), dict)]
+          if not rows:
+              raise SystemExit("persistent state has no matched comparison")
+          row = rows[-1]
+          comparison = row["matched_prefetch_control"]
+          packet = {
+              "run_id": str(row["run_id"]),
+              "candidate_mean_seconds": comparison["mean_candidate_seconds"],
+              "control_mean_seconds": comparison["mean_control_seconds"],
+              "goal_verified": state["vm_goal_verified"],
+              "test_summary": "Offline regression and shell syntax checks passed.",
+              "limitation": "One same-host run; independent replication is still required. Timing is page detection, not exact Firefox paint."
+          }
+          Path("agent-work/research_lab/agent-context/review-input.json").write_text(
+              json.dumps(packet, indent=2, sort_keys=True) + "\n")
+          PY
           cat > agent-work/agent-context/task.md <<'TASK'
-          Read only these evidence files with Hermes file tools before answering:
-          agent-context/RESULTS_2026-11-16.md, agent-context/state.json,
-          agent-context/offline-checks.txt, research_lab/critical_path.py, and
-          research_lab/test_measurement_integrity.py.
-          Find the latest completed matched comparison in state.json. Copy its run_id,
-          mean_candidate_seconds, and mean_control_seconds, plus the persistent
-          vm_goal_verified boolean. Do not use dates as run IDs, invent timings,
-          compare guest uptime with host monotonic time, or claim independent validation.
-          Return only one raw JSON object with exactly these keys:
+          Use Hermes read_file exactly once to read:
+          research_lab/agent-context/review-input.json
+          Copy all six values exactly into one raw JSON object with exactly these keys:
           run_id, candidate_mean_seconds, control_mean_seconds, goal_verified,
           test_summary, limitation.
-          Set test_summary exactly to:
-          "Offline regression and shell syntax checks passed."
-          Set limitation exactly to:
-          "One same-host run; independent replication is still required. Timing is page detection, not exact Firefox paint."
-          Use no other tools and make no changes.
+          Do not read any other file, call another tool, invent facts, or add prose.
+          Do not claim that this packet independently verifies a Puppy50 boot.
           TASK
           git -C agent-work init -q
           git -C agent-work config user.name 'Puppy50 isolated Hermes review'
           git -C agent-work config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C agent-work add -A
-          git -C agent-work commit -qm 'temporary review baseline'
+          git -C agent-work commit -qm 'temporary read-only review baseline'
           chmod -R a-w agent-work
           test -z "$(find agent-work -perm /222 -print -quit)"
       - name: Restore or cache pinned Qwen3.5 reviewer
@@ -259,6 +268,7 @@ jobs:
           printf '%s\n' "$rc" > "$GITHUB_WORKSPACE/agent-evidence/hermes-exit-code.txt"
           test "$rc" -eq 0
       - name: Validate Hermes report against durable experiment state
+        if: always() && steps.qwen-tool-canary.outcome == 'success'
         run: |
           set -euo pipefail
           python3 research_lab/hermes_review_gate.py \

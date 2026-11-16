@@ -11,8 +11,9 @@ from typing import Any
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 FOOTER = re.compile(r"(?m)^\s*Messages:\s*\d+\s*\(\s*\d+\s+user,\s*(\d+)\s+tool calls?\s*\)\s*$")
 BANNER = re.compile(r"(?m)^\s*☤\s+Hermes\s*$")
+SUCCESSFUL_READ = re.compile(r"(?m)^\s*📖\s+Read\s+.*\breview-input\.json\b")
 SEPARATOR = re.compile(r"(?m)^\s*[─━]{8,}\s*$")
-MINIMUM_FILE_TOOL_CALLS = 5
+MINIMUM_FILE_TOOL_CALLS = 1
 EXPECTED_TEST_SUMMARY = "Offline regression and shell syntax checks passed."
 EXPECTED_LIMITATION = (
     "One same-host run; independent replication is still required. "
@@ -61,7 +62,9 @@ def parse_hermes_transcript(transcript: str) -> tuple[dict[str, Any], int]:
         raise ValueError("Hermes transcript has no authentic message/tool-call footer")
     calls = int(footers[-1].group(1))
     if calls < MINIMUM_FILE_TOOL_CALLS:
-        raise ValueError(f"expected at least {MINIMUM_FILE_TOOL_CALLS} file-tool calls; observed {calls}")
+        raise ValueError(f"expected at least {MINIMUM_FILE_TOOL_CALLS} file-tool call; observed {calls}")
+    if not SUCCESSFUL_READ.search(clean):
+        raise ValueError("Hermes did not successfully read the bounded review packet")
     banners = list(BANNER.finditer(clean))
     if not banners:
         raise ValueError("Hermes transcript has no final-response banner")
@@ -79,7 +82,7 @@ def parse_hermes_transcript(transcript: str) -> tuple[dict[str, Any], int]:
 
 def validate_report(report: dict[str, Any], state: dict[str, Any], tool_calls: int) -> dict[str, Any]:
     if tool_calls < MINIMUM_FILE_TOOL_CALLS:
-        raise ValueError(f"expected at least {MINIMUM_FILE_TOOL_CALLS} file-tool calls; observed {tool_calls}")
+        raise ValueError(f"expected at least {MINIMUM_FILE_TOOL_CALLS} file-tool call; observed {tool_calls}")
     if set(report) != FIELDS:
         raise ValueError(
             f"report fields mismatch (missing={sorted(FIELDS-set(report))}, "
