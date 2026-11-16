@@ -79,6 +79,7 @@ class StatusTests(unittest.TestCase):
         self.assertFalse(got["best_complete_4boot_candidate"]["strict_vm_goal_passed"])
         self.assertIn("NOT VERIFIED",status.format_text(got,"progress"))
         self.assertIn("21.03s",status.format_text(got,"fastest"))
+        self.assertIn("not recorded",status.format_text(got,"fastest").lower())
         self.assertEqual(got["vm_experiments_recorded"],1)
 
     def test_only_partial_frame_evidence_is_not_complete(self):
@@ -109,6 +110,19 @@ class StatusTests(unittest.TestCase):
         self.assertIn("2.6s",t)
         self.assertIn("NOT certified",t)
         self.assertFalse(data["vm_goal_verified"])
+
+    def test_latest_cookie_comparison_is_not_described_as_prefetch(self):
+        comparison={"experiment":"generate a fresh X11 cookie in parallel with DRM setup",
+                    "mean_control_seconds":9.112,"mean_candidate_seconds":9.346,
+                    "mean_control_minus_candidate_seconds":-0.234}
+        state={"vm_goal_verified":False,"history":[{
+            "candidate_id":"parallel-secure-x11-cookie", "vm_passed":False,
+            "matched_cookie_control":comparison}]}
+        data=status.snapshot(state,{"candidates":[]},{"workflow_runs":[]})
+        output=status.format_text(data,"comparison")
+        self.assertIn("cookie",output.lower())
+        self.assertIn("9.346",output)
+        self.assertNotIn("None MiB",output)
 
     def test_live_http_requests_must_use_fixed_github_host(self):
         for path in ("http://evil.invalid","//evil.invalid","/x/../y"):

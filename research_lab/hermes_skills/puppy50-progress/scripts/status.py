@@ -117,8 +117,11 @@ def snapshot(state,queue,runs):
     # never cherry-pick a single BIOS result.
     best=min(all_four,key=lambda p:max(v for _,v in p[1])) if all_four else None
     latest=history[-1] if history else {}
-    matched_reports=[x.get("matched_prefetch_control") for x in history
-                     if isinstance(x.get("matched_prefetch_control"),dict)]
+    matched_reports=[]
+    for x in history:
+        for key,kind in (("matched_prefetch_control","prefetch"),("matched_cookie_control","cookie")):
+            if isinstance(x.get(key),dict):
+                matched_reports.append({**x[key],"comparison_kind":kind})
     latest_matched=matched_reports[-1] if matched_reports else None
     candidate_count=len(queue.get("candidates",[])) if isinstance(queue.get("candidates"),list) else 0
     return {
@@ -166,7 +169,14 @@ def format_text(data,command):
     if command=="comparison":
         matched=data.get("latest_same_host_comparison")
         if not isinstance(matched,dict):
-            return "No independently documented same-host prefetch comparison yet."
+            return "No documented same-host comparison yet."
+        if matched.get("comparison_kind")=="cookie":
+            return (f"Latest same-host X11 cookie comparison: control mean "
+                    f"{matched.get('mean_control_seconds')}s vs candidate "
+                    f"{matched.get('mean_candidate_seconds')}s. "
+                    f"Control minus candidate: {matched.get('mean_control_minus_candidate_seconds')}s. "
+                    "Sampled home-page detections; independent replication is needed. "
+                    "5s and physical Acer goals NOT certified.")
         return (
             f"Latest same-host QEMU prefetch comparison: "
             f"control {matched.get('reference_prefetch_mib')} MiB mean "
@@ -189,7 +199,9 @@ def format_text(data,command):
         if not b:return "No complete four-boot QEMU measurements have been recorded yet."
         return (f"Best observed complete four-boot batch: {b['candidate']}, "
                 f"mean {b['mean_seconds']:.2f}s, slowest {b['worst_seconds']:.2f}s. "
-                f"Under-five-second VM goal: {vm}. Physical Acer remains untested.")
+                f"Under-five-second VM goal: {vm}. "
+                + ("Independent exact-ISO certification is not recorded. " if vm=="NOT VERIFIED" else "")
+                + "Physical Acer remains untested.")
     if command=="failures":
         bad=data["latest_result_reason"]
         w=data["latest_workflow_runs"].get(WORKFLOWS[0],{})
