@@ -69,6 +69,9 @@ def parse_hermes_transcript(transcript: str) -> tuple[dict[str, Any], int]:
     if not banners:
         raise ValueError("Hermes transcript has no final-response banner")
     response = SEPARATOR.split(clean[banners[-1].end():], maxsplit=1)[0].strip()
+    # Hermes may add a bare JSON language label before otherwise-valid JSON.
+    if response[:4].lower() == "json" and response[4:].lstrip().startswith("{"):
+        response = response[4:].lstrip()
     if not response:
         raise ValueError("Hermes final response is empty")
     try:

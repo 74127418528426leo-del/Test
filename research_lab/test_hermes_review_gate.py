@@ -34,15 +34,18 @@ def sample_report():
     }
 
 
-def sample_transcript(report=None, tool_calls=1, successful_read=True):
+def sample_transcript(report=None, tool_calls=1, successful_read=True, json_prefix=False):
     trace = (
         "📖 Read research_lab/agent-context/review-input.json L1-6\n"
         if successful_read else
         "✗ Read review-input.json [File not found]\n"
     )
+    payload = json.dumps(report or sample_report())
+    if json_prefix:
+        payload = "json" + payload
     return (
         "Query: bounded evidence review\n" + trace + "\n☤ Hermes\n"
-        + json.dumps(report or sample_report())
+        + payload
         + "\n────────────────────────\nResume this session with: local-session\n"
         + f"Messages: 3 (1 user, {tool_calls} tool call{'s' if tool_calls != 1 else ''})\n"
     )
@@ -56,6 +59,12 @@ class HermesReviewGateTests(unittest.TestCase):
         self.assertEqual(result["run_id"], "43874157306")
         self.assertFalse(result["goal_verified"])
         self.assertEqual(result["agent_tool_calls"], 1)
+
+    def test_accepts_bare_json_label_prefix(self):
+        report, calls = gate.parse_hermes_transcript(sample_transcript(json_prefix=True))
+        result = gate.validate_report(report, sample_state(), calls)
+        self.assertTrue(result["agent_report_consistent"])
+        self.assertEqual(result["run_id"], "43874157306")
 
     def test_rejects_zero_file_tool_calls(self):
         with self.assertRaisesRegex(ValueError, "file-tool call"):
