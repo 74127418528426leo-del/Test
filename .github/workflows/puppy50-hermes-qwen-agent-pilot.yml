@@ -79,12 +79,20 @@ jobs:
             curl -fL --retry 2 --connect-timeout 25 --max-time 420               'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'               -o models/coder.gguf
           fi
           echo 'cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046  models/coder.gguf' | sha256sum -c -
-      - name: Install pinned Hermes Agent source
+      - name: Bootstrap pinned Hermes source runtime
+        shell: bash
         run: |
           set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/hermes-venv"
-          "$RUNNER_TEMP/hermes-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir             'git+https://github.com/NousResearch/hermes-agent.git@3b421578588243f920886e6fe79a6faa87ea026e'
-          "$RUNNER_TEMP/hermes-venv/bin/hermes-agent" --version
+          src="$RUNNER_TEMP/hermes-source"
+          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git "$src"
+          git -C "$src" checkout --detach 3b421578588243f920886e6fe79a6faa87ea026e
+          test "$(git -C "$src" rev-parse HEAD)" = 3b421578588243f920886e6fe79a6faa87ea026e
+          export HERMES_HOME="$RUNNER_TEMP/hermes-home"
+          export HERMES_RUNTIME_DIR="$HERMES_HOME/tools"
+          cd "$src"
+          source ./activate
+          command -v hermes-agent
+          hermes-agent --version
       - name: Configure Hermes to use only the local Qwen server
         run: |
           set -euo pipefail
@@ -121,11 +129,15 @@ jobs:
       - name: Run bounded Hermes review with no GitHub credentials
         run: |
           set -euo pipefail
+          export HERMES_HOME="$RUNNER_TEMP/hermes-home"
+          export HERMES_RUNTIME_DIR="$HERMES_HOME/tools"
+          cd "$RUNNER_TEMP/hermes-source"
+          source ./activate
           set +e
           (
-            cd agent-work
-            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" PATH="$PATH"               "$RUNNER_TEMP/hermes-venv/bin/hermes-agent"               --query-file agent-context/task.md               --model p50-coder               --base-url http://127.0.0.1:8088/v1               --max-turns 6               --enabled-toolsets file,terminal
-          ) > agent-evidence/hermes-session.log 2>&1
+            cd "$GITHUB_WORKSPACE/agent-work"
+            env -i HOME="$RUNNER_TEMP/hermes-home" HERMES_HOME="$RUNNER_TEMP/hermes-home" PATH="$PATH"               hermes-agent               --query-file agent-context/task.md               --model p50-coder               --base-url http://127.0.0.1:8088/v1               --max-turns 6               --enabled-toolsets file,terminal
+          ) > "$GITHUB_WORKSPACE/agent-evidence/hermes-session.log" 2>&1
           rc=$?
           set -e
           printf '%s\n' "$rc" > agent-evidence/hermes-exit-code.txt
