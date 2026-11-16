@@ -3,10 +3,13 @@ on:
   push:
     branches: [main, puppy50-boot-measurement-integrity-20261116]
     paths:
-      - '.github/workflows/puppy50-hermes-qwen-agent-pilot.yml'
       - '.github/workflows/puppy50-autonomous-research.yml'
-      - 'research_lab/**'
-      - 'experiments/puppy50-autolab/**'
+      - 'research_lab/hermes_review_gate.py'
+      - 'research_lab/test_hermes_review_gate.py'
+      - 'research_lab/critical_path.py'
+      - 'research_lab/test_measurement_integrity.py'
+      - 'research_lab/QWEN_HERMES_SETUP.md'
+      - 'experiments/puppy50-autolab/controller.py'
   schedule:
     # Daily bounded worker; scheduled events run from the default branch.
     - cron: '17 5 * * *'
