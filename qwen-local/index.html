@@ -24,6 +24,23 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
   </nav>
 </header>
 
+<section class="panel" aria-labelledby="chat-title">
+  <h2 id="chat-title">Chat with LFM2.5</h2>
+  <div id="messages" aria-live="polite"><p id="welcome" class="muted">Type a message and tap Send. The first message loads the default 696 MB model, then sends your message. Keep this tab open.</p></div>
+  <div class="chat-input">
+    <label for="prompt">Your message</label>
+    <textarea id="prompt" maxlength="2000" placeholder="Ask a question…"></textarea>
+    <div class="button-row">
+      <button id="send" disabled>Send message</button>
+      <button id="stop" class="danger" disabled>Stop generation</button>
+      <button id="clear" class="secondary" disabled>Clear chat</button>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite">Ready to type. The first reply needs a model download.</p>
+    <progress id="progress" hidden aria-label="Model loading"></progress>
+    <a id="load-help" href="#setup-title" hidden>Open model settings and load from Files</a>
+  </div>
+</section>
+
 <section class="hero">
   <div class="eyebrow">Local inference · no ChatGPT or paid API</div>
   <h2>Use LFM2.5 on this device</h2>
@@ -38,7 +55,6 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
 </section>
 
 <section class="panel" aria-labelledby="setup-title">
-  <div class="eyebrow">Step 1</div>
   <h2 id="setup-title">Load the model</h2>
   <label for="quant">Model file</label>
   <select id="quant">
@@ -47,16 +63,13 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
   </select>
   <label for="compute-mode">Inference mode</label>
   <select id="compute-mode">
+    <option value="cpu">CPU only · default</option>
     <option value="auto">Automatic · use WebGPU if available</option>
-    <option value="cpu">CPU only · may be very slow; try if GPU loading fails</option>
   </select>
   <div class="button-row">
     <button id="load">Load LFM2.5 on this device</button>
     <button id="unload" class="secondary" disabled>Unload model</button>
   </div>
-  <p id="status" class="status" role="status" aria-live="polite">Ready. Choose a file and load when you have Wi-Fi and enough free memory.</p>
-  <progress id="progress" max="100" value="0" hidden aria-label="Model download progress"></progress>
-  <small id="progress-note">First load downloads the selected GGUF file from Hugging Face and Wllama's pinned WebAssembly runtime from jsDelivr. It may take several minutes. Inference begins only after loading finishes.</small>
   <div class="manual-load">
     <h3>Browser-storage fallback</h3>
     <p class="muted">If the browser reports a storage-space error, download the selected model file and load it directly. This avoids Wllama's persistent browser cache, but still needs enough RAM and may not work on iPhone Safari.</p>
@@ -71,21 +84,6 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
     <input id="local-file" type="file" accept=".gguf">
     <button id="load-local" class="secondary" disabled>Load selected file from this device</button>
     <small id="local-status">Select a matching GGUF file. The selected file is read locally and is not uploaded.</small>
-  </div>
-</section>
-
-<section class="panel" aria-labelledby="chat-title">
-  <div class="eyebrow">Step 2</div>
-  <h2 id="chat-title">Chat with LFM2.5</h2>
-  <div id="messages" aria-live="polite"><p id="welcome" class="muted">Load the model to begin. The chat is held in page memory and clears when you reload.</p></div>
-  <div class="chat-input">
-    <label for="prompt">Your message</label>
-    <textarea id="prompt" maxlength="2000" placeholder="Ask a question…" disabled></textarea>
-    <div class="button-row">
-      <button id="send" disabled>Send message</button>
-      <button id="stop" class="danger" disabled>Stop generation</button>
-      <button id="clear" class="secondary" disabled>Clear chat</button>
-    </div>
   </div>
 </section>
 
@@ -130,6 +128,7 @@ const localStatus = $('local-status');
 const modelDownload = $('model-download');
 const status = $('status');
 const progress = $('progress');
+const loadHelp = $('load-help');
 const messagesBox = $('messages');
 let runtime = null;
 let history = [];
@@ -149,8 +148,8 @@ function updateControls() {
   unloadButton.disabled = loading || generating || !runtime;
   localFile.disabled = loading || generating || !!runtime;
   localLoadButton.disabled = loading || generating || !!runtime || !localFile.files || !localFile.files[0];
-  promptInput.disabled = !runtime || loading || generating;
-  sendButton.disabled = !runtime || loading || generating;
+  promptInput.readOnly = generating;
+  sendButton.disabled = loading || generating;
   stopButton.disabled = !generating;
   clearButton.disabled = !runtime || loading || generating;
 }
@@ -197,7 +196,7 @@ localFile.addEventListener('change', () => {
   localStatus.textContent = file ? 'Selected: ' + file.name + ' (' + Math.round(file.size / 1048576) + ' MB). This file stays in your browser and is not uploaded.' : 'Select a matching GGUF file. The selected file is read locally and is not uploaded.';
   updateControls();
 });
-loadButton.addEventListener('click', async () => {
+async function loadOnline() {
   if (loading || runtime) return;
   if (!window.isSecureContext || !('WebAssembly' in window)) {
     setStatus('This browser cannot run the local WebAssembly model. Open the HTTPS site in a current browser.', 'error');
@@ -205,7 +204,7 @@ loadButton.addEventListener('click', async () => {
   }
   loading = true;
   progress.hidden = false;
-  progress.value = 0;
+  loadHelp.hidden = true;
   setStatus('Loading the browser runtime…');
   updateControls();
   let candidate = null;
@@ -213,38 +212,33 @@ loadButton.addEventListener('click', async () => {
     candidate = await createRuntime();
     const file = quantSelect.value;
     setStatus('Downloading ' + modelLabel(file) + ' model (first download: about ' + (file.indexOf('Q4_K_M') >= 0 ? '731' : '696') + ' MB)…');
-    await candidate.loadModelFromHF(
-      { repo: MODEL_REPO, file: file },
-      {
-        ...inferenceOptions(),
-        progressCallback: ({ loaded, total }) => {
-          if (total > 0) {
-            const pct = Math.min(100, Math.round((loaded / total) * 100));
-            progress.value = pct;
-            setStatus('Downloading model… ' + pct + '% (' + Math.round(loaded / 1048576) + ' / ' + Math.round(total / 1048576) + ' MB)');
-          } else {
-            setStatus('Downloading model… ' + Math.round(loaded / 1048576) + ' MB received');
-          }
-        }
-      }
-    );
+    // Let the browser manage the download as a Blob, bypassing Wllama's OPFS cache.
+    const response = await fetch(modelUrl(file), { credentials: 'omit' });
+    if (!response.ok) throw new Error('Model download returned HTTP ' + response.status);
+    const weights = await response.blob();
+    const magic = await weights.slice(0, 4).text();
+    if (magic !== 'GGUF') throw new Error('The download did not contain a GGUF file');
+    setStatus('Download complete. Starting LFM2.5 on this device…');
+    await candidate.loadModel([weights], inferenceOptions());
     runtime = candidate;
     candidate = null;
     progress.hidden = true;
-    progress.value = 100;
     setStatus('LFM2.5 ' + modelLabel(file) + ' is loaded in this browser. Prompts stay on this device.', 'success');
-    addMessage('assistant', 'Model loaded. Ask me something; I will answer from my local weights.');
+    return true;
   } catch (error) {
     if (candidate) {
       try { await candidate.exit(); } catch (_) {}
     }
     progress.hidden = true;
-    setStatus('Could not load the model: ' + (error && error.message ? error.message : String(error)) + '. If the message reports no storage space, use the downloaded-file option below; otherwise check Wi-Fi or retry on a laptop.', 'error');
+    setStatus('Could not load the model: ' + (error.message || String(error)) + '. Try loading the downloaded GGUF from Files in model settings.', 'error');
+    loadHelp.hidden = false;
+    return false;
   } finally {
     loading = false;
     updateControls();
   }
-});
+}
+loadButton.addEventListener('click', loadOnline);
 localLoadButton.addEventListener('click', async () => {
   const file = localFile.files && localFile.files[0];
   if (!file || runtime || loading || generating) return;
@@ -265,7 +259,7 @@ localLoadButton.addEventListener('click', async () => {
     candidate = null;
     setStatus('LFM2.5 ' + modelLabel(file.name) + ' is loaded locally. Prompts stay on this device.', 'success');
     localStatus.textContent = 'Loaded from your selected file; it was not uploaded.';
-    addMessage('assistant', 'Model loaded. Ask me something; I will answer from my local weights.');
+    loadHelp.hidden = true;
   } catch (error) {
     if (candidate) { try { await candidate.exit(); } catch (_) {} }
     setStatus('Could not load the selected file: ' + (error && error.message ? error.message : String(error)) + '. Check that it is a valid LFM2.5 GGUF and retry on a laptop.', 'error');
@@ -286,7 +280,6 @@ unloadButton.addEventListener('click', async () => {
   welcome.className = 'muted';
   welcome.textContent = 'Model unloaded. Load again to start a new session.';
   messagesBox.append(welcome);
-  progress.value = 0;
   setStatus('Model unloaded from this page.', 'success');
   updateControls();
 });
@@ -301,8 +294,9 @@ stopButton.addEventListener('click', () => {
 });
 async function sendMessage() {
   const question = promptInput.value.trim();
-  if (!question || !runtime || generating) return;
-  promptInput.value = '';
+  if (!question || loading || generating) return;
+  if (!runtime && !await loadOnline()) return;
+  if (promptInput.value.trim() === question) promptInput.value = '';
   addMessage('user', question);
   const answer = addMessage('assistant', 'Thinking…');
   const prior = history.slice(-6);
@@ -342,6 +336,7 @@ async function sendMessage() {
       if (!result.trim()) answer.textContent = 'Stopped.';
     } else {
       answer.textContent = 'Generation error: ' + (error && error.message ? error.message : String(error));
+      if (!promptInput.value) promptInput.value = question;
       setStatus('Generation failed. Try a shorter prompt or reload the model.', 'error');
     }
   } finally {
@@ -352,7 +347,7 @@ async function sendMessage() {
 }
 sendButton.addEventListener('click', sendMessage);
 promptInput.addEventListener('keydown', event => {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     sendMessage();
   }
