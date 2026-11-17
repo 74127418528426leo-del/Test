@@ -3,44 +3,290 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#101528">
-<meta name="description" content="Open DeepSeek V4.1 Flash hosted chat or try the experimental local Qwen browser demo.">
-<title>DeepSeek V4.1 Flash | Puppy50 AI</title>
+<meta name="theme-color" content="#0b1320">
+<meta name="description" content="Run LiquidAI LFM2.5-1.2B Instruct locally in your browser with WebAssembly.">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>LFM2.5-1.2B Local Chat | Puppy50 AI Lab</title>
 <style>
-:root{color-scheme:dark;--bg:#0b1020;--card:#151d32;--edge:#303c5b;--text:#edf2ff;--muted:#b6c1dc;--blue:#677df6;--blue2:#384a93}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#1d2c50 0,transparent 38%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-main{max-width:760px;margin:0 auto;padding:28px 18px 48px}header{display:flex;align-items:center;gap:14px;margin:8px 0 24px}.logo{width:52px;height:52px;border-radius:16px;background:linear-gradient(145deg,#7a8fff,#4655c5);display:grid;place-items:center;font-weight:800;font-size:17px;letter-spacing:-1px}h1{font-size:clamp(24px,6vw,34px);line-height:1.15;margin:0}header p{margin:5px 0 0;color:var(--muted);font-size:14px}.card{background:color-mix(in srgb,var(--card) 95%,transparent);border:1px solid var(--edge);border-radius:20px;padding:20px;margin:16px 0;box-shadow:0 12px 35px #0002}.eyebrow{text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:750;color:#b5c0ff}.badge{display:inline-block;padding:5px 9px;border-radius:99px;background:#283462;color:#d8ddff;font-size:12px;font-weight:700}h2{font-size:20px;margin:10px 0 7px}p{margin:9px 0;color:#d1d9eb}.muted,small{color:var(--muted)}small{display:block;font-size:13px;line-height:1.55;margin-top:12px}a{color:#c4ccff}.button{display:flex;justify-content:center;align-items:center;min-height:50px;padding:12px 18px;border-radius:13px;background:var(--blue);color:#fff;text-decoration:none;font-weight:750;margin-top:16px}.button.secondary{background:var(--blue2)}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin-top:16px}.fact{padding:11px 12px;border:1px solid #303b56;border-radius:12px;background:#10172a}.fact strong{display:block;font-size:14px}.fact span{font-size:12px;color:var(--muted)}details{margin-top:13px;padding-top:12px;border-top:1px solid #303b56}summary{cursor:pointer;font-weight:650}footer{padding:4px 4px 0;color:var(--muted);font-size:12px}footer a{margin-right:12px}
+:root{color-scheme:dark;--bg:#09111d;--panel:#101d2b;--panel2:#142538;--line:#294154;--text:#edf6f7;--muted:#a8bac4;--mint:#73e0bd;--mintdark:#1d7865;--warn:#f6cd79;--bad:#ff9c9c}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% -8%,#1c4a4a 0,transparent 36%),var(--bg);color:var(--text);font:16px/1.52 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;align-items:center;gap:13px;margin:5px 0 20px}.mark{width:50px;height:50px;border-radius:15px;background:linear-gradient(140deg,#8cf2d3,#36a98c);display:grid;place-items:center;color:#071910;font-size:15px;font-weight:900;letter-spacing:-1px}h1{font-size:clamp(23px,5.5vw,34px);line-height:1.12;margin:0;letter-spacing:-.025em}header p{margin:5px 0 0;color:var(--muted);font-size:14px}.nav{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}.nav a,.pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;padding:7px 11px;color:#c7d9df;text-decoration:none;font-size:12px;font-weight:650}.hero,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#132538f2,#0f1a27f5);border-radius:20px;padding:20px;margin:14px 0;box-shadow:0 12px 30px #0003}.hero{border-color:#32615f}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:800;color:var(--mint)}h2{font-size:20px;margin:6px 0 8px}h3{font-size:15px;margin:0 0 6px}p{margin:8px 0;color:#d2e1e5}.muted,small{color:var(--muted)}small{display:block;font-size:12px;line-height:1.55;margin-top:9px}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:15px}.fact{border:1px solid var(--line);background:#0b1622;border-radius:12px;padding:11px}.fact strong{display:block;font-size:13px}.fact span{font-size:11px;color:var(--muted)}.alert{border-left:3px solid var(--warn);padding:10px 12px;background:#332b1b80;border-radius:7px;color:#f5e5bd;font-size:13px;margin:14px 0}.success{color:var(--mint)}label{display:block;font-size:13px;font-weight:700;margin:10px 0 6px}select,textarea,button{font:inherit}select,textarea{width:100%;color:var(--text);background:#091521;border:1px solid #35536a;border-radius:11px;padding:12px}select{min-height:46px}button{border:0;border-radius:12px;padding:12px 16px;background:var(--mint);color:#071910;font-weight:800;cursor:pointer;min-height:46px}button:disabled{opacity:.48;cursor:not-allowed}.button-row{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}.button-row button{flex:1}.secondary{background:#22384b;color:var(--text);border:1px solid #385269}.danger{background:#4b2930;color:#ffe5e5;border:1px solid #75424c}.status{min-height:23px;font-size:13px;color:#d6e5e9;overflow-wrap:anywhere;margin:12px 0 6px}progress{width:100%;height:9px;accent-color:var(--mint)}#messages{display:flex;flex-direction:column;gap:10px;min-height:145px;max-height:50vh;overflow:auto;padding:4px 2px}.msg{max-width:94%;white-space:pre-wrap;overflow-wrap:anywhere;padding:11px 13px;border:1px solid #294154;border-radius:14px;background:#142537}.msg.user{align-self:flex-end;background:#16493f;border-color:#2d7564}.msg .who{font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mint);margin-bottom:3px}.msg.user .who{color:#c0f0e2}.chat-input{display:grid;gap:9px;margin-top:12px}textarea{min-height:82px;max-height:220px;resize:vertical}details{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}summary{cursor:pointer;font-weight:700;font-size:13px}a{color:#9cebd1}footer{padding:8px 4px;color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;gap:14px}footer a{color:#b8dcd4}@media(max-width:640px){main{padding:17px 12px 30px}header{align-items:flex-start;flex-wrap:wrap}.nav{margin-left:0;width:100%}.hero,.panel{padding:16px;border-radius:16px}.facts{grid-template-columns:1fr 1fr}.button-row button{flex-basis:100%}#messages{max-height:45vh}}
 </style>
 </head>
 <body>
 <main>
-<header><div class="logo" aria-hidden="true">DS</div><div><h1>DeepSeek V4.1 Flash</h1><p>Your Puppy50 model launcher</p></div></header>
-<section class="card">
-<span class="badge">Hosted chat · no ChatGPT usage</span>
-<h2>Chat with DeepSeek</h2>
-<p>Open DeepSeek’s official chat. DeepSeek’s API changelog says its web and app models were updated to <strong>V4.1-Flash-1017</strong>. The conversation runs on DeepSeek’s service, not on this iPhone or GitHub Pages.</p>
-<a class="button" href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">Open DeepSeek chat</a>
-<small>DeepSeek controls sign-in, availability, usage limits, privacy terms, and any service changes. This page sends no prompts or credentials. Avoid entering information you would not want processed by DeepSeek.</small>
-<div class="facts">
-<div class="fact"><strong>MIT model license</strong><span>See the official model repository</span></div>
-<div class="fact"><strong>552B backbone</strong><span>8B active for prefill; 16B for decode</span></div>
-<div class="fact"><strong>About 510 GB</strong><span>Official model weights; too large for iPhone local use</span></div>
-</div>
-<details><summary>Why isn’t it running locally here?</summary><p>GitHub Pages serves static files and does not provide model inference hardware. DeepSeek V4.1 Flash’s official model repository is roughly 510 GB, far beyond an iPhone 13’s storage and memory budget. A local build would need a very large multi-GPU server. This page links to DeepSeek’s hosted chat instead of pretending the model runs on your phone.</p></details>
-<details><summary>Can I connect this page to the API?</summary><p>The API model name is <code>deepseek-flash</code>. API access is billed separately. A public page must not contain an API key; a secure API connection needs a private backend and server-side key storage. This launcher does not call the paid API.</p></details>
+<header>
+  <div class="mark" aria-hidden="true">LFM</div>
+  <div><h1>LFM2.5-1.2B Instruct</h1><p>Private, on-device chat in your browser · Puppy50 AI Lab</p></div>
+  <nav class="nav" aria-label="Other model options">
+    <a href="./deepseek.html">DeepSeek hosted</a>
+    <a href="./qwen.html">Local Qwen</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="eyebrow">Local inference · no ChatGPT or paid API</div>
+  <h2>Use LFM2.5 on this device</h2>
+  <p>The model runs in this browser using WebAssembly/WebGPU. Your prompts stay in the browser; model weights and the inference runtime are downloaded from their public hosts when you choose to load it.</p>
+  <div class="facts">
+    <div class="fact"><strong>1.2B parameters</strong><span>LiquidAI instruction-tuned model</span></div>
+    <div class="fact"><strong>696 MB · Q4_0</strong><span>Smaller 4-bit file; selected by default</span></div>
+    <div class="fact"><strong>731 MB · Q4_K_M</strong><span>Alternate 4-bit quantization</span></div>
+    <div class="fact"><strong>Local generation</strong><span>No inference API or ChatGPT tokens</span></div>
+  </div>
+  <div class="alert"><strong>iPhone warning:</strong> iPhone Safari has not been verified for this 1.2B model. The download is large and the browser may close the tab if it runs out of memory. Use Wi-Fi, keep this page open in the foreground, and close other tabs before trying. A laptop browser is the safer first test.</div>
 </section>
-<section class="card">
-<span class="eyebrow">On-device alternative</span>
-<h2>Experimental local Qwen demo</h2>
-<p class="muted">The previous browser model stays available separately. It downloads model files and attempts inference in your browser. iPhone Safari may close the page if memory is insufficient.</p>
-<a class="button secondary" href="./qwen.html">Open the local Qwen demo</a>
-<small>This is an experimental browser demo. It is not connected to GitHub or Puppy50’s research workflows, and it may not work reliably on iPhone.</small>
+
+<section class="panel" aria-labelledby="setup-title">
+  <div class="eyebrow">Step 1</div>
+  <h2 id="setup-title">Load the model</h2>
+  <label for="quant">Model file</label>
+  <select id="quant">
+    <option value="LFM2.5-1.2B-Instruct-Q4_0.gguf">Q4_0 · 696 MB · lower download size</option>
+    <option value="LFM2.5-1.2B-Instruct-Q4_K_M.gguf">Q4_K_M · 731 MB · alternate quantization</option>
+  </select>
+  <div class="button-row">
+    <button id="load">Load LFM2.5 on this device</button>
+    <button id="unload" class="secondary" disabled>Unload model</button>
+  </div>
+  <p id="status" class="status" role="status" aria-live="polite">Ready. Choose a file and load when you have Wi-Fi and enough free memory.</p>
+  <progress id="progress" max="100" value="0" hidden aria-label="Model download progress"></progress>
+  <small id="progress-note">First load downloads the selected GGUF file from Hugging Face and Wllama's pinned WebAssembly runtime from jsDelivr. It may take several minutes. Inference begins only after loading finishes.</small>
 </section>
+
+<section class="panel" aria-labelledby="chat-title">
+  <div class="eyebrow">Step 2</div>
+  <h2 id="chat-title">Chat with LFM2.5</h2>
+  <div id="messages" aria-live="polite"><p id="welcome" class="muted">Load the model to begin. The chat is held in page memory and clears when you reload.</p></div>
+  <div class="chat-input">
+    <label for="prompt">Your message</label>
+    <textarea id="prompt" maxlength="2000" placeholder="Ask a question…" disabled></textarea>
+    <div class="button-row">
+      <button id="send" disabled>Send message</button>
+      <button id="stop" class="danger" disabled>Stop generation</button>
+      <button id="clear" class="secondary" disabled>Clear chat</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="eyebrow">Transparency</div>
+  <h2>What this page does and does not do</h2>
+  <p>Chat generation happens locally after the model loads. This page does not send your prompt to DeepSeek, ChatGPT, or an inference API, and it does not store chat history. The public model weights are provided by LiquidAI's Hugging Face repository.</p>
+  <details><summary>License and model sources</summary>
+    <p>The GGUF model repository lists the <strong>LFM 1.0 license</strong> (not MIT). Read the terms before redistributing or adapting the weights. This site downloads the original public files and does not copy the 696–731 MB model into GitHub Pages.</p>
+    <p><a href="https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF" target="_blank" rel="noopener noreferrer">Official LFM2.5 GGUF model</a> · <a href="https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Model license</a> · <a href="https://github.com/ngxson/wllama" target="_blank" rel="noopener noreferrer">Wllama browser runtime</a></p>
+  </details>
+  <details><summary>Why can it still fail on iPhone?</summary>
+    <p>The model file is only part of the memory requirement. Safari also needs working memory for WebAssembly, the context cache, and browser rendering. A 696 MB file does not mean the app needs only 696 MB of RAM. If Safari closes the tab or model loading fails, try again on a laptop; that does not mean the model is broken.</p>
+  </details>
+  <details><summary>Other Puppy50 model options</summary>
+    <p><a href="./deepseek.html">Open DeepSeek's hosted chat launcher</a> · <a href="./qwen.html">Open the experimental local Qwen demo</a>.</p>
+  </details>
+</section>
+
 <footer>
-<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017" target="_blank" rel="noopener noreferrer">Official model card</a>
-<a href="https://api-docs.deepseek.com/updates/" target="_blank" rel="noopener noreferrer">DeepSeek API changelog</a>
-<a href="https://api-docs.deepseek.com/quick_start/pricing/" target="_blank" rel="noopener noreferrer">API pricing</a>
+  <span>Runtime: Wllama 3.13.0 · Browser-side inference</span>
+  <a href="https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF" target="_blank" rel="noopener noreferrer">Model details</a>
+  <a href="https://github.com/74127418528426leo-del/Test">Puppy50 repository</a>
 </footer>
 </main>
+
+<script type="module">
+const MODEL_REPO = 'LiquidAI/LFM2.5-1.2B-Instruct-GGUF';
+const WLLAMA_VERSION = '3.13.0';
+const $ = id => document.getElementById(id);
+const loadButton = $('load');
+const unloadButton = $('unload');
+const sendButton = $('send');
+const stopButton = $('stop');
+const clearButton = $('clear');
+const promptInput = $('prompt');
+const quantSelect = $('quant');
+const status = $('status');
+const progress = $('progress');
+const messagesBox = $('messages');
+let runtime = null;
+let history = [];
+let loading = false;
+let generating = false;
+let abortController = null;
+
+function setStatus(text, kind) {
+  status.textContent = text;
+  status.className = 'status' + (kind === 'error' ? ' error' : kind === 'success' ? ' success' : '');
+  status.style.color = kind === 'error' ? 'var(--bad)' : kind === 'success' ? 'var(--mint)' : '';
+}
+function updateControls() {
+  loadButton.disabled = loading || generating || !!runtime;
+  quantSelect.disabled = loading || generating || !!runtime;
+  unloadButton.disabled = loading || generating || !runtime;
+  promptInput.disabled = !runtime || loading || generating;
+  sendButton.disabled = !runtime || loading || generating;
+  stopButton.disabled = !generating;
+  clearButton.disabled = !runtime || loading || generating;
+}
+function addMessage(role, text) {
+  const welcome = $('welcome');
+  if (welcome) welcome.remove();
+  const item = document.createElement('article');
+  item.className = 'msg' + (role === 'user' ? ' user' : '');
+  const label = document.createElement('div');
+  label.className = 'who';
+  label.textContent = role === 'user' ? 'YOU' : 'LFM2.5';
+  const body = document.createElement('div');
+  body.textContent = text;
+  item.append(label, body);
+  messagesBox.append(item);
+  messagesBox.scrollTop = messagesBox.scrollHeight;
+  return body;
+}
+function modelLabel(file) {
+  return file.indexOf('Q4_K_M') >= 0 ? 'Q4_K_M' : 'Q4_0';
+}
+loadButton.addEventListener('click', async () => {
+  if (loading || runtime) return;
+  if (!window.isSecureContext || !('WebAssembly' in window)) {
+    setStatus('This browser cannot run the local WebAssembly model. Open the HTTPS site in a current browser.', 'error');
+    return;
+  }
+  loading = true;
+  progress.hidden = false;
+  progress.value = 0;
+  setStatus('Loading the browser runtime…');
+  updateControls();
+  let candidate = null;
+  try {
+    const base = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@' + WLLAMA_VERSION + '/esm/';
+    const pair = await Promise.all([
+      import(base + 'index.js'),
+      import(base + 'wasm-from-cdn.js')
+    ]);
+    candidate = new pair[0].Wllama(pair[1].default, {
+      parallelDownloads: 1,
+      suppressNativeLog: true
+    });
+    candidate.setCompat('default');
+    const file = quantSelect.value;
+    setStatus('Downloading ' + modelLabel(file) + ' model (first download: about ' + (file.indexOf('Q4_K_M') >= 0 ? '731' : '696') + ' MB)…');
+    await candidate.loadModelFromHF(
+      { repo: MODEL_REPO, file: file },
+      {
+        n_ctx: 1024,
+        n_batch: 64,
+        n_threads: 1,
+        n_parallel: 1,
+        progressCallback: ({ loaded, total }) => {
+          if (total > 0) {
+            const pct = Math.min(100, Math.round((loaded / total) * 100));
+            progress.value = pct;
+            setStatus('Downloading model… ' + pct + '% (' + Math.round(loaded / 1048576) + ' / ' + Math.round(total / 1048576) + ' MB)');
+          } else {
+            setStatus('Downloading model… ' + Math.round(loaded / 1048576) + ' MB received');
+          }
+        }
+      }
+    );
+    runtime = candidate;
+    candidate = null;
+    progress.hidden = true;
+    progress.value = 100;
+    setStatus('LFM2.5 ' + modelLabel(file) + ' is loaded in this browser. Prompts stay on this device.', 'success');
+    addMessage('assistant', 'Model loaded. Ask me something; I will answer from my local weights.');
+  } catch (error) {
+    if (candidate) {
+      try { await candidate.exit(); } catch (_) {}
+    }
+    progress.hidden = true;
+    setStatus('Could not load the model: ' + (error && error.message ? error.message : String(error)) + '. Check Wi-Fi and browser memory, then retry or use a laptop.', 'error');
+  } finally {
+    loading = false;
+    updateControls();
+  }
+});
+unloadButton.addEventListener('click', async () => {
+  if (!runtime || generating || loading) return;
+  try { await runtime.exit(); } catch (_) {}
+  runtime = null;
+  history = [];
+  messagesBox.replaceChildren();
+  const welcome = document.createElement('p');
+  welcome.id = 'welcome';
+  welcome.className = 'muted';
+  welcome.textContent = 'Model unloaded. Load again to start a new session.';
+  messagesBox.append(welcome);
+  progress.value = 0;
+  setStatus('Model unloaded from this page.', 'success');
+  updateControls();
+});
+clearButton.addEventListener('click', () => {
+  history = [];
+  messagesBox.replaceChildren();
+  addMessage('assistant', 'Conversation cleared. The model remains loaded.');
+  setStatus('Conversation cleared.', 'success');
+});
+stopButton.addEventListener('click', () => {
+  if (abortController) abortController.abort();
+});
+async function sendMessage() {
+  const question = promptInput.value.trim();
+  if (!question || !runtime || generating) return;
+  promptInput.value = '';
+  addMessage('user', question);
+  const answer = addMessage('assistant', 'Thinking…');
+  const prior = history.slice(-6);
+  const messages = [
+    { role: 'system', content: 'You are LFM2.5 running locally in a browser. Be helpful and concise. Say when you are uncertain. You cannot access live websites or files unless the user includes their contents.' },
+    ...prior,
+    { role: 'user', content: question }
+  ];
+  let result = '';
+  generating = true;
+  abortController = new AbortController();
+  setStatus('Generating locally on this device…');
+  updateControls();
+  try {
+    const stream = await runtime.createChatCompletion({
+      messages: messages,
+      stream: true,
+      max_tokens: 192,
+      temperature: 0.3,
+      top_p: 0.9,
+      abortSignal: abortController.signal
+    });
+    for await (const chunk of stream) {
+      const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content;
+      if (delta) {
+        result += delta;
+        answer.textContent = result;
+        messagesBox.scrollTop = messagesBox.scrollHeight;
+      }
+    }
+    if (!result.trim() && !abortController.signal.aborted) throw new Error('The model returned an empty response.');
+    if (result.trim()) history = [...prior, { role: 'user', content: question }, { role: 'assistant', content: result }].slice(-6);
+    setStatus(abortController.signal.aborted ? 'Generation stopped. Partial text remains in the conversation.' : 'Ready. Generation ran locally.', 'success');
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      setStatus('Generation stopped.', 'success');
+      if (!result.trim()) answer.textContent = 'Stopped.';
+    } else {
+      answer.textContent = 'Generation error: ' + (error && error.message ? error.message : String(error));
+      setStatus('Generation failed. Try a shorter prompt or reload the model.', 'error');
+    }
+  } finally {
+    abortController = null;
+    generating = false;
+    updateControls();
+  }
+}
+sendButton.addEventListener('click', sendMessage);
+promptInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage();
+  }
+});
+updateControls();
+</script>
 </body>
 </html>
