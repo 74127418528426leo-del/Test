@@ -301,7 +301,7 @@ async function sendMessage() {
   const answer = addMessage('assistant', 'Thinking…');
   const prior = history.slice(-6);
   const messages = [
-    { role: 'system', content: 'You are LFM2.5 running locally in a browser. Be helpful and concise. Say when you are uncertain. You cannot access live websites or files unless the user includes their contents.' },
+    { role: 'system', content: 'You are LFM2.5. Answer clearly and concisely.' },
     ...prior,
     { role: 'user', content: question }
   ];
@@ -311,22 +311,21 @@ async function sendMessage() {
   setStatus('Generating locally on this device…');
   updateControls();
   try {
-    const stream = await runtime.createChatCompletion({
-      messages: messages,
+    await runtime.createChatCompletion({
+      messages,
       stream: true,
       max_tokens: 192,
       temperature: 0.3,
       top_p: 0.9,
-      abortSignal: abortController.signal
-    });
-    for await (const chunk of stream) {
-      const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content;
-      if (delta) {
+      abortSignal: abortController.signal,
+      onData(chunk) {
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (!delta) return;
         result += delta;
         answer.textContent = result;
         messagesBox.scrollTop = messagesBox.scrollHeight;
       }
-    }
+    });
     if (!result.trim() && !abortController.signal.aborted) throw new Error('The model returned an empty response.');
     if (result.trim()) history = [...prior, { role: 'user', content: question }, { role: 'assistant', content: result }].slice(-6);
     setStatus(abortController.signal.aborted ? 'Generation stopped. Partial text remains in the conversation.' : 'Ready. Generation ran locally.', 'success');
