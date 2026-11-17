@@ -17,7 +17,7 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
 <main>
 <header>
   <div class="mark" aria-hidden="true">LFM</div>
-  <div><h1>LFM2.5-1.2B Instruct</h1><p>Private, on-device chat in your browser · Puppy50 AI Lab</p></div>
+  <div><h1>LFM2.5-1.2B Instruct</h1><p>On-device browser chat · Puppy50 AI Lab</p></div>
   <nav class="nav" aria-label="Other model options">
     <a href="./deepseek.html">DeepSeek hosted</a>
     <a href="./qwen.html">Local Qwen</a>
@@ -27,7 +27,7 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
 <section class="hero">
   <div class="eyebrow">Local inference · no ChatGPT or paid API</div>
   <h2>Use LFM2.5 on this device</h2>
-  <p>The model runs in this browser using WebAssembly/WebGPU. Your prompts stay in the browser; model weights and the inference runtime are downloaded from their public hosts when you choose to load it.</p>
+  <p>The model runs in this browser using WebAssembly/WebGPU. This page does not submit prompts to an inference API. Model weights and the pinned Wllama runtime are downloaded from public hosts when you choose to load it.</p>
   <div class="facts">
     <div class="fact"><strong>1.2B parameters</strong><span>LiquidAI instruction-tuned model</span></div>
     <div class="fact"><strong>696 MB · Q4_0</strong><span>Smaller 4-bit file; selected by default</span></div>
@@ -48,7 +48,7 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
   <label for="compute-mode">Inference mode</label>
   <select id="compute-mode">
     <option value="auto">Automatic · use WebGPU if available</option>
-    <option value="cpu">CPU only · slower; try if GPU loading fails</option>
+    <option value="cpu">CPU only · may be very slow; try if GPU loading fails</option>
   </select>
   <div class="button-row">
     <button id="load">Load LFM2.5 on this device</button>
@@ -92,7 +92,7 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
 <section class="panel">
   <div class="eyebrow">Transparency</div>
   <h2>What this page does and does not do</h2>
-  <p>Chat generation happens locally after the model loads. This page does not send your prompt to DeepSeek, ChatGPT, or an inference API, and it does not store chat history. The public model weights are provided by LiquidAI's Hugging Face repository.</p>
+  <p>Chat generation happens locally after the model loads. This page's code does not send your prompt to DeepSeek, ChatGPT, or an inference API, and it does not store chat history. Wllama runtime code is fetched from jsDelivr and runs in your browser; model weights come from LiquidAI's Hugging Face repository. Use prompts you are comfortable processing in this browser.</p>
   <details><summary>License and model sources</summary>
     <p>The GGUF model repository lists the <strong>LFM 1.0 license</strong> (not MIT). Read the terms before redistributing or adapting the weights. This site downloads the original public files and does not copy the 696–731 MB model into GitHub Pages.</p>
     <p><a href="https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF" target="_blank" rel="noopener noreferrer">Official LFM2.5 GGUF model</a> · <a href="https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Model license</a> · <a href="https://github.com/ngxson/wllama" target="_blank" rel="noopener noreferrer">Wllama browser runtime</a></p>
@@ -192,7 +192,6 @@ async function createRuntime() {
   return instance;
 }
 quantSelect.addEventListener('change', updateModelDownloadLink);
-computeMode.addEventListener('change', () => {});
 localFile.addEventListener('change', () => {
   const file = localFile.files && localFile.files[0];
   localStatus.textContent = file ? 'Selected: ' + file.name + ' (' + Math.round(file.size / 1048576) + ' MB). This file stays in your browser and is not uploaded.' : 'Select a matching GGUF file. The selected file is read locally and is not uploaded.';
