@@ -1,0 +1,99 @@
+name: Publish verified Puppy50 staged experimental preview
+on:
+  push:
+    branches: [puppy50-eight-second-bios-20261117]
+    paths: ['.github/workflows/puppy50-eight-release.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: puppy50-fast-bios-lz4-preview-20261117
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require original tests to have passed
+        run: |
+          set -euo pipefail
+          gh run view 44202057546 --repo "$GITHUB_REPOSITORY" --json status,conclusion | jq -e '.status=="completed" and .conclusion=="success"'
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo 'Release already exists' >&2; exit 1; fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-eight-focus-candidate-experimental
+          run-id: 44202057546
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: input/candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-eight-focus-evidence
+          run-id: 44202057546
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: evidence
+      - name: Verify image, prepare files, and inspect evidence
+        run: |
+          set -euo pipefail
+          EXPECTED=$(awk '$2=="out/candidate.iso"{print $1}' evidence/reports/iso-sha256.txt)
+          test "$EXPECTED" = b035187b2c6ad8e1686b10889d7d67144d16be22b5ed734cc9da613b5a14db32
+          echo "$EXPECTED  input/candidate/candidate.iso" | sha256sum -c -
+          mkdir -p assets project
+          mv input/candidate/candidate.iso assets/Puppy50_BIOS_Fast_EXPERIMENTAL.iso
+          cat >assets/README.md <<'EOF'
+          # Puppy50 fast BIOS VM preview
+          
+          This experimental bootable live ISO automatically opens Firefox ESR. It is derived from the [staged fast preview](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-staged-fast-preview-20261116), which links the package sources. Use the ISO as a virtual CD in a BIOS virtual machine with 3 GiB or more of memory. Keep physical boot media connected. The BIOS menu advances after 0.1 seconds. The UEFI menu allows more time to select recovery.
+          
+          In two standard BIOS VM boots, Firefox first displayed the home page at 7.79 and 8.05 seconds (mean 7.92 s). The previous public ISO averaged 10.78 s on the same runner. The JavaScript test responded at 11.29 and 11.53 s, and RAM readiness was confirmed at 17.80 and 17.54 s. UEFI took 13.60 s to display Firefox and Cirrus fallback took 11.32 s. This preview uses a shorter BIOS menu, a Zstandard-compressed initramfs, and an LZ4-compressed root. [Matched benchmark](https://github.com/74127418528426leo-del/Test/actions/runs/44202057546).
+          
+          The matched tests used cold QEMU/KVM guests on one runner. Firefox displayed the home page, responded to JavaScript, and loaded a local page after verified RAM migration and virtual media removal. Physical computer startup, Wi-Fi, and complex web workloads require separate measurements. Full per-boot results, checksums, build instructions and test evidence are attached.
+          EOF
+          cp -a fast_research/*.py project/
+          cp .github/workflows/puppy50-eight-lz4-focus.yml project/
+          (cd project && zip -qr ../assets/PROJECT_SOURCES.zip .)
+          cp evidence/reports/comparison.json assets/TEST_RESULTS.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('assets/TEST_RESULTS.json').read_text())
+          assert len(d['runs'])==6
+          assert [d['runs'][n]['first_home_seen_seconds'] for n in ('cand1','cand2')]==[7.79,8.05]
+          assert d['candidate_mean_first_frame']==7.92
+          for name,r in d['runs'].items():
+              assert r['first_home_seen_seconds'] is not None and r['early_js_response_seconds'] is not None,name
+              assert r['post_eject_browser_http200_confirmed'],name
+              if name.startswith('cand'):assert r['staged_ram_ready_seconds'] is not None,name
+          PY
+          zip -qr assets/TEST_EVIDENCE.zip evidence
+          (cd assets && sha256sum Puppy50_BIOS_Fast_EXPERIMENTAL.iso >SHA256SUMS)
+          (cd assets && zip -0 -q Puppy50_BIOS_Fast_EXPERIMENTAL.zip Puppy50_BIOS_Fast_EXPERIMENTAL.iso README.md SHA256SUMS)
+          (cd assets && sha256sum Puppy50_BIOS_Fast_EXPERIMENTAL.iso Puppy50_BIOS_Fast_EXPERIMENTAL.zip README.md PROJECT_SOURCES.zip TEST_RESULTS.json TEST_EVIDENCE.zip >ALL_ASSETS_SHA256SUMS.txt)
+      - name: Upload draft and verify asset digests before publication
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --title 'Puppy50 browser live — fast BIOS VM preview' --notes-file assets/README.md
+          for file in assets/*; do
+            uploaded=0
+            for attempt in 1 2 3; do
+              if gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY" --clobber; then uploaded=1; break; fi
+              sleep $((attempt * 5))
+            done
+            test "$uploaded" = 1
+          done
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" >release-list.json
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          matches=[r for r in json.loads(Path('release-list.json').read_text()) if r['tag_name']==os.environ['TAG']]
+          assert len(matches)==1;release=matches[0];assert release['draft'] and release['prerelease']
+          remote={a['name']:a for a in release['assets']};local={p.name:p for p in Path('assets').iterdir() if p.is_file()}
+          assert set(remote)==set(local),(remote.keys(),local.keys())
+          for name,path in local.items():
+              with path.open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
+              assert remote[name]['state']=='uploaded' and remote[name]['size']==path.stat().st_size
+              assert remote[name]['digest']=='sha256:'+digest,name
+          print('Every public-release asset verified against server digest')
+          PY
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease | jq -e '.isDraft==false and .isPrerelease==true'
