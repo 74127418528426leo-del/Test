@@ -1,54 +1,46 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#101528"><title>Qwen on your device</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101528">
+<meta name="description" content="Open DeepSeek V4.1 Flash hosted chat or try the experimental local Qwen browser demo.">
+<title>DeepSeek V4.1 Flash | Puppy50 AI</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#0c1020;color:#ecf1ff;font:16px system-ui,-apple-system,sans-serif}main{max-width:760px;margin:auto;padding:24px 18px 32px}header{display:flex;align-items:center;gap:12px}.logo{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;background:#7966ed;font-weight:800;font-size:25px}h1{font-size:23px;margin:0}header p{margin:3px 0;color:#a8b3d2;font-size:13px}.panel{margin-top:20px;background:#171e34;border:1px solid #2f3957;border-radius:18px;padding:18px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.5;color:#c1cbe1}select,textarea,button{font:inherit}select,textarea{background:#0c1225;color:#fff;border:1px solid #465273;border-radius:12px;padding:12px;width:100%}button{border:0;border-radius:12px;background:#8876ff;color:#fff;font-weight:700;padding:12px 18px;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#29334e}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.status{font-size:14px;min-height:22px;overflow-wrap:anywhere}progress{width:100%;height:9px}#messages{min-height:180px;max-height:48vh;overflow:auto;display:flex;flex-direction:column;gap:10px}.msg{max-width:92%;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px 14px;border-radius:15px;line-height:1.45;background:#27334c}.user{align-self:flex-end;background:#5548ac}.label{font-size:12px;opacity:.75;margin-bottom:4px}.input{margin-top:14px}textarea{resize:vertical;min-height:76px}small{display:block;color:#a8b3d2;line-height:1.5;margin-top:12px}a{color:#b9afff}
+:root{color-scheme:dark;--bg:#0b1020;--card:#151d32;--edge:#303c5b;--text:#edf2ff;--muted:#b6c1dc;--blue:#677df6;--blue2:#384a93}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#1d2c50 0,transparent 38%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:28px 18px 48px}header{display:flex;align-items:center;gap:14px;margin:8px 0 24px}.logo{width:52px;height:52px;border-radius:16px;background:linear-gradient(145deg,#7a8fff,#4655c5);display:grid;place-items:center;font-weight:800;font-size:17px;letter-spacing:-1px}h1{font-size:clamp(24px,6vw,34px);line-height:1.15;margin:0}header p{margin:5px 0 0;color:var(--muted);font-size:14px}.card{background:color-mix(in srgb,var(--card) 95%,transparent);border:1px solid var(--edge);border-radius:20px;padding:20px;margin:16px 0;box-shadow:0 12px 35px #0002}.eyebrow{text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:750;color:#b5c0ff}.badge{display:inline-block;padding:5px 9px;border-radius:99px;background:#283462;color:#d8ddff;font-size:12px;font-weight:700}h2{font-size:20px;margin:10px 0 7px}p{margin:9px 0;color:#d1d9eb}.muted,small{color:var(--muted)}small{display:block;font-size:13px;line-height:1.55;margin-top:12px}a{color:#c4ccff}.button{display:flex;justify-content:center;align-items:center;min-height:50px;padding:12px 18px;border-radius:13px;background:var(--blue);color:#fff;text-decoration:none;font-weight:750;margin-top:16px}.button.secondary{background:var(--blue2)}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin-top:16px}.fact{padding:11px 12px;border:1px solid #303b56;border-radius:12px;background:#10172a}.fact strong{display:block;font-size:14px}.fact span{font-size:12px;color:var(--muted)}details{margin-top:13px;padding-top:12px;border-top:1px solid #303b56}summary{cursor:pointer;font-weight:650}footer{padding:4px 4px 0;color:var(--muted);font-size:12px}footer a{margin-right:12px}
 </style>
 </head>
-<body><main>
-<header><div class="logo">Q</div><div><h1>Qwen on your device</h1><p>A local browser chat · experimental</p></div></header>
-<section class="panel"><h2>Start Qwen</h2><p>Download a small model and run it on this device. First load needs Wi-Fi, storage and a compatible browser. Keep this page open while loading.</p>
-<label for="model">Choose a model</label>
-<select id="model"><option value="Qwen3.5-0.8B-q4f16_1-MLC">Qwen 3.5 0.8B — Puppy50 model family</option><option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Qwen 2.5 0.5B — smaller fallback</option></select>
-<div class="row" style="margin-top:12px"><button id="load">Load model</button><button id="reset" class="secondary" disabled>Clear conversation</button></div>
-<p id="status" class="status" role="status" aria-live="polite">Ready to check your device.</p><progress id="progress" max="1" value="0" hidden></progress>
-<small>The 0.8B model may exceed iPhone Safari’s memory limit. If the page closes, reopen it and choose the smaller model. This chat cannot access your GitHub files or run Puppy50 experiments.</small></section>
-<section class="panel"><h2>Conversation</h2><div id="messages" aria-live="polite"><p id="welcome">Your conversation will appear here.</p></div>
-<div class="input"><label for="prompt">Message</label><textarea id="prompt" maxlength="4000" placeholder="Ask a question…" disabled></textarea><div class="row" style="margin-top:10px"><button id="send" disabled>Send</button></div></div>
-<small>Responses are generated on your device, not through ChatGPT. The page downloads code and model files from third-party hosts; browser cache can be cleared. AI may make mistakes. Chats disappear on reload.</small></section>
+<body>
+<main>
+<header><div class="logo" aria-hidden="true">DS</div><div><h1>DeepSeek V4.1 Flash</h1><p>Your Puppy50 model launcher</p></div></header>
+<section class="card">
+<span class="badge">Hosted chat · no ChatGPT usage</span>
+<h2>Chat with DeepSeek</h2>
+<p>Open DeepSeek’s official chat. DeepSeek’s API changelog says its web and app models were updated to <strong>V4.1-Flash-1017</strong>. The conversation runs on DeepSeek’s service, not on this iPhone or GitHub Pages.</p>
+<a class="button" href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">Open DeepSeek chat</a>
+<small>DeepSeek controls sign-in, availability, usage limits, privacy terms, and any service changes. This page sends no prompts or credentials. Avoid entering information you would not want processed by DeepSeek.</small>
+<div class="facts">
+<div class="fact"><strong>MIT model license</strong><span>See the official model repository</span></div>
+<div class="fact"><strong>552B backbone</strong><span>8B active for prefill; 16B for decode</span></div>
+<div class="fact"><strong>About 510 GB</strong><span>Official model weights; too large for iPhone local use</span></div>
+</div>
+<details><summary>Why isn’t it running locally here?</summary><p>GitHub Pages serves static files and does not provide model inference hardware. DeepSeek V4.1 Flash’s official model repository is roughly 510 GB, far beyond an iPhone 13’s storage and memory budget. A local build would need a very large multi-GPU server. This page links to DeepSeek’s hosted chat instead of pretending the model runs on your phone.</p></details>
+<details><summary>Can I connect this page to the API?</summary><p>The API model name is <code>deepseek-flash</code>. API access is billed separately. A public page must not contain an API key; a secure API connection needs a private backend and server-side key storage. This launcher does not call the paid API.</p></details>
+</section>
+<section class="card">
+<span class="eyebrow">On-device alternative</span>
+<h2>Experimental local Qwen demo</h2>
+<p class="muted">The previous browser model stays available separately. It downloads model files and attempts inference in your browser. iPhone Safari may close the page if memory is insufficient.</p>
+<a class="button secondary" href="./qwen.html">Open the local Qwen demo</a>
+<small>This is an experimental browser demo. It is not connected to GitHub or Puppy50’s research workflows, and it may not work reliably on iPhone.</small>
+</section>
+<footer>
+<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017" target="_blank" rel="noopener noreferrer">Official model card</a>
+<a href="https://api-docs.deepseek.com/updates/" target="_blank" rel="noopener noreferrer">DeepSeek API changelog</a>
+<a href="https://api-docs.deepseek.com/quick_start/pricing/" target="_blank" rel="noopener noreferrer">API pricing</a>
+</footer>
 </main>
-<script type="module">
-const $=id=>document.getElementById(id);
-const load=$('load'),send=$('send'),reset=$('reset'),input=$('prompt'),status=$('status'),progress=$('progress'),box=$('messages'),select=$('model');
-let engine=null,history=[],busy=false;
-function add(role,text){const welcome=$('welcome');if(welcome)welcome.remove();const node=document.createElement('div');node.className='msg '+(role==='user'?'user':'');const label=document.createElement('div');label.className='label';label.textContent=role==='user'?'You':'Qwen';const body=document.createElement('div');body.textContent=text;node.append(label,body);box.append(node);box.scrollTop=box.scrollHeight;return body}
-function setBusy(v){busy=v;load.disabled=v||!!engine;select.disabled=v||!!engine;send.disabled=v||!engine;reset.disabled=v||!engine;input.disabled=v||!engine}
-load.addEventListener('click',async()=>{
-  setBusy(true);progress.hidden=false;status.textContent='Checking browser and loading the AI runtime…';
-  try{
-    if(!navigator.gpu)throw Error('WebGPU is unavailable. Open this page in an up-to-date Safari and try again.');
-    const adapter=await navigator.gpu.requestAdapter();if(!adapter)throw Error('No compatible GPU is available in this browser.');
-    const {CreateMLCEngine}=await import('https://esm.run/@mlc-ai/web-llm@0.2.85');
-    const selected=select.value;
-    engine=await CreateMLCEngine(selected,{initProgressCallback:r=>{status.textContent=r.text||'Loading model…';if(Number.isFinite(r.progress))progress.value=r.progress;}},{context_window_size:1024});
-    status.textContent=selected+' is ready on this device.';progress.hidden=true;add('assistant','Hello! I am ready to chat.');
-  }catch(err){engine=null;progress.hidden=true;status.textContent='Could not load the model: '+(err?.message||String(err))+'. Try the smaller model, close other tabs, or restart Safari.'}
-  setBusy(false);
-});
-reset.addEventListener('click',()=>{history=[];box.replaceChildren();add('assistant','Conversation cleared.');});
-send.addEventListener('click',async()=>{
-  const question=input.value.trim();if(!question||busy||!engine)return;
-  input.value='';add('user',question);const answer=add('assistant','Thinking…');setBusy(true);status.textContent='Generating on your device…';
-  const prior=history.slice(-4);let result='';
-  try{
-    const stream=await engine.chat.completions.create({messages:[...prior,{role:'user',content:question}],stream:true,max_tokens:256,temperature:0.7,extra_body:{enable_thinking:false}});
-    for await(const chunk of stream){result+=chunk.choices?.[0]?.delta?.content||'';answer.textContent=result||'Thinking…';box.scrollTop=box.scrollHeight}
-    if(!result.trim())throw Error('The model returned an empty response.');
-    history=[...prior,{role:'user',content:question},{role:'assistant',content:result}];status.textContent='Ready.';
-  }catch(err){answer.textContent='Generation failed: '+(err?.message||String(err));status.textContent='Try a shorter question, or reload and choose the smaller model.'}
-  setBusy(false);
-});
-input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send.click()}});
-</script></body></html>
+</body>
+</html>
