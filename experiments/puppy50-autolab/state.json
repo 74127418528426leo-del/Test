@@ -641,6 +641,67 @@
       "run_id": "44053156184",
       "vm_diagnostics": {},
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-17T21:58:45.931186+00:00",
+      "candidate_id": "nice-10_zstd3_prefetch128",
+      "frames": {
+        "bios1": 11.32,
+        "bios2": 7.55,
+        "uefi1": 12.55,
+        "uefi2": 11.49
+      },
+      "iso_sha256": "dc9b050383df148d3815bad6d04684d731a6ed857277fc1ca52d397d19625016",
+      "matched_prefetch_control": {
+        "candidate_frame_seconds": {
+          "bios1": 11.32,
+          "bios2": 7.55,
+          "uefi1": 12.55,
+          "uefi2": 11.49
+        },
+        "candidate_iso_sha256": "dc9b050383df148d3815bad6d04684d731a6ed857277fc1ca52d397d19625016",
+        "candidate_prefetch_mib": 128,
+        "control_and_candidate_functional": true,
+        "control_frame_seconds": {
+          "bios1": 7.71,
+          "bios2": 6.82,
+          "uefi1": 12.43,
+          "uefi2": 14.76
+        },
+        "fixed_firefox_nice": -10,
+        "fixed_zstd_level": 3,
+        "interpretation": "Positive paired differences favor candidate in this one nonblinded, same-host sequential test; independent reproduction required.",
+        "matched_control_minus_candidate_seconds": {
+          "bios1": -3.61,
+          "bios2": -0.73,
+          "uefi1": -0.12,
+          "uefi2": 3.27
+        },
+        "mean_candidate_seconds": 10.728,
+        "mean_control_minus_candidate_seconds": -0.298,
+        "mean_control_seconds": 10.43,
+        "not_five_second_certification": true,
+        "not_randomized_across_hosts": true,
+        "reference_iso_sha256": "cc7371725560d90d7fd0433002d07600e423a1e515f88fa6f50d5afa3ec2cf6b",
+        "reference_prefetch_mib": 256,
+        "scope": "one host, alternating 4+4 genuine QEMU cold boots, two BIOS and two UEFI per condition"
+      },
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.48,
+        "bios2": 14.71,
+        "uefi1": 19.21,
+        "uefi2": 18.16
+      },
+      "reason": "not all four Firefox frames strictly below five seconds; observed 4/4 frames, worst 12.55s; 0 functional diagnostics; NOT a passing VM experiment",
+      "run_id": "44182972942",
+      "vm_diagnostics": {},
+      "vm_passed": false
     }
   ],
   "schema": 1,
