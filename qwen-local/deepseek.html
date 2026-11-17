@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101528">
+<meta name="description" content="Open DeepSeek V4.1 Flash hosted chat or try the experimental local Qwen browser demo.">
+<title>DeepSeek V4.1 Flash | Puppy50 AI</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--card:#151d32;--edge:#303c5b;--text:#edf2ff;--muted:#b6c1dc;--blue:#677df6;--blue2:#384a93}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#1d2c50 0,transparent 38%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:28px 18px 48px}header{display:flex;align-items:center;gap:14px;margin:8px 0 24px}.logo{width:52px;height:52px;border-radius:16px;background:linear-gradient(145deg,#7a8fff,#4655c5);display:grid;place-items:center;font-weight:800;font-size:17px;letter-spacing:-1px}h1{font-size:clamp(24px,6vw,34px);line-height:1.15;margin:0}header p{margin:5px 0 0;color:var(--muted);font-size:14px}.card{background:color-mix(in srgb,var(--card) 95%,transparent);border:1px solid var(--edge);border-radius:20px;padding:20px;margin:16px 0;box-shadow:0 12px 35px #0002}.eyebrow{text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:750;color:#b5c0ff}.badge{display:inline-block;padding:5px 9px;border-radius:99px;background:#283462;color:#d8ddff;font-size:12px;font-weight:700}h2{font-size:20px;margin:10px 0 7px}p{margin:9px 0;color:#d1d9eb}.muted,small{color:var(--muted)}small{display:block;font-size:13px;line-height:1.55;margin-top:12px}a{color:#c4ccff}.button{display:flex;justify-content:center;align-items:center;min-height:50px;padding:12px 18px;border-radius:13px;background:var(--blue);color:#fff;text-decoration:none;font-weight:750;margin-top:16px}.button.secondary{background:var(--blue2)}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin-top:16px}.fact{padding:11px 12px;border:1px solid #303b56;border-radius:12px;background:#10172a}.fact strong{display:block;font-size:14px}.fact span{font-size:12px;color:var(--muted)}details{margin-top:13px;padding-top:12px;border-top:1px solid #303b56}summary{cursor:pointer;font-weight:650}footer{padding:4px 4px 0;color:var(--muted);font-size:12px}footer a{margin-right:12px}
+</style>
+</head>
+<body>
+<main>
+<header><div class="logo" aria-hidden="true">DS</div><div><h1>DeepSeek V4.1 Flash</h1><p>Your Puppy50 model launcher</p></div></header>
+<section class="card">
+<span class="badge">Hosted chat · no ChatGPT usage</span>
+<h2>Chat with DeepSeek</h2>
+<p>Open DeepSeek’s official chat. DeepSeek’s API changelog says its web and app models were updated to <strong>V4.1-Flash-1017</strong>. The conversation runs on DeepSeek’s service, not on this iPhone or GitHub Pages.</p>
+<a class="button" href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">Open DeepSeek chat</a>
+<small>DeepSeek controls sign-in, availability, usage limits, privacy terms, and any service changes. This page sends no prompts or credentials. Avoid entering information you would not want processed by DeepSeek.</small>
+<div class="facts">
+<div class="fact"><strong>MIT model license</strong><span>See the official model repository</span></div>
+<div class="fact"><strong>552B backbone</strong><span>8B active for prefill; 16B for decode</span></div>
+<div class="fact"><strong>About 510 GB</strong><span>Official model weights; too large for iPhone local use</span></div>
+</div>
+<details><summary>Why isn’t it running locally here?</summary><p>GitHub Pages serves static files and does not provide model inference hardware. DeepSeek V4.1 Flash’s official model repository is roughly 510 GB, far beyond an iPhone 13’s storage and memory budget. A local build would need a very large multi-GPU server. This page links to DeepSeek’s hosted chat instead of pretending the model runs on your phone.</p></details>
+<details><summary>Can I connect this page to the API?</summary><p>The API model name is <code>deepseek-flash</code>. API access is billed separately. A public page must not contain an API key; a secure API connection needs a private backend and server-side key storage. This launcher does not call the paid API.</p></details>
+</section>
+<section class="card">
+<span class="eyebrow">On-device alternative</span>
+<h2>Experimental local Qwen demo</h2>
+<p class="muted">The previous browser model stays available separately. It downloads model files and attempts inference in your browser. iPhone Safari may close the page if memory is insufficient.</p>
+<a class="button secondary" href="./qwen.html">Open the local Qwen demo</a>
+<small>This is an experimental browser demo. It is not connected to GitHub or Puppy50’s research workflows, and it may not work reliably on iPhone.</small>
+</section>
+<footer>
+<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017" target="_blank" rel="noopener noreferrer">Official model card</a>
+<a href="https://api-docs.deepseek.com/updates/" target="_blank" rel="noopener noreferrer">DeepSeek API changelog</a>
+<a href="https://api-docs.deepseek.com/quick_start/pricing/" target="_blank" rel="noopener noreferrer">API pricing</a>
+</footer>
+</main>
+</body>
+</html>
