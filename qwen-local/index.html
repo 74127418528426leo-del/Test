@@ -150,6 +150,7 @@ const mobileRecovery = $('mobile-recovery');
 const allowMobileDownload = $('allow-mobile-download');
 const interruptedKey = 'puppy50-lfm-model-active';
 function setModelActive(active) {
+  if (!mobileApple) return;
   try {
     if (active) sessionStorage.setItem(interruptedKey, '1');
     else sessionStorage.removeItem(interruptedKey);
@@ -451,7 +452,7 @@ promptInput.addEventListener('keydown', event => {
     sendMessage();
   }
 });
-mobileRecovery.hidden = !(mobileApple || wasInterrupted());
+mobileRecovery.hidden = !mobileApple;
 if (!mobileRecovery.hidden) {
   $('welcome').textContent = 'For iPhone, open the model in PocketPal AI or select it from Files below. You can also opt in to an experimental browser download.';
   setStatus(wasInterrupted()
