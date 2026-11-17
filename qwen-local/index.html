@@ -10,7 +10,7 @@
 <style>
 :root{color-scheme:dark;--bg:#09111d;--panel:#101d2b;--panel2:#142538;--line:#294154;--text:#edf6f7;--muted:#a8bac4;--mint:#73e0bd;--mintdark:#1d7865;--warn:#f6cd79;--bad:#ff9c9c}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% -8%,#1c4a4a 0,transparent 36%),var(--bg);color:var(--text);font:16px/1.52 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;align-items:center;gap:13px;margin:5px 0 20px}.mark{width:50px;height:50px;border-radius:15px;background:linear-gradient(140deg,#8cf2d3,#36a98c);display:grid;place-items:center;color:#071910;font-size:15px;font-weight:900;letter-spacing:-1px}h1{font-size:clamp(23px,5.5vw,34px);line-height:1.12;margin:0;letter-spacing:-.025em}header p{margin:5px 0 0;color:var(--muted);font-size:14px}.nav{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}.nav a,.pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;padding:7px 11px;color:#c7d9df;text-decoration:none;font-size:12px;font-weight:650}.hero,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#132538f2,#0f1a27f5);border-radius:20px;padding:20px;margin:14px 0;box-shadow:0 12px 30px #0003}.hero{border-color:#32615f}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:800;color:var(--mint)}h2{font-size:20px;margin:6px 0 8px}h3{font-size:15px;margin:0 0 6px}p{margin:8px 0;color:#d2e1e5}.muted,small{color:var(--muted)}small{display:block;font-size:12px;line-height:1.55;margin-top:9px}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:15px}.fact{border:1px solid var(--line);background:#0b1622;border-radius:12px;padding:11px}.fact strong{display:block;font-size:13px}.fact span{font-size:11px;color:var(--muted)}.alert{border-left:3px solid var(--warn);padding:10px 12px;background:#332b1b80;border-radius:7px;color:#f5e5bd;font-size:13px;margin:14px 0}.success{color:var(--mint)}label{display:block;font-size:13px;font-weight:700;margin:10px 0 6px}select,textarea,button{font:inherit}select,textarea{width:100%;color:var(--text);background:#091521;border:1px solid #35536a;border-radius:11px;padding:12px}select{min-height:46px}button{border:0;border-radius:12px;padding:12px 16px;background:var(--mint);color:#071910;font-weight:800;cursor:pointer;min-height:46px}button:disabled{opacity:.48;cursor:not-allowed}.button-row{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}.button-row button{flex:1}.secondary{background:#22384b;color:var(--text);border:1px solid #385269}.danger{background:#4b2930;color:#ffe5e5;border:1px solid #75424c}.status{min-height:23px;font-size:13px;color:#d6e5e9;overflow-wrap:anywhere;margin:12px 0 6px}progress{width:100%;height:9px;accent-color:var(--mint)}#messages{display:flex;flex-direction:column;gap:10px;min-height:145px;max-height:50vh;overflow:auto;padding:4px 2px}.msg{max-width:94%;white-space:pre-wrap;overflow-wrap:anywhere;padding:11px 13px;border:1px solid #294154;border-radius:14px;background:#142537}.msg.user{align-self:flex-end;background:#16493f;border-color:#2d7564}.msg .who{font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mint);margin-bottom:3px}.msg.user .who{color:#c0f0e2}.chat-input{display:grid;gap:9px;margin-top:12px}textarea{min-height:82px;max-height:220px;resize:vertical}details{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}summary{cursor:pointer;font-weight:700;font-size:13px}a{color:#9cebd1}footer{padding:8px 4px;color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;gap:14px}footer a{color:#b8dcd4}@media(max-width:640px){main{padding:17px 12px 30px}header{align-items:flex-start;flex-wrap:wrap}.nav{margin-left:0;width:100%}.hero,.panel{padding:16px;border-radius:16px}.facts{grid-template-columns:1fr 1fr}.button-row button{flex-basis:100%}#messages{max-height:45vh}}
+main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;align-items:center;gap:13px;margin:5px 0 20px}.mark{width:50px;height:50px;border-radius:15px;background:linear-gradient(140deg,#8cf2d3,#36a98c);display:grid;place-items:center;color:#071910;font-size:15px;font-weight:900;letter-spacing:-1px}h1{font-size:clamp(23px,5.5vw,34px);line-height:1.12;margin:0;letter-spacing:-.025em}header p{margin:5px 0 0;color:var(--muted);font-size:14px}.nav{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}.nav a,.pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;padding:7px 11px;color:#c7d9df;text-decoration:none;font-size:12px;font-weight:650}.hero,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#132538f2,#0f1a27f5);border-radius:20px;padding:20px;margin:14px 0;box-shadow:0 12px 30px #0003}.hero{border-color:#32615f}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:800;color:var(--mint)}h2{font-size:20px;margin:6px 0 8px}h3{font-size:15px;margin:0 0 6px}p{margin:8px 0;color:#d2e1e5}.muted,small{color:var(--muted)}small{display:block;font-size:12px;line-height:1.55;margin-top:9px}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:15px}.fact{border:1px solid var(--line);background:#0b1622;border-radius:12px;padding:11px}.fact strong{display:block;font-size:13px}.fact span{font-size:11px;color:var(--muted)}.alert{border-left:3px solid var(--warn);padding:10px 12px;background:#332b1b80;border-radius:7px;color:#f5e5bd;font-size:13px;margin:14px 0}.success{color:var(--mint)}label{display:block;font-size:13px;font-weight:700;margin:10px 0 6px}select,textarea,button{font:inherit}select,textarea{width:100%;color:var(--text);background:#091521;border:1px solid #35536a;border-radius:11px;padding:12px}select{min-height:46px}button{border:0;border-radius:12px;padding:12px 16px;background:var(--mint);color:#071910;font-weight:800;cursor:pointer;min-height:46px}button:disabled{opacity:.48;cursor:not-allowed}.button-row{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}.button-row button{flex:1}.secondary{background:#22384b;color:var(--text);border:1px solid #385269}.danger{background:#4b2930;color:#ffe5e5;border:1px solid #75424c}.status{min-height:23px;font-size:13px;color:#d6e5e9;overflow-wrap:anywhere;margin:12px 0 6px}progress{width:100%;height:9px;accent-color:var(--mint)}.manual-load{margin-top:15px;padding:14px;border:1px dashed #416477;border-radius:13px;background:#0b1622}.manual-load a{display:inline-flex;margin:6px 0;color:var(--mint);font-weight:750}.manual-load input[type=file]{display:block;width:100%;padding:10px;background:#091521;border:1px solid #35536a;border-radius:10px;color:var(--muted)}#messages{display:flex;flex-direction:column;gap:10px;min-height:145px;max-height:50vh;overflow:auto;padding:4px 2px}.msg{max-width:94%;white-space:pre-wrap;overflow-wrap:anywhere;padding:11px 13px;border:1px solid #294154;border-radius:14px;background:#142537}.msg.user{align-self:flex-end;background:#16493f;border-color:#2d7564}.msg .who{font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mint);margin-bottom:3px}.msg.user .who{color:#c0f0e2}.chat-input{display:grid;gap:9px;margin-top:12px}textarea{min-height:82px;max-height:220px;resize:vertical}details{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}summary{cursor:pointer;font-weight:700;font-size:13px}a{color:#9cebd1}footer{padding:8px 4px;color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;gap:14px}footer a{color:#b8dcd4}@media(max-width:640px){main{padding:17px 12px 30px}header{align-items:flex-start;flex-wrap:wrap}.nav{margin-left:0;width:100%}.hero,.panel{padding:16px;border-radius:16px}.facts{grid-template-columns:1fr 1fr}.button-row button{flex-basis:100%}#messages{max-height:45vh}}
 </style>
 </head>
 <body>
@@ -52,6 +52,15 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
   <p id="status" class="status" role="status" aria-live="polite">Ready. Choose a file and load when you have Wi-Fi and enough free memory.</p>
   <progress id="progress" max="100" value="0" hidden aria-label="Model download progress"></progress>
   <small id="progress-note">First load downloads the selected GGUF file from Hugging Face and Wllama's pinned WebAssembly runtime from jsDelivr. It may take several minutes. Inference begins only after loading finishes.</small>
+  <div class="manual-load">
+    <h3>Browser-storage fallback</h3>
+    <p class="muted">If the browser reports a storage-space error, download the selected model file and load it directly. This avoids Wllama's persistent browser cache, but still needs enough RAM and may not work on iPhone Safari.</p>
+    <a id="model-download" href="https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_0.gguf?download=true" target="_blank" rel="noopener noreferrer">Download selected model from Hugging Face</a>
+    <label for="local-file">Choose a downloaded GGUF file</label>
+    <input id="local-file" type="file" accept=".gguf">
+    <button id="load-local" class="secondary" disabled>Load selected file from this device</button>
+    <small id="local-status">Select a matching GGUF file. The selected file is read locally and is not uploaded.</small>
+  </div>
 </section>
 
 <section class="panel" aria-labelledby="chat-title">
@@ -103,6 +112,10 @@ const stopButton = $('stop');
 const clearButton = $('clear');
 const promptInput = $('prompt');
 const quantSelect = $('quant');
+const localFile = $('local-file');
+const localLoadButton = $('load-local');
+const localStatus = $('local-status');
+const modelDownload = $('model-download');
 const status = $('status');
 const progress = $('progress');
 const messagesBox = $('messages');
@@ -121,6 +134,8 @@ function updateControls() {
   loadButton.disabled = loading || generating || !!runtime;
   quantSelect.disabled = loading || generating || !!runtime;
   unloadButton.disabled = loading || generating || !runtime;
+  localFile.disabled = loading || generating || !!runtime;
+  localLoadButton.disabled = loading || generating || !!runtime || !localFile.files || !localFile.files[0];
   promptInput.disabled = !runtime || loading || generating;
   sendButton.disabled = !runtime || loading || generating;
   stopButton.disabled = !generating;
@@ -144,6 +159,26 @@ function addMessage(role, text) {
 function modelLabel(file) {
   return file.indexOf('Q4_K_M') >= 0 ? 'Q4_K_M' : 'Q4_0';
 }
+function modelUrl(file) {
+  return 'https://huggingface.co/' + MODEL_REPO + '/resolve/main/' + encodeURIComponent(file) + '?download=true';
+}
+function updateModelDownloadLink() {
+  modelDownload.href = modelUrl(quantSelect.value);
+  modelDownload.textContent = 'Download selected model from Hugging Face (' + (quantSelect.value.indexOf('Q4_K_M') >= 0 ? '731' : '696') + ' MB)';
+}
+async function createRuntime() {
+  const base = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@' + WLLAMA_VERSION + '/esm/';
+  const pair = await Promise.all([import(base + 'index.js'), import(base + 'wasm-from-cdn.js')]);
+  const instance = new pair[0].Wllama(pair[1].default, { parallelDownloads: 1, suppressNativeLog: true });
+  instance.setCompat('default');
+  return instance;
+}
+quantSelect.addEventListener('change', updateModelDownloadLink);
+localFile.addEventListener('change', () => {
+  const file = localFile.files && localFile.files[0];
+  localStatus.textContent = file ? 'Selected: ' + file.name + ' (' + Math.round(file.size / 1048576) + ' MB). This file stays in your browser and is not uploaded.' : 'Select a matching GGUF file. The selected file is read locally and is not uploaded.';
+  updateControls();
+});
 loadButton.addEventListener('click', async () => {
   if (loading || runtime) return;
   if (!window.isSecureContext || !('WebAssembly' in window)) {
@@ -157,16 +192,7 @@ loadButton.addEventListener('click', async () => {
   updateControls();
   let candidate = null;
   try {
-    const base = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@' + WLLAMA_VERSION + '/esm/';
-    const pair = await Promise.all([
-      import(base + 'index.js'),
-      import(base + 'wasm-from-cdn.js')
-    ]);
-    candidate = new pair[0].Wllama(pair[1].default, {
-      parallelDownloads: 1,
-      suppressNativeLog: true
-    });
-    candidate.setCompat('default');
+    candidate = await createRuntime();
     const file = quantSelect.value;
     setStatus('Downloading ' + modelLabel(file) + ' model (first download: about ' + (file.indexOf('Q4_K_M') >= 0 ? '731' : '696') + ' MB)…');
     await candidate.loadModelFromHF(
@@ -198,7 +224,37 @@ loadButton.addEventListener('click', async () => {
       try { await candidate.exit(); } catch (_) {}
     }
     progress.hidden = true;
-    setStatus('Could not load the model: ' + (error && error.message ? error.message : String(error)) + '. Check Wi-Fi and browser memory, then retry or use a laptop.', 'error');
+    setStatus('Could not load the model: ' + (error && error.message ? error.message : String(error)) + '. If the message reports no storage space, use the downloaded-file option below; otherwise check Wi-Fi or retry on a laptop.', 'error');
+  } finally {
+    loading = false;
+    updateControls();
+  }
+});
+localLoadButton.addEventListener('click', async () => {
+  const file = localFile.files && localFile.files[0];
+  if (!file || runtime || loading || generating) return;
+  if (file.name !== quantSelect.value) {
+    localStatus.textContent = 'The chosen file does not match the selected quantization. Choose ' + quantSelect.value + ' or change the model file selector.';
+    return;
+  }
+  loading = true;
+  progress.hidden = true;
+  setStatus('Loading the selected GGUF from this device. The file is not uploaded.');
+  localStatus.textContent = 'Reading the model file locally…';
+  updateControls();
+  let candidate = null;
+  try {
+    candidate = await createRuntime();
+    await candidate.loadModel([file], { n_ctx: 1024, n_batch: 64, n_threads: 1, n_parallel: 1 });
+    runtime = candidate;
+    candidate = null;
+    setStatus('LFM2.5 ' + modelLabel(file.name) + ' is loaded locally. Prompts stay on this device.', 'success');
+    localStatus.textContent = 'Loaded from your selected file; it was not uploaded.';
+    addMessage('assistant', 'Model loaded. Ask me something; I will answer from my local weights.');
+  } catch (error) {
+    if (candidate) { try { await candidate.exit(); } catch (_) {} }
+    setStatus('Could not load the selected file: ' + (error && error.message ? error.message : String(error)) + '. Check that it is a valid LFM2.5 GGUF and retry on a laptop.', 'error');
+    localStatus.textContent = 'Local file load failed. The file was not uploaded.';
   } finally {
     loading = false;
     updateControls();
@@ -286,6 +342,7 @@ promptInput.addEventListener('keydown', event => {
     sendMessage();
   }
 });
+updateModelDownloadLink();
 updateControls();
 </script>
 </body>
