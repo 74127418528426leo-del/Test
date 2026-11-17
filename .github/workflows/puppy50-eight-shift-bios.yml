@@ -1,0 +1,143 @@
+name: Puppy50 research - shift-for-menu BIOS trial
+on:
+  push:
+    branches: [puppy50-eight-second-bios-20261117]
+    paths: ['.github/workflows/puppy50-eight-shift-bios.yml']
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-UPDATED-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-public-preview-candidate-20261114
+          path: input/preview
+      - name: Install tools and verify patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          python3 -m unittest discover -s input/research/fast_research -v
+          mkdir -p input out/config out/reports fixture
+          df -h .
+      - name: Prepare published control and optimized candidate
+        run: |
+          set -euo pipefail
+          curl --retry 3 -fLsS https://github.com/74127418528426leo-del/Test/releases/download/puppy50-staged-fast-preview-20261116/Puppy50_Staged_Fast_EXPERIMENTAL.iso -o out/control.iso
+          echo 'd9785ec285d2033af2576fc3fa79513210cd4c1bbc19214803557a0e18fe00fe  out/control.iso' | sha256sum -c -
+          xorriso -osirrox on -indev out/control.iso -extract /live/initrd.img out/initrd -extract /isolinux/isolinux.cfg out/bios.cfg -extract /sha256sum.txt out/manifest
+          xorriso -osirrox on -indev out/control.iso -extract /isolinux/menu.cfg out/menu.cfg
+          chmod u+w out/menu.cfg out/bios.cfg out/manifest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('out')
+          initrd=(root/'initrd').read_bytes()
+          offset=45302784
+          assert initrd[offset:offset+3]==bytes.fromhex('1f8b08')
+          (root/'early.cpio').write_bytes(initrd[:offset])
+          (root/'main.gz').write_bytes(initrd[offset:])
+          menu=root/'menu.cfg'
+          data=menu.read_text()
+          assert 'menu shiftkey' not in data and 'menu title' in data
+          menu.write_text('menu shiftkey\n'+data)
+          cfg=root/'bios.cfg'
+          s=cfg.read_text()
+          assert s.count('timeout 20\n')==1
+          cfg.write_text(s.replace('timeout 20\n','timeout 0\n'))
+          PY
+          gzip -dc out/main.gz >out/main.cpio
+          zstd -T2 -15 -q out/main.cpio -o out/main.zst
+          zstd -dc out/main.zst | cmp - out/main.cpio
+          cat out/early.cpio out/main.zst >out/new.initrd
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p=Path('out/manifest')
+          changed={'./isolinux/menu.cfg':'out/menu.cfg','./live/initrd.img':'out/new.initrd','./isolinux/isolinux.cfg':'out/bios.cfg'}
+          lines=[]
+          for line in p.read_text().splitlines():
+              path=line[66:]
+              if path in changed:
+                  with open(changed.pop(path),'rb') as f: line=hashlib.file_digest(f,'sha256').hexdigest()+line[64:]
+              lines.append(line)
+          assert not changed
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          xorriso -indev out/control.iso -outdev out/candidate.iso -map out/menu.cfg /isolinux/menu.cfg -map out/bios.cfg /isolinux/isolinux.cfg -map out/new.initrd /live/initrd.img -map out/manifest /sha256sum.txt -boot_image any replay -commit -end
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/verify
+          (cd out/verify && sha256sum -c --quiet sha256sum.txt)
+          sha256sum out/{control,candidate}.iso >out/reports/iso-sha256.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Matched control versus updated staged build and graphics fallbacks
+        run: |
+          set -euo pipefail
+          for sample in base1 cand1 cand2 base2 cand_uefi cand_cirrus; do
+            iso=out/candidate.iso; script=input/source/web109/boot_bench_ahci.py; firmware=bios; args=(--wait-ram-ready)
+            if [[ "$sample" == base* ]]; then iso=out/control.iso; fi
+            [[ "$sample" == cand_uefi ]] && firmware=uefi
+            [[ "$sample" == cand_cirrus ]] && script=input/source/web109/boot_bench_cirrus_public.py
+            python3 -u "$script" --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe --ram 3072 --seconds 150 --cpu-model i3-540-conservative --emulate-acer-id --firmware "$firmware" --media usb --bandwidth 0 "${args[@]}"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,statistics
+          names=['base1','cand1','cand2','base2','cand_uefi','cand_cirrus'];runs={}
+          for n in names:
+              r=json.loads((Path('out')/n/'result.json').read_text());runs[n]=r
+              assert r['first_home_seen_seconds'] is not None and r.get('early_js_response_seconds') is not None,(n,r)
+              assert r['media_ejected'] and r.get('post_eject_browser_http200_confirmed') and not r['errors'],(n,r)
+              if n.startswith('cand'):
+                  assert r['staged_ram_ready_seconds'] is not None,(n,r)
+                  t=(Path('out')/n/'serial.log').read_text(errors='replace');assert 'P50_STAGE_READY' in t
+                  if n=='cand_cirrus':assert 'P50_FAST_GPU_GUARD_STANDARD_DESKTOP' in t and 'P50_V125_DRM_GATE_START' not in t
+                  else:assert 'P50_V125_EARLY_DRM_READY' in t,(n,'fast graphics did not run')
+          report={'conditions':'same runner BIOS A-B-B-A, published 2-second BIOS menu vs shift-for-recovery instant BIOS default and zstd initramfs, 3 GiB; candidate uses staged RAM, updated Firefox and kernel',
+                  'control_mean_first_frame':statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('base1','base2')),
+                  'candidate_mean_first_frame':statistics.mean(runs[n]['first_home_seen_seconds'] for n in ('cand1','cand2')),
+                  'runs':{n:{k:runs[n].get(k) for k in ('first_home_seen_seconds','early_js_response_seconds','staged_ram_ready_seconds','post_eject_browser_http200_confirmed','post_eject_navigation_attempts')} for n in names},
+                  'physical_hardware_tested':False,'full_ram_384mib_supported':False}
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve test evidence even if a trial fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-eight-shift-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/cand_uefi/
+            out/cand_cirrus/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Preserve candidate for independent verification
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-eight-shift-candidate-experimental
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
