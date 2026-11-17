@@ -38,6 +38,13 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
     </div>
     <p id="status" class="status" role="status" aria-live="polite">Ready to type. The first reply needs a model download.</p>
     <progress id="progress" hidden aria-label="Model loading"></progress>
+    <div id="mobile-recovery" class="manual-load" hidden>
+      <h3>Run the same model in an iPhone app</h3>
+      <p class="muted">If Safari closes the page, try the exact 696 MB Q4_0 model in PocketPal AI. In PocketPal, open Models, tap +, search Hugging Face for <strong>LiquidAI/LFM2.5-1.2B-Instruct-GGUF</strong>, then download <strong>LFM2.5-1.2B-Instruct-Q4_0.gguf</strong> and tap Load.</p>
+      <a href="https://apps.apple.com/us/app/pocketpal-ai/id6502579498" target="_blank" rel="noopener noreferrer">Get PocketPal AI for iPhone</a>
+      <p><a href="#model-files">Already downloaded the GGUF? Load it from Files here</a></p>
+      <label><input id="allow-mobile-download" type="checkbox"> Allow the experimental download inside this browser</label>
+    </div>
     <a id="load-help" href="#model-files" hidden>Download or load the model using Files</a>
   </div>
 </section>
@@ -137,6 +144,23 @@ let loading = false;
 let generating = false;
 let abortController = null;
 let downloadController = null;
+const mobileApple = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const mobileRecovery = $('mobile-recovery');
+const allowMobileDownload = $('allow-mobile-download');
+const interruptedKey = 'puppy50-lfm-model-active';
+function setModelActive(active) {
+  try {
+    if (active) sessionStorage.setItem(interruptedKey, '1');
+    else sessionStorage.removeItem(interruptedKey);
+  } catch (_) {
+    // Loading can still work when browser storage is unavailable.
+  }
+}
+function wasInterrupted() {
+  try { return sessionStorage.getItem(interruptedKey) === '1'; }
+  catch (_) { return false; }
+}
 const cancelDownload = $('cancel-download');
 cancelDownload.addEventListener('click', () => downloadController?.abort());
 
@@ -179,7 +203,13 @@ function modelUrl(file) {
   return 'https://huggingface.co/' + MODEL_REPO + '/resolve/main/' + encodeURIComponent(file) + '?download=true';
 }
 function inferenceOptions() {
-  const options = { n_ctx: 1024, n_batch: 64, n_threads: 1, n_parallel: 1 };
+  const options = {
+    n_ctx: mobileApple ? 512 : 1024,
+    n_batch: mobileApple ? 32 : 64,
+    n_ubatch: mobileApple ? 16 : 64,
+    n_threads: 1,
+    n_parallel: 1
+  };
   if (computeMode.value === 'cpu') options.n_gpu_layers = 0;
   return options;
 }
@@ -257,11 +287,18 @@ async function downloadWeights(file) {
 }
 async function loadOnline() {
   if (loading || runtime) return;
+  if (!mobileRecovery.hidden && !allowMobileDownload.checked) {
+    setStatus('Choose the iPhone app or load the model from Files. To retry the in-browser download, enable it below.');
+    loadHelp.hidden = false;
+    mobileRecovery.scrollIntoView({ block: 'nearest' });
+    return false;
+  }
   if (!window.isSecureContext || !('WebAssembly' in window)) {
     setStatus('This browser cannot run the local WebAssembly model. Open the HTTPS site in a current browser.', 'error');
     return;
   }
   loading = true;
+  setModelActive(true);
   progress.removeAttribute('value');
   progress.hidden = false;
   loadHelp.hidden = true;
@@ -292,6 +329,7 @@ async function loadOnline() {
     return false;
   } finally {
     loading = false;
+    if (!runtime) setModelActive(false);
     updateControls();
   }
 }
@@ -305,6 +343,7 @@ localLoadButton.addEventListener('click', async () => {
     return;
   }
   loading = true;
+  setModelActive(true);
   progress.hidden = true;
   setStatus('Loading the selected GGUF from this device. The file is not uploaded.');
   localStatus.textContent = 'Reading the model file locally…';
@@ -325,6 +364,7 @@ localLoadButton.addEventListener('click', async () => {
     localStatus.textContent = 'Local file load failed. The file was not uploaded.';
   } finally {
     loading = false;
+    if (!runtime) setModelActive(false);
     updateControls();
   }
 });
@@ -332,6 +372,7 @@ unloadButton.addEventListener('click', async () => {
   if (!runtime || generating || loading) return;
   try { await runtime.exit(); } catch (_) {}
   runtime = null;
+  setModelActive(false);
   history = [];
   messagesBox.replaceChildren();
   const welcome = document.createElement('p');
@@ -358,7 +399,7 @@ async function sendMessage() {
   if (promptInput.value.trim() === question) promptInput.value = '';
   addMessage('user', question);
   const answer = addMessage('assistant', 'Thinking…');
-  const prior = history.slice(-6);
+  const prior = history.slice(mobileApple ? -2 : -6);
   const messages = [
     { role: 'system', content: 'You are LFM2.5. Answer clearly and concisely.' },
     ...prior,
@@ -373,7 +414,7 @@ async function sendMessage() {
     await runtime.createChatCompletion({
       messages,
       stream: true,
-      max_tokens: 192,
+      max_tokens: mobileApple ? 96 : 192,
       temperature: 0.3,
       top_p: 0.9,
       abortSignal: abortController.signal,
@@ -410,6 +451,13 @@ promptInput.addEventListener('keydown', event => {
     sendMessage();
   }
 });
+mobileRecovery.hidden = !(mobileApple || wasInterrupted());
+if (!mobileRecovery.hidden) {
+  $('welcome').textContent = 'For iPhone, open the model in PocketPal AI or select it from Files below. You can also opt in to an experimental browser download.';
+  setStatus(wasInterrupted()
+    ? 'The previous model session ended. Choose how to reopen the model below.'
+    : 'Choose how to open the 696 MB Q4_0 model below.');
+}
 updateModelDownloadLink();
 updateControls();
 </script>
