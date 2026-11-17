@@ -32,12 +32,13 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
     <textarea id="prompt" maxlength="2000" placeholder="Ask a question…"></textarea>
     <div class="button-row">
       <button id="send" disabled>Send message</button>
+      <button id="cancel-download" class="secondary" hidden>Cancel download</button>
       <button id="stop" class="danger" disabled>Stop generation</button>
       <button id="clear" class="secondary" disabled>Clear chat</button>
     </div>
     <p id="status" class="status" role="status" aria-live="polite">Ready to type. The first reply needs a model download.</p>
     <progress id="progress" hidden aria-label="Model loading"></progress>
-    <a id="load-help" href="#setup-title" hidden>Open model settings and load from Files</a>
+    <a id="load-help" href="#model-files" hidden>Download or load the model using Files</a>
   </div>
 </section>
 
@@ -70,9 +71,9 @@ main{max-width:900px;margin:0 auto;padding:24px 16px 46px}header{display:flex;al
     <button id="load">Load LFM2.5 on this device</button>
     <button id="unload" class="secondary" disabled>Unload model</button>
   </div>
-  <div class="manual-load">
+  <div class="manual-load" id="model-files">
     <h3>Browser-storage fallback</h3>
-    <p class="muted">If the browser reports a storage-space error, download the selected model file and load it directly. This avoids Wllama's persistent browser cache, but still needs enough RAM and may not work on iPhone Safari.</p>
+    <p class="muted">If the automatic download stalls, Safari can download the model to Files separately. Choose the same file here when Safari finishes. The chat still needs enough memory to run the model.</p>
     <ol class="steps">
       <li>Tap the download link and wait for Safari to finish the 696–731 MB download.</li>
       <li>Return here, tap <strong>Choose a downloaded GGUF file</strong>, then use Files to select the matching Q4 file from Downloads.</li>
@@ -135,6 +136,9 @@ let history = [];
 let loading = false;
 let generating = false;
 let abortController = null;
+let downloadController = null;
+const cancelDownload = $('cancel-download');
+cancelDownload.addEventListener('click', () => downloadController?.abort());
 
 function setStatus(text, kind) {
   status.textContent = text;
@@ -196,6 +200,61 @@ localFile.addEventListener('change', () => {
   localStatus.textContent = file ? 'Selected: ' + file.name + ' (' + Math.round(file.size / 1048576) + ' MB). This file stays in your browser and is not uploaded.' : 'Select a matching GGUF file. The selected file is read locally and is not uploaded.';
   updateControls();
 });
+async function downloadWeights(file) {
+  const controller = new AbortController();
+  downloadController = controller;
+  cancelDownload.hidden = false;
+  const expected = file.includes('Q4_K_M') ? 731 : 696;
+  let stalled = false;
+  let timer;
+  function resetStallTimer() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, 60000);
+  }
+  const label = 'Downloading ' + modelLabel(file) + ' · ';
+  let received = 0;
+  let lastReport = 0;
+  setStatus(label + '0 of about ' + expected + ' MB');
+  resetStallTimer();
+  try {
+    const response = await fetch(modelUrl(file), {
+      credentials: 'omit',
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error('Model host returned HTTP ' + response.status);
+    if (!response.body || !window.TransformStream) return await response.blob();
+    const size = Number(response.headers.get('content-length')) || expected * 1000000;
+    let reportedMb = -1;
+    const counted = response.body.pipeThrough(new TransformStream({
+      transform(chunk, output) {
+        resetStallTimer();
+        received += chunk.byteLength;
+        const now = performance.now();
+        const mb = Math.floor(received / 1000000);
+        if (mb !== reportedMb && now - lastReport >= 1000) {
+          reportedMb = mb;
+          lastReport = now;
+          progress.max = size;
+          progress.value = Math.min(received, size);
+          setStatus(label + mb + ' of about ' + expected + ' MB');
+        }
+        output.enqueue(chunk);
+      }
+    }));
+    return await new Response(counted).blob();
+  } catch (error) {
+    if (stalled) throw new Error('No download data arrived for 60 seconds');
+    if (controller.signal.aborted) throw new Error('Download canceled');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    downloadController = null;
+    cancelDownload.hidden = true;
+  }
+}
 async function loadOnline() {
   if (loading || runtime) return;
   if (!window.isSecureContext || !('WebAssembly' in window)) {
@@ -203,6 +262,7 @@ async function loadOnline() {
     return;
   }
   loading = true;
+  progress.removeAttribute('value');
   progress.hidden = false;
   loadHelp.hidden = true;
   setStatus('Loading the browser runtime…');
@@ -211,13 +271,10 @@ async function loadOnline() {
   try {
     candidate = await createRuntime();
     const file = quantSelect.value;
-    setStatus('Downloading ' + modelLabel(file) + ' model (first download: about ' + (file.indexOf('Q4_K_M') >= 0 ? '731' : '696') + ' MB)…');
-    // Let the browser manage the download as a Blob, bypassing Wllama's OPFS cache.
-    const response = await fetch(modelUrl(file), { credentials: 'omit' });
-    if (!response.ok) throw new Error('Model download returned HTTP ' + response.status);
-    const weights = await response.blob();
+    const weights = await downloadWeights(file);
     const magic = await weights.slice(0, 4).text();
     if (magic !== 'GGUF') throw new Error('The download did not contain a GGUF file');
+    progress.removeAttribute('value');
     setStatus('Download complete. Starting LFM2.5 on this device…');
     await candidate.loadModel([weights], inferenceOptions());
     runtime = candidate;
@@ -242,7 +299,8 @@ loadButton.addEventListener('click', loadOnline);
 localLoadButton.addEventListener('click', async () => {
   const file = localFile.files && localFile.files[0];
   if (!file || runtime || loading || generating) return;
-  if (file.name !== quantSelect.value) {
+  const name = file.name.replace(/ \(\d+\)\.gguf$/i, '.gguf');
+  if (name.toLowerCase() !== quantSelect.value.toLowerCase()) {
     localStatus.textContent = 'The chosen file does not match the selected quantization. Choose ' + quantSelect.value + ' or change the model file selector.';
     return;
   }
@@ -254,6 +312,7 @@ localLoadButton.addEventListener('click', async () => {
   let candidate = null;
   try {
     candidate = await createRuntime();
+    if (await file.slice(0, 4).text() !== 'GGUF') throw new Error('The selected file is not a GGUF model');
     await candidate.loadModel([file], inferenceOptions());
     runtime = candidate;
     candidate = null;
