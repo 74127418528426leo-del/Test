@@ -58,7 +58,24 @@ def patch(root):
     script.write_text(replace_once(script.read_text(), mark, fast_search + mark))
 
 
+def reduce_display_waits(root):
+    script = root / 'usr/lib/live/boot/9990-main.sh'
+    text = script.read_text()
+    old = '        udevadm settle >/dev/null 2>&1 || panic "v125: cannot settle DRM"'
+    new = '''        if [ "${P50_OPTICAL_PATH:-0}" != 1 ]; then
+            udevadm settle >/dev/null 2>&1 || panic "v125: cannot settle DRM"
+        fi'''
+    text = replace_once(text, old, new)
+    text = replace_once(text, 'while [ "$p50_i" -lt 35 ]; do', 'while [ "$p50_i" -lt 175 ]; do')
+    text = replace_once(text, '\tsleep 0.10\n', '\tsleep 0.02\n')
+    script.write_text(text)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
-    patch(parser.parse_args().root)
+    parser.add_argument('--reduce-display-waits', action='store_true')
+    args = parser.parse_args()
+    patch(args.root)
+    if args.reduce_display_waits:
+        reduce_display_waits(args.root)
