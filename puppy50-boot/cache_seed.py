@@ -172,9 +172,19 @@ def extract_cache(tar_path, dest):
 
 
 def install_seed(root, seed):
-    import shutil
-
-    shutil.copytree(seed, root / 'usr/lib/p50-firefox-seed')
+    allowed = set(CACHES) | {COMPATIBILITY, LOCATION}
+    if set(path.name for path in seed.iterdir()) != allowed:
+        raise ValueError('Expected exactly the offline cache generator files')
+    target = root / 'usr/lib/p50-firefox-seed'
+    target.mkdir()
+    for name in sorted(allowed):
+        source = seed / name
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f'Invalid Firefox cache seed file {name}')
+        cap = 20 * 1024 * 1024 if name in CACHES else 2048
+        if not 0 < source.stat().st_size <= cap:
+            raise ValueError(f'Invalid Firefox cache seed file size {name}')
+        (target / name).write_bytes(source.read_bytes())
     script = root / 'usr/lib/live/boot/9990-main.sh'
     text = script.read_text()
     marker = 'chown -R 1000:1000 "$p50_root/home/user/.mozilla" || panic "v139: could not grant profile to nonroot user"'
@@ -191,7 +201,7 @@ def install_seed(root, seed):
         done
         chown -R 1000:1000 "$p50_cache" || panic "p50: cannot set Firefox cache owner"
         if [ "$p50_cache" != "$p50_profile/startupCache" ]; then
-            chown -R 1000:1000 "$p50_root/home/user/.cache/mozilla" || panic "p50: cannot set parent cache owner"
+            chown -R 1000:1000 "$p50_root/home/user/.cache" || panic "p50: cannot set parent cache owner"
         fi
         printf 'P50_FIVE_CACHE_SEEDED %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
 '''
