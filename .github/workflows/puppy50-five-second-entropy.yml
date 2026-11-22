@@ -178,7 +178,8 @@ jobs:
                   'run_results':runs}
           Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n')
           print(json.dumps({k:v for k,v in report.items() if k!='run_results'},indent=2))
-          if not good or not selection:
+          native=all('P50_FIVE_LOCAL_COOKIE_OK' in (Path('out')/n/'serial.log').read_text(errors='replace') for n in bios_names)
+          if not good or not selection or not native:
               raise SystemExit('Functional or boot entry check failed')
           PY
       - name: Retain VM measurements
