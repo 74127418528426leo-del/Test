@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
 #include <unistd.h>
@@ -38,8 +39,17 @@ int main(int argc, char **argv)
         fputs("usage: p50-write-xauthority FILE\n", stderr);
         return 2;
     }
-    if (gethostname(host, sizeof(host)) != 0 || !memchr(host, '\0', sizeof(host))) {
-        perror("gethostname");
+    const char *local_name = getenv("XAUTHLOCALHOSTNAME");
+    if (!local_name || !*local_name) {
+        if (gethostname(host, sizeof(host)) != 0 || !memchr(host, '\0', sizeof(host))) {
+            fputs("Cannot read a complete local hostname\n", stderr);
+            return 1;
+        }
+        local_name = host;
+    }
+    size_t name_length = strlen(local_name);
+    if (name_length >= sizeof(host)) {
+        fputs("Local X11 hostname is too long\n", stderr);
         return 1;
     }
     if (!random_bytes(cookie, sizeof(cookie))) {
@@ -48,7 +58,7 @@ int main(int argc, char **argv)
     }
     record[0] = 1;
     record[1] = 0; /* X11 FamilyLocal (256), in network order. */
-    unsigned char *end = field(record + 2, host, strlen(host));
+    unsigned char *end = field(record + 2, local_name, name_length);
     end = field(end, "0", 1);
     end = field(end, protocol, sizeof(protocol) - 1);
     end = field(end, cookie, sizeof(cookie));
