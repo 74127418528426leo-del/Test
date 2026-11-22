@@ -11,6 +11,17 @@ def patch(root):
     modify_boot_script(root, 128)
     script = root / 'usr/lib/live/boot/9990-main.sh'
     text = script.read_text()
+    begin = text.index('cat > "$p50_start" <<\'P50_V123_START_X\'')
+    end = text.index('\nP50_V123_START_X\n', begin)
+    launcher = text[begin:end]
+    # Give the early browser its own runtime directory across the root switch.
+    # Keep the Xauthority hostname stable even when systemd sets the UTS name.
+    launcher = launcher.replace('/run/user/1000', '/run/puppy50-browser-session')
+    launcher = replace_once(
+        launcher, 'umask 077\n',
+        'umask 077\nXAUTHLOCALHOSTNAME="$(cat /proc/sys/kernel/hostname)"\nexport XAUTHLOCALHOSTNAME\n',
+    )
+    text = text[:begin] + launcher + text[end:]
     text = replace_once(text, 'p50_cookie="$(mcookie)"\np50_mark COOKIE\n', '')
     text = replace_once(
         text,
