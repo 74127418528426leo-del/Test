@@ -139,7 +139,7 @@ label live-ram
     return replace_once(base, standard, fast)
 
 
-def repack(base, work, trial, image, selector):
+def repack(base, work, trial, image, selector, direct=False):
     menu = work / 'candidate-live.cfg'
     menu.write_text(menu_text((work / 'live.cfg').read_text()))
     mapped = {
@@ -147,6 +147,18 @@ def repack(base, work, trial, image, selector):
         './isolinux/ifcpu.c32': selector,
         './live/initrd-vm.img': image,
     }
+    if direct:
+        config = work / 'candidate-isolinux.cfg'
+        config.write_text('''default live-auto
+prompt 0
+timeout 0
+include live.cfg
+
+label recovery-menu
+    com32 vesamenu.c32
+    append menu.cfg
+''')
+        mapped['./isolinux/isolinux.cfg'] = config
     lines = []
     for line in (work / 'original.sha256sum.txt').read_text().splitlines():
         match = re.fullmatch(r'([a-f0-9]{64})( [ *])(.*)', line)
@@ -187,6 +199,7 @@ def main():
     build.add_argument('trial')
     build.add_argument('image', type=Path)
     build.add_argument('selector', type=Path)
+    build.add_argument('--direct', action='store_true')
     args = parser.parse_args()
     if args.action == 'split':
         split_initrd(args.image, args.work)
@@ -195,7 +208,7 @@ def main():
     else:
         if digest(args.base) != BASELINE_SHA:
             raise ValueError('Input ISO is not the published baseline')
-        repack(args.base, args.work, args.trial, args.image, args.selector)
+        repack(args.base, args.work, args.trial, args.image, args.selector, args.direct)
 
 
 if __name__ == '__main__':
