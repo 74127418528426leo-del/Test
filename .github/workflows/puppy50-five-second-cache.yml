@@ -48,7 +48,15 @@ jobs:
           zstd -q -dc out/main.zst >out/main.cpio
           mkdir out/working
           for archive in out/extra-*.cpio out/main.cpio; do
-            sudo cp -a out/working out/collector
+            (cd out/working && sudo cpio -idmu --quiet --no-absolute-filenames) <"$archive"
+          done
+          gcc -O2 -s -static -Wall -Wextra -Werror input/research/puppy50-boot/write_xauthority.c -o out/p50-write-xauthority
+          sudo install -m 0755 out/p50-write-xauthority out/working/usr/lib/p50-stage/
+          sudo python3 input/research/puppy50-boot/lean_session.py out/working
+          sudo sh -n out/working/init
+          sudo sh -n out/working/usr/lib/live/boot/9990-main.sh
+          sudo cp out/working/usr/lib/live/boot/9990-main.sh out/reports/candidate-live-boot.sh
+          sudo cp -a out/working out/collector
           sudo python3 input/research/puppy50-boot/cache_seed.py capture out/collector
           sudo sh -n out/collector/usr/lib/live/boot/9990-main.sh
           sudo sh -n out/collector/usr/lib/p50-stage/capture-firefox-cache.sh
