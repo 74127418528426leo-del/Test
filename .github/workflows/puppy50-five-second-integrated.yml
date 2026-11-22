@@ -94,9 +94,8 @@ jobs:
           compile(s,str(p),'exec')
           p.write_text(s)
           PY
-          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
           nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
-          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
       - name: Generate caches in a clean offline Firefox VM
         run: |
           set -euo pipefail
@@ -142,7 +141,23 @@ jobs:
           compile(text,str(p),'exec')
           p.write_text(text)
           PY
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
           for sample in base1 cand1 cand2 base2 cand3; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-$(echo "$sample" | tr "[:lower:]" "[:upper:]")"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket, time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(.05)
+          else:
+              raise RuntimeError('Per-boot network fixture failed to start')
+          PY
             iso=out/candidate.iso
             [[ "$sample" == base* ]] && iso=out/control.iso
             rc=0
@@ -151,10 +166,14 @@ jobs:
               --ram 3072 --seconds 32 --cpu-model "$P50_CPU" --emulate-acer-id \
               --firmware bios --media usb --bandwidth 0 --wait-ram-ready || rc=$?
             printf '%s\n' "$rc" >"out/$sample/exit-status"
+            cp out/reports/fixture-after.log "out/$sample/http-receipts.log"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
           done
           python3 - <<'PY'
           from pathlib import Path
-          import json, os
+          import json, os, re
           runs={}
           for n in ('base1','cand1','cand2','base2','cand3'):
               p=Path('out')/n
@@ -172,12 +191,17 @@ jobs:
               fast_path=all(mark in s for mark in ['P50_FIVE_CACHE_SEEDED','P50_FIVE_LOCAL_COOKIE_OK','P50_FIVE_RNG_READY','P50_FIVE_OPTICAL_DEVICE_READY'])
               d['functional_ok']=confirmed
               d['optimized_path_verified']=fast_path
+              d['nonroot_firefox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+user\s+firefox-esr\s+', s, re.M))
+              d['openbox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+user\s+openbox\s+', s, re.M))
+              d['authorization_error_seen']='Authorization required, but no authorization protocol specified' in s
+              d['desktop_session_stable']=d['nonroot_firefox_seen'] and d['openbox_seen'] and not d['authorization_error_seen']
               runs[n]=d
           candidates=[runs[n] for n in ('cand1','cand2','cand3')]
-          functional=all(r['functional_ok'] and r['optimized_path_verified'] for r in candidates)
+          functional=all(r['functional_ok'] and r['optimized_path_verified'] and r['desktop_session_stable'] for r in candidates)
           times=[r['first_home_seen_seconds'] for r in candidates]
           report={'cpu':os.environ['P50_CPU'],'candidate_functional':functional,
                   'bios_target_pass':functional and all(0<t<=5.0 for t in times),
+                  'measurement':'Cold guest from host monotonic QEMU process launch through first Firefox home frame',
                   'candidate_frames_seconds':times,
                   'baseline_frames_seconds':[runs[n]['first_home_seen_seconds'] for n in ('base1','base2')],
                   'runs':runs}
