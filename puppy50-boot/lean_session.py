@@ -15,12 +15,8 @@ def patch(root):
     end = text.index('\nP50_V123_START_X\n', begin)
     launcher = text[begin:end]
     # Give the early browser its own runtime directory across the root switch.
-    # Keep the Xauthority hostname stable even when systemd sets the UTS name.
+    # Keep the early stage and systemd on the same local hostname.
     launcher = launcher.replace('/run/user/1000', '/run/puppy50-browser-session')
-    launcher = replace_once(
-        launcher, 'umask 077\n',
-        'umask 077\nXAUTHLOCALHOSTNAME="$(cat /proc/sys/kernel/hostname)"\nexport XAUTHLOCALHOSTNAME\n',
-    )
     text = text[:begin] + launcher + text[end:]
     text = replace_once(text, 'p50_cookie="$(mcookie)"\np50_mark COOKIE\n', '')
     text = replace_once(
@@ -43,6 +39,16 @@ p50_mark XAUTH''',
     )
     launch = 'cat > "$p50_start" <<\'P50_V123_START_X\''
     copy_helper = r'''        # The early chroot's /run bind excludes the migration tools submount.
+        p50_hostname_file="$p50_root/etc/hostname"
+        [ ! -L "$p50_hostname_file" ] || panic "p50: unsafe local hostname path"
+        p50_hostname=localhost.localdomain
+        if [ -s "$p50_hostname_file" ]; then read -r p50_hostname <"$p50_hostname_file" || :; fi
+        case "$p50_hostname" in
+            ''|*[!a-zA-Z0-9.-]*) p50_hostname=localhost.localdomain ;;
+        esac
+        printf '%s\n' "$p50_hostname" >"$p50_hostname_file" || panic "p50: cannot store live hostname"
+        printf '%s\n' "$p50_hostname" >/proc/sys/kernel/hostname || panic "p50: cannot set live hostname"
+        printf 'P50_FIVE_HOSTNAME_SET %s\n' "$p50_hostname" >/dev/ttyS0
         p50_xauth_helper="$p50_root/usr/local/sbin/p50-write-xauthority"
         [ ! -e "$p50_xauth_helper" ] && [ ! -L "$p50_xauth_helper" ] || panic "p50: Xauthority helper path already exists"
         cp /usr/lib/p50-stage/p50-write-xauthority "$p50_xauth_helper" || panic "p50: cannot stage Xauthority helper"
