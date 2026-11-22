@@ -1,0 +1,179 @@
+name: Puppy50 measured startup working set
+on:
+  push:
+    branches: [puppy50-startup-working-set-20261122]
+    paths: ['.github/workflows/puppy50-measured-working-set.yml', 'puppy50-boot/boot_working_set.py', 'puppy50-boot/warm_root.c']
+permissions:
+  contents: read
+jobs:
+  measure:
+    name: Train disk reads and compare real BIOS boots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      PYTHONPATH: input/source
+      P50_CPU: i3-540-conservative
+      P50_ROUTE: bios-ahci-working-set
+      P50_ISO_SHA: aa074377b00832818bcb1cd45c0166cb1975b6c1b3ad778279fef6132941aaf6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install tools and verify the released ISO
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends xorriso zstd lz4 cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p out/boot out/reports fixture
+          release=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-direct-bios-preview-20261121
+          curl --retry 3 -fLsS "$release/Puppy50_Direct_BIOS_Preview.iso" -o out/reference.iso
+          printf '%s  out/reference.iso\n' "$P50_ISO_SHA" | sha256sum -c -
+          xorriso -osirrox on -indev out/reference.iso \
+            -extract /live/vmlinuz out/boot/vmlinuz \
+            -extract /live/initrd-vm.img out/boot/initrd-vm.img \
+            -extract /isolinux/live.cfg out/boot/live.cfg \
+            -extract /sha256sum.txt out/boot/sha256sum.txt
+          lscpu >out/reports/runner-cpu.txt
+          qemu-system-x86_64 --version >out/reports/qemu-version.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus = (
+              "    for attempt in range(1, 3):\n"
+              "        report['early_navigation_attempts'] = attempt\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})\n"
+              "        time.sleep(0.08)\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})\n"
+          )
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
+      - name: Record disk reads through the first genuine Firefox frame on two training boots
+        run: |
+          set -euo pipefail
+          scripts=input/research/puppy50-boot
+          mkdir -p build/trainer build/candidate out/reports/training
+          gcc -O2 -static -s -Wall -Wextra -Werror "$scripts/warm_root.c" -o build/warm-root
+          zstd -qdc out/boot/initrd-vm.img >build/base.cpio
+          (cd build/trainer && sudo cpio -idmu --quiet --no-absolute-filenames) <build/base.cpio
+          (cd build/candidate && sudo cpio -idmu --quiet --no-absolute-filenames) <build/base.cpio
+          sudo python3 "$scripts/boot_working_set.py" patch build/trainer
+          sudo sh -n build/trainer/usr/lib/live/boot/9990-main.sh
+          (cd build/trainer && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --quiet) | zstd -q -T2 -6 -o build/trainer.img
+          python3 "$scripts/boot_latency_lab.py" iso out/reference.iso out/trainer.iso out/boot build/trainer.img
+          xorriso -indev out/trainer.iso -find /live/filesystem.squashfs -exec report_lba -- >out/reports/training/layout.txt
+          python3 "$scripts/boot_latency_lab.py" harness input/source/web109/boot_bench_ahci.py out/boot
+          python3 "$scripts/boot_working_set.py" training-harness input/source/web109/boot_bench_lab_bios.py input/source/web109/trace_boot_io.py
+          for sample in train1 train2; do
+            python3 -u input/source/web109/trace_boot_io.py --iso out/trainer.iso --out "out/reports/training/$sample" \
+              --mode online --ram 3072 --cpu-model "$P50_CPU" --emulate-acer-id --firmware bios --media usb
+          done
+          python3 "$scripts/boot_working_set.py" plan out/reports/training/layout.txt out/reports/boot-ranges.txt \
+            out/reports/training/train1/reads.log out/reports/training/train2/reads.log
+      - name: Build and verify the ISO containing the measured read plan
+        run: |
+          set -euo pipefail
+          scripts=input/research/puppy50-boot
+          sudo python3 "$scripts/boot_working_set.py" patch build/candidate --reader build/warm-root --plan out/reports/boot-ranges.txt
+          sudo sh -n build/candidate/usr/lib/live/boot/9990-main.sh
+          sudo sh -n build/candidate/usr/lib/live/boot/9990-misc-helpers.sh
+          (cd build/candidate && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --quiet) | zstd -q -T2 -6 -o build/candidate.img
+          python3 "$scripts/boot_latency_lab.py" iso out/reference.iso out/candidate.iso out/boot build/candidate.img
+          xorriso -osirrox on -indev out/candidate.iso -extract / build/integrity >out/reports/iso-extract.log 2>&1
+          (cd build/integrity && sha256sum -c --quiet sha256sum.txt)
+          cmp build/candidate.img build/integrity/live/initrd-vm.img
+          sha256sum out/reference.iso out/trainer.iso out/candidate.iso >out/reports/iso-sha256.txt
+      - name: Time untraced cold boots and verify JavaScript and post-ejection HTTP
+        run: |
+          set -euo pipefail
+          lab=input/research/puppy50-boot/boot_latency_lab.py
+          sequence=(reference1 workset1 demand1 workset2 reference2 demand2 workset3)
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          for sample in "${sequence[@]}"; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-${sample^^}"
+            mkdir -p "out/$sample"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >"out/$sample/http-receipts.log" 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket
+          import time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(0.05)
+          else:
+              raise RuntimeError('Per-boot HTTP receiver did not start')
+          PY
+            iso=out/reference.iso
+            case "$sample" in
+              workset*) iso=out/candidate.iso ;;
+              demand*) iso=out/trainer.iso ;;
+            esac
+            rc=0
+            python3 -u input/source/web109/boot_bench_lab_bios.py \
+              --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 32 --cpu-model "$P50_CPU" --emulate-acer-id \
+              --firmware bios --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
+          done
+          python3 "$lab" report out "$P50_ROUTE" "$GITHUB_RUN_ID" "${sequence[@]}"
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('workset1', 'workset2', 'workset3'):
+              serial = (Path('out') / name / 'serial.log').read_text(errors='replace')
+              for mark in ('P50_WORKSET_STARTED ', 'P50_WORKSET_COMPLETE '):
+                  if sum(line.startswith(mark) for line in serial.splitlines()) != 1:
+                      raise SystemExit(f'{name} did not run the measured read plan exactly once')
+              if 'P50_V131_READAHEAD_STARTED' in serial or 'P50_WORKSET_READ_FAILED' in serial:
+                  raise SystemExit(f'{name} used an unexpected read path')
+          PY
+      - name: Preserve traces, screenshots and genuine browser receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-working-set-evidence
+          path: |
+            out/reports/
+            out/reference*/
+            out/workset*/
+            out/demand*/
+          retention-days: 21
+      - name: Save the exact candidate for independent verification
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-working-set-iso
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
