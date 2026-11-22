@@ -24,9 +24,11 @@ def digest(path):
         return hashlib.file_digest(handle, 'sha256').hexdigest()
 
 
-def cpio_files(data):
-    """Read each concatenated newc archive, including its alignment padding."""
+def cpio_archives(data):
+    """Split the concatenated newc archives and inventory each payload."""
     offset = 0
+    archive_start = None
+    files = {}
     while offset < len(data):
         if data[offset] == 0:
             offset += 1
@@ -34,6 +36,8 @@ def cpio_files(data):
         header = data[offset:offset + NEWC_HEADER]
         if len(header) != NEWC_HEADER or header[:6] != b'070701':
             raise ValueError(f'Unexpected CPIO header at offset {offset}')
+        if archive_start is None:
+            archive_start = offset
         size = int(header[54:62], 16)
         name_size = int(header[94:102], 16)
         start = offset + NEWC_HEADER
@@ -44,8 +48,14 @@ def cpio_files(data):
         offset = (data_start + size + 3) & ~3
         if offset > len(data):
             raise ValueError('Invalid CPIO file size')
-        if name != b'TRAILER!!!\0':
-            yield name[:-1].decode(), size
+        if name == b'TRAILER!!!\0':
+            yield data[archive_start:offset], files
+            files = {}
+            archive_start = None
+        elif size:
+            files[name[:-1].decode().removeprefix('./')] = size
+    if archive_start is not None:
+        raise ValueError('Unterminated CPIO archive')
 
 
 def split_initrd(image, work):
@@ -54,11 +64,19 @@ def split_initrd(image, work):
     main = data[EARLY_PREFIX_BYTES:]
     if main[:4] != b'\x28\xb5\x2f\xfd':
         raise ValueError('Unexpected main archive codec')
-    payload = {name.removeprefix('./'): size for name, size in cpio_files(early) if size}
     expected = {'kernel/x86/microcode/AuthenticAMD.bin', 'kernel/x86/microcode/GenuineIntel.bin'}
-    if set(payload) != expected:
-        raise ValueError(f'Refusing to omit non-microcode data: {payload}')
-    print('Microcode payloads retained in the generic boot entry:', payload)
+    microcode = {}
+    for index, (archive, files) in enumerate(cpio_archives(early)):
+        if files and set(files) <= expected:
+            microcode.update(files)
+        else:
+            if set(files) & expected:
+                raise ValueError('Refusing to omit an archive mixing microcode and other files')
+            (work / f'extra-{index}.cpio').write_bytes(archive)
+            print(f'Keep early CPIO {index} ({len(files)} payloads, {len(archive)} bytes)')
+    if set(microcode) != expected:
+        raise ValueError(f'Unexpected microcode payloads: {microcode}')
+    print('Microcode retained in the generic boot entry:', microcode)
     (work / 'main.zst').write_bytes(main)
     (work / 'early.cpio').write_bytes(early)
 
