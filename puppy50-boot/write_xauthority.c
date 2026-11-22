@@ -15,12 +15,25 @@ static unsigned char *field(unsigned char *out, const void *data, size_t size)
     return out + size;
 }
 
+static int random_bytes(unsigned char *data, size_t length)
+{
+    ssize_t count;
+    do {
+        count = getrandom(data, length, 0);
+    } while (count < 0 && errno == EINTR);
+    return count >= 0 && (size_t)count == length;
+}
+
 int main(int argc, char **argv)
 {
     const char protocol[] = "MIT-MAGIC-COOKIE-1";
     unsigned char cookie[16];
     char host[256];
     unsigned char record[2 + 8 + sizeof(host) + 1 + sizeof(protocol) + sizeof(cookie)];
+    if (argc == 2 && strcmp(argv[1], "--initialize-rng") == 0) {
+        /* Block for the normal kernel CRNG early, then discard this sample. */
+        return random_bytes(cookie, sizeof(cookie)) ? 0 : 1;
+    }
     if (argc != 2) {
         fputs("usage: p50-write-xauthority FILE\n", stderr);
         return 2;
@@ -29,11 +42,7 @@ int main(int argc, char **argv)
         perror("gethostname");
         return 1;
     }
-    ssize_t generated;
-    do {
-        generated = getrandom(cookie, sizeof(cookie), 0);
-    } while (generated < 0 && errno == EINTR);
-    if (generated != sizeof(cookie)) {
+    if (!random_bytes(cookie, sizeof(cookie))) {
         fputs("Cannot generate a complete X11 cookie\n", stderr);
         return 1;
     }
