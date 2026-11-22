@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
-          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 python3-pil
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 python3-pil ripgrep
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           mkdir -p input out/config out/reports fixture
@@ -62,7 +62,10 @@ jobs:
           (cd out/initrd-root && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
           sudo cp -R out/initrd-root/usr/lib/live/boot out/reports/live-boot
           sudo cp -R out/initrd-root/usr/lib/p50-stage out/reports/p50-stage
-          sudo chown -R "$(id -u):$(id -g)" out/reports/live-boot out/reports/p50-stage
+          sudo cp out/initrd-root/init out/reports/init
+          sudo cp -R out/initrd-root/scripts out/reports/init-scripts
+          sudo find out/initrd-root/usr/bin -maxdepth 1 -printf '%f\t%l\n' | sort >out/reports/initrd-commands.txt
+          sudo chown -R "$(id -u):$(id -g)" out/reports/live-boot out/reports/p50-stage out/reports/init-scripts out/reports/init
           du -h out/initrd out/main.cpio out/main.zst
           du -ah out/initrd-root | sort -hr | sed -n '1,60p' >out/reports/initrd-size.txt
           unsquashfs -s out/root.sqfs >out/reports/root-info.txt
