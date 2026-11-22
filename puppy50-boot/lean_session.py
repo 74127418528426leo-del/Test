@@ -15,7 +15,7 @@ def patch(root):
     text = replace_once(
         text,
         'xauth -f /home/user/.Xauthority add :0 . "$p50_cookie"\np50_mark XAUTH',
-        r'''if /run/p50-stage/tools/p50-write-xauthority /home/user/.Xauthority; then
+        r'''if /usr/local/sbin/p50-write-xauthority /home/user/.Xauthority; then
     p50_mark LOCAL_COOKIE_OK
 else
     p50_cookie="$(mcookie)"
@@ -30,6 +30,14 @@ p50_mark XAUTH''',
         r'''        printf 'user_pref("datareporting.policy.dataSubmissionEnabled", false);\n' >>"$p50_profile/user.js" || panic "p50: cannot set live browser telemetry preference"
         chmod 0644 "$p50_profile/user.js"''',
     )
+    launch = 'cat > "$p50_start" <<\'P50_V123_START_X\''
+    copy_helper = r'''        # The early chroot's /run bind excludes the migration tools submount.
+        p50_xauth_helper="$p50_root/usr/local/sbin/p50-write-xauthority"
+        [ ! -e "$p50_xauth_helper" ] && [ ! -L "$p50_xauth_helper" ] || panic "p50: Xauthority helper path already exists"
+        cp /usr/lib/p50-stage/p50-write-xauthority "$p50_xauth_helper" || panic "p50: cannot stage Xauthority helper"
+        chmod 0700 "$p50_xauth_helper" || panic "p50: cannot secure Xauthority helper"
+'''
+    text = replace_once(text, launch, copy_helper + launch)
     script.write_text(text)
 
     init = root / 'init'
