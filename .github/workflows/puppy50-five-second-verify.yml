@@ -12,8 +12,8 @@ jobs:
     timeout-minutes: 35
     env:
       PYTHONPATH: input/source
-      P50_CPU: host
-      P50_ISO_SHA: 64bf5cad2cb60b0bdb832c8fcb1103484a60f5b159718db6cfabe59a6b07ac50
+      P50_CPU: i3-540-conservative
+      P50_ISO_SHA: aa074377b00832818bcb1cd45c0166cb1975b6c1b3ad778279fef6132941aaf6
       P50_NONCE: P50-UPDATED-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
           df -h .
       - uses: actions/download-artifact@v4
         with:
-          name: puppy50-five-direct-host-candidate
+          name: puppy50-five-direct-i3-540-conservative-candidate
           run-id: 44968752627
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: out/image
