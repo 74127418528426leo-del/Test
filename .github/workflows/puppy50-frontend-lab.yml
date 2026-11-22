@@ -1,0 +1,158 @@
+name: Puppy50 Firefox window readiness experiment
+on:
+  push:
+    branches: [puppy50-one-second-boot-20261122]
+    paths: ['.github/workflows/puppy50-frontend-lab.yml']
+permissions:
+  contents: read
+jobs:
+  measure:
+    name: Measure window startup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: input/source
+      P50_CPU: i3-540-conservative
+      P50_ROUTE: firefox-window
+      P50_ISO_SHA: aa074377b00832818bcb1cd45c0166cb1975b6c1b3ad778279fef6132941aaf6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install tools and verify the released ISO
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends xorriso zstd lz4 cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p out/boot out/reports fixture
+          release=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-direct-bios-preview-20261121
+          curl --retry 3 -fLsS "$release/Puppy50_Direct_BIOS_Preview.iso" -o out/reference.iso
+          printf '%s  out/reference.iso\n' "$P50_ISO_SHA" | sha256sum -c -
+          xorriso -osirrox on -indev out/reference.iso \
+            -extract /live/vmlinuz out/boot/vmlinuz \
+            -extract /live/initrd-vm.img out/boot/initrd-vm.img \
+            -extract /isolinux/live.cfg out/boot/live.cfg \
+            -extract /sha256sum.txt out/boot/sha256sum.txt
+          lscpu >out/reports/runner-cpu.txt
+          qemu-system-x86_64 --version >out/reports/qemu-version.txt
+      - name: Build the experimental ISO with an earlier window manager
+        run: |
+          set -euo pipefail
+          lab=input/research/puppy50-boot/boot_latency_lab.py
+          mkdir out/working
+          zstd -q -dc out/boot/initrd-vm.img >out/compact.cpio
+          (cd out/working && sudo cpio -idmu --quiet --no-absolute-filenames) <out/compact.cpio
+          sudo python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('out/working/usr/lib/live/boot/9990-main.sh')
+          old = 'sleep 2; exec /usr/bin/openbox-session'
+          text = path.read_text()
+          if text.count(old) != 1:
+              raise ValueError('Expected the exact published Openbox delay')
+          path.write_text(text.replace(old, 'sleep .20; exec /usr/bin/openbox-session', 1))
+          PY
+          sudo sh -n out/working/usr/lib/live/boot/9990-main.sh
+          (cd out/working && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --quiet) >out/compact-lab.cpio
+          zstd -q -T2 -6 out/compact-lab.cpio -o out/compact-lab.img
+          zstd -q -dc out/compact-lab.img | cmp out/compact-lab.cpio -
+          python3 "$lab" iso out/reference.iso out/candidate.iso out/boot out/compact-lab.img
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/integrity >out/reports/iso-extract.log 2>&1
+          (cd out/integrity && sha256sum -c --quiet sha256sum.txt)
+          cmp out/compact-lab.img out/integrity/live/initrd-vm.img
+          du -b out/boot/initrd-vm.img out/compact-lab.img >out/reports/initrd-sizes.txt
+          sha256sum out/reference.iso out/candidate.iso >out/reports/iso-sha256.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus = (
+              "    for attempt in range(1, 3):\n"
+              "        report['early_navigation_attempts'] = attempt\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})\n"
+              "        time.sleep(0.08)\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})\n"
+          )
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
+      - name: Time fresh boots and verify real browser input after ejection
+        run: |
+          set -euo pipefail
+          lab=input/research/puppy50-boot/boot_latency_lab.py
+          python3 "$lab" harness input/source/web109/boot_bench_ahci.py out/boot
+          sequence=(reference1 candidate1 candidate2 reference2 candidate3)
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          for sample in "${sequence[@]}"; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-${sample^^}"
+            mkdir -p "out/$sample"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >"out/$sample/http-receipts.log" 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket
+          import time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(0.05)
+          else:
+              raise RuntimeError('Per-boot HTTP receiver did not start')
+          PY
+            iso=out/reference.iso
+            if [[ "$sample" == candidate* ]]; then iso=out/candidate.iso; fi
+            rc=0
+            python3 -u input/source/web109/boot_bench_lab_bios.py \
+              --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 32 --cpu-model "$P50_CPU" --emulate-acer-id \
+              --firmware bios --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
+          done
+          python3 "$lab" report out "$P50_ROUTE" "$GITHUB_RUN_ID" "${sequence[@]}"
+      - name: Preserve per-boot results and screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-firefox-window-latency-evidence
+          path: |
+            out/reports/
+            out/reference*/
+            out/candidate*/
+          retention-days: 21
+      - name: Keep the exact experimental ISO for repeat testing
+        if: success() && hashFiles('out/candidate.iso') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-earlier-window-lab-iso
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
