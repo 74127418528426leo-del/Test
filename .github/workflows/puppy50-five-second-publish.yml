@@ -1,0 +1,139 @@
+name: Publish verified Puppy50 Direct BIOS Preview
+on:
+  push:
+    branches: [puppy50-five-second-boot-20261121]
+    paths: ['.github/workflows/puppy50-five-second-publish.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: puppy50-direct-bios-preview-20261121
+      ISO_SHA: aa074377b00832818bcb1cd45c0166cb1975b6c1b3ad778279fef6132941aaf6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-five-direct-i3-540-conservative-candidate
+          run-id: 44968752627
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: build
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-five-direct-i3-540-conservative-evidence
+          run-id: 44968752627
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: evidence/matched
+      - name: Verify the selected bytes and stage the ISO in a draft
+        run: |
+          set -euo pipefail
+          gh run view 44968752627 --repo "$GITHUB_REPOSITORY" --json status,conclusion | jq -e '.status=="completed" and .conclusion=="success"'
+          echo "$ISO_SHA  build/candidate.iso" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, statistics
+          report=json.loads(Path('evidence/matched/reports/comparison.json').read_text())
+          assert report['candidate_functional']
+          assert all(r['functional_ok'] for r in report['runs'].values())
+          frames=report['candidate_frames_seconds']
+          assert len(frames)==3 and all(x>0 for x in frames)
+          assert statistics.mean(frames)<5 and max(frames)>5
+          PY
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "The release tag already exists" >&2
+            exit 1
+          fi
+          mkdir -p assets
+          mv build/candidate.iso assets/Puppy50_Direct_BIOS_Preview.iso
+          (cd assets && sha256sum Puppy50_Direct_BIOS_Preview.iso >SHA256SUMS)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease \
+            --title 'Puppy50 Direct BIOS Preview' --notes 'Awaiting independent boot verification.'
+          gh release upload "$TAG" assets/Puppy50_Direct_BIOS_Preview.iso --repo "$GITHUB_REPOSITORY"
+      - name: Wait for the exact ISO to finish independent VM verification
+        run: |
+          set -euo pipefail
+          state=
+          for attempt in $(seq 1 50); do
+            state=$(gh run view 44969391689 --repo "$GITHUB_REPOSITORY" --json status,conclusion)
+            if jq -e '.status=="completed"' <<<"$state" >/dev/null; then break; fi
+            sleep 18
+          done
+          jq -e '.status=="completed" and .conclusion=="success"' <<<"$state"
+          gh run download 44969391689 --repo "$GITHUB_REPOSITORY" --name puppy50-five-independent-evidence --dir evidence/independent
+      - name: Prepare exact timing results, evidence and project sources
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, statistics
+          a=Path('assets')
+          matched=json.loads(Path('evidence/matched/reports/comparison.json').read_text())
+          independent=json.loads(Path('evidence/independent/reports/independent.json').read_text())
+          assert independent['candidate_sha256']==os.environ['ISO_SHA']
+          assert independent['cpu']=='i3-540-conservative' and independent['all_functional_checks_passed']
+          a.joinpath('TEST_RESULTS.json').write_text(json.dumps(matched,indent=2)+'\n')
+          a.joinpath('INDEPENDENT_RESULTS.json').write_text(json.dumps(independent,indent=2)+'\n')
+          def timings(values):
+              return ', '.join(f'{x:.2f} s' for x in values)
+          sample=matched['candidate_frames_seconds']
+          control=matched['baseline_frames_seconds']
+          repeats=independent['candidate_frames_seconds']
+          normal=independent['runs']
+          readme=f"""# Puppy50 Direct BIOS Preview
+          
+          Puppy50 is a temporary live system that opens Firefox ESR automatically. This experimental preview is designed for QEMU/KVM with BIOS, standard VGA, an AHCI virtual CD drive, two vCPUs with the conservative Westmere mask, and 3 GiB of guest RAM.
+          
+          | Test | Firefox home page visible |
+          | --- | --- |
+          | Matched BIOS control | {timings(control)} (mean {statistics.mean(control):.2f} s) |
+          | Matched BIOS preview | {timings(sample)} (mean {statistics.mean(sample):.2f} s) |
+          | Same ISO on a second runner | {timings(repeats)} |
+          | UEFI on a second runner | {normal['uefi1']['first_home_seen_seconds']:.2f} s |
+          | Alternate graphics on a second runner | {normal['graphics1']['first_home_seen_seconds']:.2f} s |
+          | Standard BIOS path on a second runner | {normal['standard1']['first_home_seen_seconds']:.2f} s |
+          
+          The clock starts just before QEMU launches. These are fresh guest boots, and host disk cache conditions can vary. The matched sample averaged under five seconds and included a boot over five seconds. Physical startup speed and hardware compatibility still need direct testing.
+          
+          The candidate was tested with a visible JavaScript interaction, a SHA-256 verified copy of its root filesystem into RAM, QEMU-confirmed removal of the virtual boot medium, and a fresh browser request afterward. The BIOS startup path uses a smaller VM initramfs, initializes secure randomness early, and seeds application caches generated by the same Firefox release in a fresh offline VM. It starts with one Firefox tab and disables telemetry for the temporary fast-boot profile. Use the existing general preview for physical USB boots. Keep physical media connected when using either ISO.
+          
+          [Matched tests](https://github.com/74127418528426leo-del/Test/actions/runs/44968752627) · [Independent verification](https://github.com/74127418528426leo-del/Test/actions/runs/44969391689)
+          
+          [General preview and Debian package source archives](https://github.com/74127418528426leo-del/Test/releases/tag/puppy50-browser-live-public-preview-20261114)
+          """
+          a.joinpath('README.md').write_text(readme)
+          PY
+          (cd evidence && zip -rq ../assets/TEST_EVIDENCE.zip matched independent)
+          git archive --format=zip --output=assets/PROJECT_SOURCES.zip b3e9b2afd465da1daea1d49200a9c7db9b1997d9 \
+            puppy50-boot .github/workflows/puppy50-five-second-direct.yml
+          (cd assets && sha256sum ./* >ALL_ASSETS_SHA256SUMS.txt)
+      - name: Verify uploaded files and publish the experimental preview
+        run: |
+          set -euo pipefail
+          for file in assets/*; do
+            if [[ "$file" != assets/Puppy50_Direct_BIOS_Preview.iso ]]; then
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" >release.json
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          r=[x for x in json.loads(Path('release.json').read_text()) if x['tag_name']==os.environ['TAG']]
+          assert len(r)==1 and r[0]['draft'] and r[0]['prerelease']
+          files={p.name:p for p in Path('assets').iterdir()}
+          assets={a['name']:a for a in r[0]['assets']}
+          assert set(files)==set(assets)
+          for name,path in files.items():
+              with path.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+              assert assets[name]['state']=='uploaded' and assets[name]['size']==path.stat().st_size
+              assert assets[name]['digest']=='sha256:'+digest,name
+          PY
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file assets/README.md --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease | jq -e '.isDraft==false and .isPrerelease==true'
