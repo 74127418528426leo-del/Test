@@ -1,0 +1,195 @@
+name: Puppy50 research - verify candidate ISO from another runner
+on:
+  push:
+    branches: [puppy50-five-second-boot-20261121]
+    paths: ['.github/workflows/puppy50-five-second-verify.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_CPU: host
+      P50_ISO_SHA: 64bf5cad2cb60b0bdb832c8fcb1103484a60f5b159718db6cfabe59a6b07ac50
+      P50_NONCE: P50-UPDATED-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install tools and verify patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 python3-pil ripgrep syslinux-common ovmf
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/config out/reports fixture
+          df -h .
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-five-direct-host-candidate
+          run-id: 44968752627
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: out/image
+      - name: Check the exact candidate before a second series of boots
+        run: |
+          set -euo pipefail
+          echo "$P50_ISO_SHA  out/image/candidate.iso" | sha256sum -c -
+          xorriso -osirrox on -indev out/image/candidate.iso -extract / out/integrity
+          (cd out/integrity && sha256sum -c --quiet sha256sum.txt)
+          lscpu >out/reports/runner-cpu.txt
+          sha256sum out/image/candidate.iso >out/reports/iso-sha256.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus="""    for attempt in range(1, 3):
+                  report['early_navigation_attempts'] = attempt
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})
+                  time.sleep(0.08)
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})
+          """
+          focus="    for attempt in range(1, 3):\n"+"\n".join(line.strip().rjust(len(line.strip())+8) for line in focus.splitlines()[1:] if line.strip())+"\n"
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
+      - name: Benchmark repeat cold BIOS boots and check the browser after ejection
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p=Path('input/source/web109/boot_bench_ahci.py')
+          text=p.read_text()
+          if os.environ['P50_CPU']=='host':
+              assert text.count("'-smp', '2',")==1
+              text=text.replace("'-smp', '2',","'-smp', '4',")
+          old="                            result['first_home_seen_seconds'] = round(time.monotonic() - started, 2)"
+          assert text.count(old)==1
+          text=text.replace(old,"                            result['first_home_seen_seconds'] = time.monotonic() - started")
+          assert text.count('else .2)')==1
+          text=text.replace('else .2)','else .08)')
+          assert text.count('time.sleep(25)')==1
+          text=text.replace('time.sleep(25)','time.sleep(9)')
+          compile(text,str(p),'exec')
+          p.write_text(text)
+          PY
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          for sample in cand1 cand2 cand3 uefi1 graphics1 standard1; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-$(echo "$sample" | tr "[:lower:]" "[:upper:]")"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket, time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(.05)
+          else:
+              raise RuntimeError('Per-boot network fixture failed to start')
+          PY
+            iso=out/image/candidate.iso
+            firmware=bios
+            bench=input/source/web109/boot_bench_ahci.py
+            cpu="$P50_CPU"
+            if [[ "$sample" == uefi1 ]]; then firmware=uefi; cpu=i3-540-conservative; fi
+            if [[ "$sample" == graphics1 ]]; then bench=input/source/web109/boot_bench_cirrus_public.py; cpu=i3-540-conservative; fi
+            if [[ "$sample" == standard1 ]]; then
+              bench=input/source/web109/boot_bench_no_hypervisor.py
+              cp input/source/web109/boot_bench_ahci.py "$bench"
+              sed -i 's/,-3dnowprefetch/,-3dnowprefetch,-hypervisor/' "$bench"
+              cpu=i3-540-conservative
+            fi
+            rc=0
+            python3 -u "$bench" \
+              --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 45 --cpu-model "$cpu" --emulate-acer-id \
+              --firmware "$firmware" --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+            cp out/reports/fixture-after.log "out/$sample/http-receipts.log"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, re
+          runs={}
+          for n in ('cand1','cand2','cand3','uefi1','graphics1','standard1'):
+              p=Path('out')/n
+              r=json.loads((p/'result.json').read_text())
+              serial=(p/'serial.log').read_text(errors='replace')
+              receipts=(p/'http-receipts.log').read_text()
+              common=all([
+                  (p/'exit-status').read_text().strip()=='0',
+                  r['first_home_seen_seconds'] is not None, r.get('early_js_response_seconds') is not None,
+                  r['staged_ram_ready_seconds'] is not None and r['media_ejected'],
+                  r.get('post_eject_browser_http200_confirmed'),
+                  ('-TRIAL-'+n.upper()+' HTTP/1.1" 200') in receipts,
+                  'P50_STAGE_COPY_VERIFIED' in serial,
+                  'P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs' in serial,
+                  not r['errors']
+              ])
+              if n.startswith('cand'):
+                  real_user=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+\S+\s+firefox-esr\s+',serial,re.M))
+                  window_manager=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+\S+\s+openbox\s+',serial,re.M))
+                  signed_session=all(x in serial for x in ['P50_FIVE_HOSTNAME_SET','P50_FIVE_LOCAL_COOKIE_OK','P50_FIVE_RNG_READY','P50_FIVE_CACHE_SEEDED'])
+                  common=common and real_user and window_manager and signed_session and 'Authorization required' not in serial
+              else:
+                  common=common and 'P50_FIVE_LAUNCHER' not in serial
+              r['all_functional_checks_passed']=common
+              runs[n]=r
+          times=[runs[n]['first_home_seen_seconds'] for n in ('cand1','cand2','cand3')]
+          functional=all(v['all_functional_checks_passed'] for v in runs.values())
+          report={'candidate_sha256':os.environ['P50_ISO_SHA'],
+                  'cpu':os.environ['P50_CPU'],'candidate_frames_seconds':times,
+                  'all_functional_checks_passed':functional,
+                  'five_seconds_verified':functional and all(0<t<=5.0 for t in times),
+                  'runs':runs}
+          Path('out/reports/independent.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k!='runs'},indent=2))
+          if not functional:
+              raise SystemExit('Candidate did not pass independent functionality checks')
+          PY
+      - name: Preserve independent verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-five-independent-evidence
+          path: |
+            out/reports/
+            out/cand1/
+            out/cand2/
+            out/cand3/
+            out/uefi1/
+            out/graphics1/
+            out/standard1/
+          retention-days: 21
