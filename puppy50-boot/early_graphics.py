@@ -30,20 +30,20 @@ def keep_rng_evidence(root):
     init.write_text(text[:at] + stable + text[end:])
 
 
-def add_bochs_driver(root, source):
+def add_early_module(root, source, module):
     versions = list((root / 'usr/lib/modules').glob('*/kernel'))
     if len(versions) != 1:
         raise ValueError('Expected a single compact kernel')
     release = versions[0].parent.name
     module_dir = source / 'usr/lib/modules' / release
     result = subprocess.run(
-        ['modprobe', '-d', str(source.resolve()), '-S', release, '--ignore-install', '--show-depends', 'bochs'],
+        ['modprobe', '-d', str(source.resolve()), '-S', release, '--ignore-install', '--show-depends', module],
         check=True, text=True, capture_output=True,
     )
     modules = [Path(line.split()[1]).resolve(strict=True)
                for line in result.stdout.splitlines() if line.startswith('insmod ')]
-    if not any(m.name.startswith('bochs.ko') for m in modules):
-        raise ValueError('The source root does not contain the exact Bochs module')
+    if not any(m.name.split('.ko', 1)[0].replace('-', '_') == module.replace('-', '_') for m in modules):
+        raise ValueError(f'The source root does not contain the pinned {module} driver')
     for path in modules:
         relative = path.relative_to(module_dir.resolve())
         target = versions[0].parent / relative
@@ -57,7 +57,7 @@ def add_bochs_driver(root, source):
 
 
 def prepare_devices(root, modules):
-    add_bochs_driver(root, modules)
+    add_early_module(root, modules, 'bochs')
     init = root / 'init'
     marker = '\nexport P50_OPTICAL_PATH\n'
     probe = r'''
