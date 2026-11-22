@@ -34,6 +34,17 @@ p50_mark XAUTH''',
 
     init = root / 'init'
     text = init.read_text()
+    start = 'mkdir -m 0700 /run/initramfs\n'
+    warm = r'''# Start kernel randomness initialization while drivers load.
+(
+    if /usr/lib/p50-stage/p50-write-xauthority --initialize-rng; then
+        printf 'P50_FIVE_RNG_READY %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
+    else
+        printf 'P50_FIVE_RNG_INIT_FAILED\n' >/dev/ttyS0
+    fi
+) </dev/null >/dev/null 2>&1 &
+'''
+    text = replace_once(text, start, start + warm)
     for instruction, marker in (
         ('run_scripts /scripts/init-top', 'INIT_TOP'),
         ('load_modules', 'ESSENTIAL_MODULES'),
