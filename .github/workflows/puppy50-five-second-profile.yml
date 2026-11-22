@@ -1,0 +1,129 @@
+name: Puppy50 research - cold boot timing profile
+on:
+  push:
+    branches: [puppy50-five-second-boot-20261121]
+    paths: ['.github/workflows/puppy50-five-second-profile.yml']
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-UPDATED-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: puppy50-public-preview-candidate-20261114
+          path: input/preview
+      - name: Install tools and verify patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/config out/reports fixture
+          df -h .
+      - name: Audit the released image and extract boot sources
+        run: |
+          set -euo pipefail
+          release=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-fast-bios-lz4-preview-20261117
+          curl --retry 3 -fLsS "$release/Puppy50_BIOS_Fast_EXPERIMENTAL.iso" -o out/control.iso
+          echo 'b035187b2c6ad8e1686b10889d7d67144d16be22b5ed734cc9da613b5a14db32  out/control.iso' | sha256sum -c -
+          xorriso -indev out/control.iso -report_el_torito as_mkisofs -report_system_area plain >out/reports/boot-image.txt 2>&1
+          xorriso -osirrox on -indev out/control.iso \
+            -extract /live/initrd.img out/initrd \
+            -extract /live/filesystem.squashfs out/root.sqfs \
+            -extract /isolinux out/reports/isolinux \
+            -extract /boot/grub out/config/grub \
+            -extract /sha256sum.txt out/reports/iso-manifest.txt
+          find out/config/grub -maxdepth 1 -type f -name '*.cfg' -exec cp {} out/reports/ \;
+          python3 - <<'PY'
+          from pathlib import Path
+          data=Path('out/initrd').read_bytes()
+          split=45302784
+          assert data[split:split+4] == bytes.fromhex('28b52ffd')
+          Path('out/early.cpio').write_bytes(data[:split])
+          Path('out/main.zst').write_bytes(data[split:])
+          print('early prefix:', split, 'compressed main:', len(data)-split)
+          PY
+          cpio -itv <out/early.cpio >out/reports/early-cpio.txt
+          zstd -q -dc out/main.zst >out/main.cpio
+          mkdir out/initrd-root
+          (cd out/initrd-root && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo cp -R out/initrd-root/usr/lib/live/boot out/reports/live-boot
+          sudo cp -R out/initrd-root/usr/lib/p50-stage out/reports/p50-stage
+          sudo chown -R "$(id -u):$(id -g)" out/reports/live-boot out/reports/p50-stage
+          du -h out/initrd out/main.cpio out/main.zst
+          du -ah out/initrd-root | sort -hr | sed -n '1,60p' >out/reports/initrd-size.txt
+          unsquashfs -s out/root.sqfs >out/reports/root-info.txt
+          unsquashfs -ll out/root.sqfs | rg '/(libxul\.so|omni\.ja|firefox-esr|fonts\.conf|xauth|mcookie|Xorg|modesetting_drv\.so)$' >out/reports/root-startup-files.txt
+          lscpu >out/reports/runner-cpu.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus="""    for attempt in range(1, 3):
+                  report['early_navigation_attempts'] = attempt
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})
+                  time.sleep(0.08)
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})
+          """
+          focus="    for attempt in range(1, 3):\n"+"\n".join(line.strip().rjust(len(line.strip())+8) for line in focus.splitlines()[1:] if line.strip())+"\n"
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Record CPU, Linux and first visible Firefox timing
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('input/source/web109/boot_bench_ahci.py')
+          text=path.read_text()
+          old="    with (out / 'qemu.log').open('wb') as log:"
+          assert text.count(old)==1
+          milestones=['P50_V118_EARLY_USER_READY','P50_V125_DRM_GATE_START','P50_V125_EARLY_DRM_READY','P50_V123_INITRD_LAUNCH_REQUEST','P50_V123_XORG_START','P50_V127_FIREFOX_DIRECT_EXEC']
+          text=text.replace(old,f"    markers.extend({milestones!r})\n"+old)
+          compile(text,str(path),'exec')
+          path.write_text(text)
+          PY
+          for sample in baseline1 baseline2; do
+            python3 -u input/source/web109/boot_bench_ahci.py \
+              --iso out/control.iso --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 70 --cpu-model i3-540-conservative --emulate-acer-id \
+              --firmware bios --media usb --bandwidth 0 --wait-ram-ready
+          done
+      - name: Preserve timings and boot sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-five-second-profile
+          path: |
+            out/reports/
+            out/baseline1/
+            out/baseline2/
+          retention-days: 14
