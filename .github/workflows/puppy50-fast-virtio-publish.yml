@@ -1,0 +1,102 @@
+name: Publish the verified Puppy50 Fast VirtIO BIOS Preview
+on:
+  push:
+    branches: [puppy50-early-entropy-20261122]
+    paths: ['.github/workflows/puppy50-fast-virtio-publish.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    name: Verify evidence and publish the exact ISO as a prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: puppy50-fast-virtio-bios-preview-20261122
+      IMG_SHA: 018ffbaf6db563de828d79aba7002ab043644978fd23a86c2589733e4a9dad61
+      SOURCE_SHA: b75e076641780ed4f5cccf278d1d6d4bef786e78
+      MATCHED: '45073456795'
+      INDEPENDENT: '45073991871'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the conclusion of both verification runs
+        run: |
+          set -euo pipefail
+          for run in "$MATCHED" "$INDEPENDENT"; do
+            gh run view "$run" --json status,conclusion | jq -e '.status=="completed" and .conclusion=="success"'
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-cold-entropy-images
+          run-id: 45073456795
+          github-token: ${{ github.token }}
+          path: build
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-cold-entropy-bios-evidence
+          run-id: 45073456795
+          github-token: ${{ github.token }}
+          path: evidence/matched
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-cold-entropy-direct-evidence
+          run-id: 45073456795
+          github-token: ${{ github.token }}
+          path: evidence/direct
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-cold-entropy-independent
+          run-id: 45073991871
+          github-token: ${{ github.token }}
+          path: evidence/independent
+      - name: Verify first-attempt input and prepare the assets
+        run: |
+          set -euo pipefail
+          mkdir assets
+          mv build/tuned.iso assets/Puppy50_Fast_VirtIO_BIOS_Preview.iso
+          python3 puppy50-boot/assemble_virtio_preview.py --repo "$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" --matched "$MATCHED" --independent "$INDEPENDENT" --sha "$IMG_SHA"
+          (cd evidence && zip -rq ../assets/TEST_EVIDENCE.zip matched direct independent)
+          git archive --format=zip --output=assets/PROJECT_SOURCES.zip HEAD \
+            puppy50-boot .github/workflows/puppy50-early-entropy.yml .github/workflows/puppy50-early-entropy-verify.yml
+          (cd assets && sha256sum *.iso *.json *.md *.zip >SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Verify the release assets before making the download public
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish >existing.json 2>/dev/null; then
+            jq -e --arg commit "$GITHUB_SHA" '.isDraft and .targetCommitish==$commit' existing.json
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --latest=false \
+              --title 'Puppy50 Fast VirtIO BIOS Preview' --notes-file assets/README.md
+          fi
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -er --arg tag "$TAG" '.[] | select(.tag_name==$tag and .draft) | .id')
+          endpoint="repos/$GITHUB_REPOSITORY/releases/$release_id"
+          for file in assets/*; do
+            name=${file##*/}
+            stored=$(gh api "$endpoint" | jq -r --arg name "$name" '.assets[] | select(.name==$name) | .digest')
+            if [[ -n "$stored" ]]; then
+              [[ "$stored" == "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]]
+            else
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+          gh api "$endpoint" >release.json
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          r = json.loads(Path('release.json').read_text())
+          assert r['draft'] and r['prerelease']
+          assets = {a['name']: a for a in r['assets']}
+          local = {p.name: p for p in Path('assets').iterdir()}
+          assert assets.keys() == local.keys()
+          for name, path in local.items():
+              with path.open('rb') as f:
+                  assert assets[name]['digest'] == 'sha256:'+hashlib.file_digest(f,'sha256').hexdigest(), name
+              assert assets[name]['size'] == path.stat().st_size and assets[name]['state'] == 'uploaded', name
+          PY
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false --notes-file assets/README.md
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease | jq -e '(.isDraft==false and .isPrerelease==true)'
