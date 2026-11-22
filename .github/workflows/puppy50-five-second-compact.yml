@@ -1,0 +1,194 @@
+name: Puppy50 research - compact VM initramfs and Firefox startup
+on:
+  push:
+    branches: [puppy50-five-second-boot-20261121]
+    paths: ['.github/workflows/puppy50-five-second-compact.yml']
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: input/source
+      P50_NONCE: P50-UPDATED-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install tools and verify patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 python3-pil ripgrep syslinux-common ovmf
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/config out/reports fixture
+          df -h .
+      - name: Build compact VM BIOS candidate with full hardware and recovery entries
+        run: |
+          set -euo pipefail
+          release=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-fast-bios-lz4-preview-20261117
+          curl --retry 3 -fLsS "$release/Puppy50_BIOS_Fast_EXPERIMENTAL.iso" -o out/control.iso
+          echo 'b035187b2c6ad8e1686b10889d7d67144d16be22b5ed734cc9da613b5a14db32  out/control.iso' | sha256sum -c -
+          xorriso -osirrox on -indev out/control.iso \
+            -extract /live/initrd.img out/initrd \
+            -extract /isolinux/live.cfg out/live.cfg \
+            -extract /sha256sum.txt out/original.sha256sum.txt \
+            -extract /isolinux/ldlinux.c32 out/ldlinux.c32
+          python3 input/research/puppy50-boot/repack.py split out/initrd out
+          zstd -q -dc out/main.zst >out/main.cpio
+          mkdir out/working
+          (cd out/working && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          sudo python3 input/research/puppy50-boot/repack.py patch out/working --prefetch-mib 128
+          sudo sh -n out/working/usr/lib/live/boot/9990-main.sh
+          sudo cp out/working/usr/lib/live/boot/9990-main.sh out/reports/candidate-live-boot.sh
+          (cd out/working && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio -o --null -H newc --quiet) >out/compact.cpio
+          zstd -T2 -q -9 out/compact.cpio -o out/compact.initrd
+          zstd -q -dc out/compact.initrd | cmp - out/compact.cpio
+          selector=/usr/lib/syslinux/modules/bios/ifcpu.c32
+          test -s "$selector"
+          sha256sum out/ldlinux.c32 /usr/lib/syslinux/modules/bios/ldlinux.c32 "$selector" >out/reports/syslinux-shas.txt
+          python3 input/research/puppy50-boot/repack.py repack out/control.iso out candidate out/compact.initrd "$selector"
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/verify >out/reports/iso-extract.log 2>&1
+          (cd out/verify && sha256sum -c --quiet sha256sum.txt)
+          cmp out/initrd out/verify/live/initrd.img
+          cmp out/compact.initrd out/verify/live/initrd-vm.img
+          python3 - <<'PY'
+          from pathlib import Path
+          original={line[66:]:line[:64] for line in Path('out/original.sha256sum.txt').read_text().splitlines()}
+          updated={line[66:]:line[:64] for line in Path('out/verify/sha256sum.txt').read_text().splitlines()}
+          assert set(updated)-set(original)=={'./isolinux/ifcpu.c32','./live/initrd-vm.img'}
+          assert all(updated[path]==sha for path,sha in original.items() if path!='./isolinux/live.cfg')
+          PY
+          sha256sum out/control.iso out/candidate.iso >out/reports/iso-sha256.txt
+          du -bh out/initrd out/compact.initrd >out/reports/initrd-size.txt
+          lscpu >out/reports/runner-cpu.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus="""    for attempt in range(1, 3):
+                  report['early_navigation_attempts'] = attempt
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})
+                  time.sleep(0.08)
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})
+          """
+          focus="    for attempt in range(1, 3):\n"+"\n".join(line.strip().rjust(len(line.strip())+8) for line in focus.splitlines()[1:] if line.strip())+"\n"
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 </dev/null &
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8765,8766)]'
+      - name: Compare real cold BIOS frames and verify the fallback
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('input/source/web109/boot_bench_ahci.py')
+          text=path.read_text()
+          old="    with (out / 'qemu.log').open('wb') as log:"
+          assert text.count(old)==1
+          milestones=['P50_V118_EARLY_USER_READY','P50_V125_DRM_GATE_START','P50_V125_EARLY_DRM_READY','P50_V123_INITRD_LAUNCH_REQUEST','P50_V123_XORG_START','P50_V127_FIREFOX_DIRECT_EXEC','P50_FIVE_LAUNCHER','P50_FIVE_COOKIE','P50_FIVE_RUNTIME_DIRS','P50_FIVE_RUNTIME_PERMISSIONS','P50_FIVE_XAUTH','P50_FIVE_XAUTH_PERMISSIONS','P50_FIVE_PREFETCH_OK','P50_FIVE_PREFETCH_FAILED']
+          text=text.replace(old,f"    markers.extend({milestones!r})\n"+old)
+          compile(text,str(path),'exec')
+          path.write_text(text)
+          PY
+          cp input/source/web109/boot_bench_ahci.py input/source/web109/boot_bench_no_hypervisor.py
+          sed -i 's/,-3dnowprefetch/,-3dnowprefetch,-hypervisor/' input/source/web109/boot_bench_no_hypervisor.py
+          for sample in base1 cand1 cand2 base2 cand3 cand_uefi cand_no_hypervisor; do
+            iso=out/candidate.iso
+            script=input/source/web109/boot_bench_ahci.py
+            firmware=bios
+            [[ "$sample" == base* ]] && iso=out/control.iso
+            [[ "$sample" == cand_uefi ]] && firmware=uefi
+            [[ "$sample" == cand_no_hypervisor ]] && script=input/source/web109/boot_bench_no_hypervisor.py
+            rc=0
+            python3 -u "$script" --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 45 --cpu-model i3-540-conservative --emulate-acer-id \
+              --firmware "$firmware" --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          names=['base1','cand1','cand2','base2','cand3','cand_uefi','cand_no_hypervisor']
+          runs={}
+          for name in names:
+              path=Path('out')/name
+              d=json.loads((path/'result.json').read_text())
+              t=(path/'serial.log').read_text(errors='replace')
+              d['compact_path']='P50_FIVE_LAUNCHER' in t
+              d['nonroot_firefox']='P50_V91_NONROOT_FIREFOX_PROCESS_SEEN' in t
+              d['copy_verified']='P50_STAGE_COPY_VERIFIED' in t
+              d['ram_backing']='P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs' in t
+              d['functional_ok']=all([
+                  (path/'exit-status').read_text().strip()=='0',
+                  d['first_home_seen_seconds'] is not None,
+                  d.get('early_js_response_seconds') is not None,
+                  d['staged_ram_ready_seconds'] is not None,
+                  d['media_ejected'], d.get('post_eject_browser_http200_confirmed'),
+                  d['nonroot_firefox'], d['copy_verified'], d['ram_backing'],
+                  not d['errors']
+              ])
+              runs[name]=d
+          bios_names=('cand1','cand2','cand3')
+          frame='first_home_seen_seconds'
+          bios=[runs[n].get(frame) for n in bios_names]
+          good=all(runs[n]['functional_ok'] for n in names)
+          selection=all(runs[n]['compact_path']==(n in bios_names) for n in names)
+          target=good and selection and all(t is not None and 0<t<=5 for t in bios)
+          report={'bios_target_seconds':5.0,'bios_target_pass':target,
+                  'fallback_selection_pass':selection,'all_functional':good,
+                  'bios_baseline_frames':[runs[n].get(frame) for n in ('base1','base2')],
+                  'bios_candidate_frames':bios,
+                  'run_results':runs}
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k!='run_results'},indent=2))
+          if not good or not selection:
+              raise SystemExit('Functional or boot entry check failed')
+          PY
+      - name: Retain VM measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-five-compact-evidence
+          path: |
+            out/reports/
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/cand3/
+            out/cand_uefi/
+            out/cand_no_hypervisor/
+          retention-days: 21
+      - name: Preserve the verified bootable candidate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-five-compact-candidate
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
