@@ -71,11 +71,42 @@ def reduce_display_waits(root):
     script.write_text(text)
 
 
+def warm_before_session(root):
+    script = root / 'usr/lib/live/boot/9990-main.sh'
+    text = script.read_text()
+    mark = '\n\tif [ -n "${ROOT_PID}" ]\n'
+    warm = r'''
+	if [ "${P50_OPTICAL_PATH:-0}" = 1 ] && [ -b /dev/mapper/p50-staged-root ]; then
+	    p50_optical_prefetch=1
+	    (
+	        if /usr/lib/p50-stage/p50-warm-firefox "$rootmnt/usr/lib/firefox-esr/libxul.so"; then
+	            printf 'P50_FIVE_PREFETCH_OK %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
+	        else
+	            printf 'P50_FIVE_PREFETCH_FAILED %s\n' "$(cat /proc/uptime)" >/dev/ttyS0
+	        fi
+	    ) </dev/null >/dev/null 2>&1 &
+	fi
+'''
+    text = replace_once(text, mark, warm + mark)
+    begin = text.index('        # P50_V131_LIBXUL_READAHEAD:')
+    end = text.index('        # P50_V125_DRM_PREREQ:', begin)
+    block = text[begin:end]
+    if block.count('P50_FIVE_PREFETCH_OK') != 1:
+        raise ValueError('Expected the later Firefox prefetch block')
+    wrapped = '        if [ "${p50_optical_prefetch:-0}" != 1 ]; then\n'
+    wrapped += ''.join('    ' + line for line in block.splitlines(keepends=True))
+    wrapped += '        fi\n'
+    script.write_text(text[:begin] + wrapped + text[end:])
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
     parser.add_argument('--reduce-display-waits', action='store_true')
+    parser.add_argument('--early-prefetch', action='store_true')
     args = parser.parse_args()
     patch(args.root)
     if args.reduce_display_waits:
         reduce_display_waits(args.root)
+    if args.early_prefetch:
+        warm_before_session(args.root)
