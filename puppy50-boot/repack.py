@@ -105,7 +105,8 @@ def modify_boot_script(initrd, prefetch_mib):
         text = replace_once(text, command + '\n', command + f'\np50_mark {marker}\n')
     if prefetch_mib:
         prefetch = OLD_PREFETCH.splitlines()[0].replace(
-            'nice -n 10 dd', '/usr/lib/p50-stage/busybox nice -n 5 /usr/lib/p50-stage/busybox dd'
+            'nice -n 10 dd if="$p50_lib"',
+            'chroot "$p50_root" /usr/bin/nice -n 5 /usr/bin/dd if=/usr/lib/firefox-esr/libxul.so',
         ).replace('count=256', f'count={prefetch_mib}')
     else:
         prefetch = OLD_PREFETCH.splitlines()[0]
