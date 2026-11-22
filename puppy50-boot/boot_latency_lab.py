@@ -27,6 +27,7 @@ def prepare_harness(source, boot_files):
     for old, new in (
         ("else .2)", "else .08)"),
         ("time.sleep(25)", "time.sleep(9)"),
+        ("fixture_log = out.parent / 'reports' / 'fixture-after.log'", "fixture_log = out / 'http-receipts.log'"),
         (home_time + "round(time.monotonic() - started, 2)", home_time + "time.monotonic() - started"),
         ("    with (out / 'qemu.log').open", f"    markers.extend({MARKERS!r})\n    with (out / 'qemu.log').open"),
     ):
