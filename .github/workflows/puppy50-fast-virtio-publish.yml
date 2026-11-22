@@ -14,6 +14,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: puppy50-fast-virtio-bios-preview-20261122
+      DRAFT_ID: '454779655'
+      DRAFT_TARGET: 99bd497ffb2fdf132497e97164d5f287b65fc847
       IMG_SHA: 018ffbaf6db563de828d79aba7002ab043644978fd23a86c2589733e4a9dad61
       SOURCE_SHA: b75e076641780ed4f5cccf278d1d6d4bef786e78
       MATCHED: '45073456795'
@@ -22,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: 99bd497ffb2fdf132497e97164d5f287b65fc847
       - name: Check the conclusion of both verification runs
         run: |
           set -euo pipefail
@@ -66,21 +69,20 @@ jobs:
       - name: Verify the release assets before making the download public
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish >existing.json 2>/dev/null; then
-            jq -e --arg commit "$GITHUB_SHA" '.isDraft and .targetCommitish==$commit' existing.json
-          else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --latest=false \
-              --title 'Puppy50 Fast VirtIO BIOS Preview' --notes-file assets/README.md
-          fi
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -er --arg tag "$TAG" '.[] | select(.tag_name==$tag and .draft) | .id')
-          endpoint="repos/$GITHUB_REPOSITORY/releases/$release_id"
+          endpoint="repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID"
+          gh api "$endpoint" >existing.json
+          jq -e --arg tag "$TAG" --arg target "$DRAFT_TARGET" \
+            '.tag_name==$tag and .target_commitish==$target and .draft and .prerelease' existing.json
           for file in assets/*; do
             name=${file##*/}
             stored=$(gh api "$endpoint" | jq -r --arg name "$name" '.assets[] | select(.name==$name) | .digest')
             if [[ -n "$stored" ]]; then
               [[ "$stored" == "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]]
             else
-              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+              curl --fail-with-body --silent --show-error --request POST --upload-file "$file" \
+                -H "Authorization: Bearer $GH_TOKEN" -H 'Content-Type: application/octet-stream' \
+                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID/assets?name=$name" \
+                | jq -e --arg name "$name" '.name==$name and .state=="uploaded"'
             fi
           done
           gh api "$endpoint" >release.json
@@ -98,5 +100,16 @@ jobs:
                   assert assets[name]['digest'] == 'sha256:'+hashlib.file_digest(f,'sha256').hexdigest(), name
               assert assets[name]['size'] == path.stat().st_size and assets[name]['state'] == 'uploaded', name
           PY
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false --notes-file assets/README.md
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease | jq -e '(.isDraft==false and .isPrerelease==true)'
+          jq -n --rawfile notes assets/README.md '{body:$notes,draft:false,prerelease:true,make_latest:"false"}' >publish.json
+          gh api --method PATCH "$endpoint" --input publish.json --jq '.html_url'
+      - name: Check the public checksum and bootable ISO link without credentials
+        run: |
+          set -euo pipefail
+          public="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          curl --retry 5 --retry-delay 3 --retry-all-errors -fsSL "$public/SHA256SUMS" -o public-sha256
+          cmp assets/SHA256SUMS public-sha256
+          iso=Puppy50_Fast_VirtIO_BIOS_Preview.iso
+          curl --retry 5 --retry-delay 3 --retry-all-errors -fsSL --range 32768-32774 --max-filesize 7 "$public/$iso" -o iso-header
+          dd if="assets/$iso" bs=1 skip=32768 count=7 status=none | cmp - iso-header
+          python3 -c 'from pathlib import Path; assert Path("iso-header").read_bytes()[1:6] == b"CD001"'
+          gh api "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" --jq '{url:.html_url, draft, prerelease}'
