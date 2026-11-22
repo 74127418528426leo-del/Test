@@ -1,0 +1,238 @@
+name: Puppy50 research - overlap Firefox reads with live-root setup
+on:
+  push:
+    branches: [puppy50-five-second-boot-20261121]
+    paths: ['.github/workflows/puppy50-five-second-overlap.yml']
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        cpu: [i3-540-conservative, host]
+    env:
+      PYTHONPATH: input/source
+      P50_CPU: ${{ matrix.cpu }}
+      P50_NONCE: P50-UPDATED-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install tools and verify patch tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools zstd cpio qemu-system-x86 python3-pil ripgrep syslinux-common ovmf
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p input out/config out/reports fixture
+          df -h .
+      - name: Build offline Firefox cache collector
+        run: |
+          set -euo pipefail
+          release=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-fast-bios-lz4-preview-20261117
+          curl --retry 3 -fLsS "$release/Puppy50_BIOS_Fast_EXPERIMENTAL.iso" -o out/control.iso
+          echo 'b035187b2c6ad8e1686b10889d7d67144d16be22b5ed734cc9da613b5a14db32  out/control.iso' | sha256sum -c -
+          xorriso -osirrox on -indev out/control.iso \
+            -extract /live/initrd.img out/initrd \
+            -extract /isolinux/live.cfg out/live.cfg \
+            -extract /sha256sum.txt out/original.sha256sum.txt \
+            -extract /isolinux/ldlinux.c32 out/ldlinux.c32
+          python3 input/research/puppy50-boot/repack.py split out/initrd out
+          zstd -q -dc out/main.zst >out/main.cpio
+          mkdir out/working
+          for archive in out/extra-*.cpio out/main.cpio; do
+            (cd out/working && sudo cpio -idmu --quiet --no-absolute-filenames) <"$archive"
+          done
+          gcc -O2 -s -static -Wall -Wextra -Werror input/research/puppy50-boot/write_xauthority.c -o out/p50-write-xauthority
+          sudo install -m 0755 out/p50-write-xauthority out/working/usr/lib/p50-stage/
+          sudo python3 input/research/puppy50-boot/lean_session.py out/working
+          sudo sh -n out/working/init
+          sudo sh -n out/working/usr/lib/live/boot/9990-main.sh
+          sudo cp out/working/usr/lib/live/boot/9990-main.sh out/reports/candidate-live-boot.sh
+          sudo cp -a out/working out/collector
+          sudo python3 input/research/puppy50-boot/cache_seed.py capture out/collector
+          sudo sh -n out/collector/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/collector/usr/lib/p50-stage/capture-firefox-cache.sh
+          (cd out/collector && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --quiet) >out/collector.cpio
+          zstd -T2 -q -6 out/collector.cpio -o out/collector.initrd
+          python3 input/research/puppy50-boot/repack.py repack out/control.iso out collect out/collector.initrd /usr/lib/syslinux/modules/bios/ifcpu.c32
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus="""    for attempt in range(1, 3):
+                  report['early_navigation_attempts'] = attempt
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})
+                  time.sleep(0.08)
+                  qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})
+          """
+          focus="    for attempt in range(1, 3):\n"+"\n".join(line.strip().rjust(len(line.strip())+8) for line in focus.splitlines()[1:] if line.strip())+"\n"
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
+      - name: Generate caches in a clean offline Firefox VM
+        run: |
+          set -euo pipefail
+          python3 input/research/puppy50-boot/cache_seed.py generate out/collect.iso out/offline-cache
+      - name: Build the smaller BIOS VM initramfs with the verified Firefox caches
+        run: |
+          set -euo pipefail
+          sudo python3 input/research/puppy50-boot/cache_seed.py seed out/working out/offline-cache/cache-files
+          gcc -O2 -s -static -Wall -Wextra -Werror input/research/puppy50-boot/warm_firefox.c -o out/p50-warm-firefox
+          sudo install -m 0755 out/p50-warm-firefox out/working/usr/lib/p50-stage/
+          sudo python3 input/research/puppy50-boot/optical_startup.py out/working --reduce-display-waits --early-prefetch
+          sudo python3 input/research/puppy50-boot/vm_payload.py out/working
+          sudo sh -n out/working/init
+          sudo sh -n out/working/scripts/init-top/udev
+          sudo sh -n out/working/usr/lib/live/boot/9990-main.sh
+          sudo sh -n out/working/usr/lib/live/boot/9990-misc-helpers.sh
+          (cd out/working && sudo find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --quiet) >out/optimized.cpio
+          zstd -T2 -q -6 out/optimized.cpio -o out/optimized.initrd
+          python3 input/research/puppy50-boot/repack.py repack out/control.iso out candidate out/optimized.initrd /usr/lib/syslinux/modules/bios/ifcpu.c32 --direct
+          xorriso -osirrox on -indev out/candidate.iso -extract / out/verify >out/reports/iso-extract.log 2>&1
+          (cd out/verify && sha256sum -c --quiet sha256sum.txt)
+          cmp out/initrd out/verify/live/initrd.img
+          cmp out/optimized.initrd out/verify/live/initrd-vm.img
+          sha256sum out/control.iso out/candidate.iso >out/reports/iso-sha256.txt
+          du -bh out/initrd out/optimized.initrd >out/reports/initrd-size.txt
+          lscpu >out/reports/runner-cpu.txt
+      - name: Benchmark repeat cold BIOS boots and check the browser after ejection
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p=Path('input/source/web109/boot_bench_ahci.py')
+          text=p.read_text()
+          if os.environ['P50_CPU']=='host':
+              assert text.count("'-smp', '2',")==1
+              text=text.replace("'-smp', '2',","'-smp', '4',")
+          old="                            result['first_home_seen_seconds'] = round(time.monotonic() - started, 2)"
+          assert text.count(old)==1
+          text=text.replace(old,"                            result['first_home_seen_seconds'] = time.monotonic() - started")
+          assert text.count('else .2)')==1
+          text=text.replace('else .2)','else .08)')
+          assert text.count('time.sleep(25)')==1
+          text=text.replace('time.sleep(25)','time.sleep(9)')
+          compile(text,str(p),'exec')
+          p.write_text(text)
+          PY
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          for sample in base1 cand1 cand2 base2 cand3; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-$(echo "$sample" | tr "[:lower:]" "[:upper:]")"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >out/reports/fixture-after.log 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket, time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(.05)
+          else:
+              raise RuntimeError('Per-boot network fixture failed to start')
+          PY
+            iso=out/candidate.iso
+            [[ "$sample" == base* ]] && iso=out/control.iso
+            rc=0
+            python3 -u input/source/web109/boot_bench_ahci.py \
+              --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 32 --cpu-model "$P50_CPU" --emulate-acer-id \
+              --firmware bios --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+            cp out/reports/fixture-after.log "out/$sample/http-receipts.log"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, re
+          runs={}
+          for n in ('base1','cand1','cand2','base2','cand3'):
+              p=Path('out')/n
+              d=json.loads((p/'result.json').read_text())
+              s=(p/'serial.log').read_text(errors='replace')
+              confirmed=all([
+                  (p/'exit-status').read_text().strip()=='0',
+                  d['first_home_seen_seconds'] is not None, d.get('early_js_response_seconds') is not None,
+                  d['staged_ram_ready_seconds'] is not None, d['media_ejected'],
+                  d.get('post_eject_browser_http200_confirmed'),
+                  'P50_STAGE_COPY_VERIFIED' in s,
+                  'P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs' in s,
+                  not d['errors']
+              ])
+              fast_path=all(mark in s for mark in ['P50_FIVE_CACHE_SEEDED','P50_FIVE_LOCAL_COOKIE_OK','P50_FIVE_RNG_READY','P50_FIVE_OPTICAL_DEVICE_READY'])
+              d['functional_ok']=confirmed
+              d['optimized_path_verified']=fast_path
+              d['nonroot_firefox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+\S+\s+firefox-esr\s+', s, re.M))
+              d['openbox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+\S+\s+openbox\s+', s, re.M))
+              d['authorization_error_seen']='Authorization required, but no authorization protocol specified' in s
+              d['desktop_session_stable']=d['nonroot_firefox_seen'] and d['openbox_seen'] and not d['authorization_error_seen']
+              runs[n]=d
+          candidates=[runs[n] for n in ('cand1','cand2','cand3')]
+          functional=all(r['functional_ok'] and r['optimized_path_verified'] and r['desktop_session_stable'] for r in candidates)
+          times=[r['first_home_seen_seconds'] for r in candidates]
+          report={'cpu':os.environ['P50_CPU'],'candidate_functional':functional,
+                  'bios_target_pass':functional and all(0<t<=5.0 for t in times),
+                  'measurement':'Cold guest from host monotonic QEMU process launch through first Firefox home frame',
+                  'candidate_frames_seconds':times,
+                  'baseline_frames_seconds':[runs[n]['first_home_seen_seconds'] for n in ('base1','base2')],
+                  'runs':runs}
+          Path('out/reports/comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k!='runs'},indent=2))
+          if not functional:
+              raise SystemExit('Candidate boot or functionality validation failed')
+          PY
+      - name: Preserve the benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-five-overlap-${{ matrix.cpu }}-evidence
+          path: |
+            out/reports/
+            out/offline-cache/serial.log
+            out/offline-cache/qemu.log
+            out/offline-cache/*.png
+            out/base1/
+            out/base2/
+            out/cand1/
+            out/cand2/
+            out/cand3/
+          retention-days: 21
+      - name: Preserve the bootable candidate for repeat verification
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-five-overlap-${{ matrix.cpu }}-candidate
+          path: out/candidate.iso
+          compression-level: 0
+          retention-days: 7
