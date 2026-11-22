@@ -47,7 +47,9 @@ jobs:
           python3 input/research/puppy50-boot/repack.py split out/initrd out
           zstd -q -dc out/main.zst >out/main.cpio
           mkdir out/working
-          (cd out/working && sudo cpio -idm --quiet --no-absolute-filenames <../main.cpio)
+          for archive in out/extra-*.cpio out/main.cpio; do
+            (cd out/working && sudo cpio -idmu --quiet --no-absolute-filenames) <"$archive"
+          done
           sudo python3 input/research/puppy50-boot/repack.py patch out/working --prefetch-mib 128
           sudo sh -n out/working/usr/lib/live/boot/9990-main.sh
           sudo cp out/working/usr/lib/live/boot/9990-main.sh out/reports/candidate-live-boot.sh
