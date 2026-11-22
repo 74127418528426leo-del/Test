@@ -131,7 +131,7 @@ jobs:
             [[ "$sample" == base* ]] && iso=out/control.iso
             [[ "$sample" == virtio* ]] && script=input/source/web109/boot_bench_modern_virtio.py
             rc=0
-            P50_NONCE="P50-$GITHUB_RUN_ID-$sample" python3 -u "$script" \
+            python3 -u "$script" \
               --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
               --ram 3072 --seconds 40 --cpu-model host --emulate-acer-id \
               --firmware bios --media usb --bandwidth 0 --wait-ram-ready || rc=$?
