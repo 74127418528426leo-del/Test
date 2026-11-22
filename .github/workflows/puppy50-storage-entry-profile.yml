@@ -1,0 +1,185 @@
+name: Measure Puppy50 storage, entropy and Linux entry
+on:
+  push:
+    branches: [puppy50-startup-working-set-20261122]
+    paths: ['.github/workflows/puppy50-storage-entry-profile.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inventory:
+    name: Inspect the released boot files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Extract the published boot code and root layout
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=2
+          sudo apt-get install -y --no-install-recommends xorriso zstd cpio squashfs-tools
+          mkdir -p out/boot out/guest out/layout
+          release=https://github.com/74127418528426leo-del/Test/releases/download/puppy50-direct-bios-preview-20261121
+          curl --retry 3 -fLsS "$release/Puppy50_Direct_BIOS_Preview.iso" -o out/released.iso
+          echo 'aa074377b00832818bcb1cd45c0166cb1975b6c1b3ad778279fef6132941aaf6  out/released.iso' | sha256sum -c -
+          xorriso -osirrox on -indev out/released.iso \
+            -extract /live/filesystem.squashfs out/root.squashfs \
+            -extract /live/initrd-vm.img out/boot/initrd-vm.img \
+            -extract /isolinux/live.cfg out/layout/live.cfg \
+            -extract /sha256sum.txt out/layout/sha256sum.txt
+          xorriso -indev out/released.iso -find /live -type f -exec report_lba -- >out/layout/iso-lbas.txt
+          unsquashfs -s out/root.squashfs >out/layout/root-format.txt
+          unsquashfs -lln out/root.squashfs >out/layout/root-files.txt
+          zstd -qdc out/boot/initrd-vm.img >out/compact.cpio
+          (cd out/guest && sudo cpio -idmu --quiet --no-absolute-filenames) <out/compact.cpio
+          cd out/guest
+          sudo du -a -b . | sort -nr | sed -n '1,400p' >../layout/initrd-largest.txt
+          sudo tar -czf ../layout/boot-code.tar.gz init scripts conf usr/lib/live/boot
+          sudo find usr/lib/p50-stage -type f -name '*.sh' -exec sh -c 'for f do cp "$f" ../layout/; done' sh {} +
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-release-boot-layout
+          path: out/layout/
+          retention-days: 14
+  compare:
+    name: Compare cold boots of the exact VirtIO ISO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      PYTHONPATH: input/source
+      P50_CPU: i3-540-conservative
+      P50_ROUTE: exact-virtio-iso
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install VM tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=2
+          sudo apt-get install -y --no-install-recommends xorriso qemu-system-x86 python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p out/boot out/reports fixture
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-virtio-lz4-boot-lab-iso
+          run-id: 45034966977
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: out/image
+      - name: Verify and extract the boot files
+        run: |
+          set -euo pipefail
+          mv out/image/candidate.iso out/reference.iso
+          echo '0d005740bfdc77091f279ae749aabb22e76b39398e8668f73500dfb4d74be0a2  out/reference.iso' | sha256sum -c -
+          xorriso -osirrox on -indev out/reference.iso \
+            -extract /live/vmlinuz out/boot/vmlinuz -extract /live/initrd-vm.img out/boot/initrd-vm.img \
+            -extract /isolinux/live.cfg out/boot/live.cfg
+          sha256sum out/reference.iso >out/reports/iso-sha256.txt
+          lscpu >out/reports/runner-cpu.txt
+          qemu-system-x86_64 -trace help >out/reports/trace-events.txt
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus = (
+              "    for attempt in range(1, 3):\n"
+              "        report['early_navigation_attempts'] = attempt\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})\n"
+              "        time.sleep(0.08)\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})\n"
+          )
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
+      - name: Compare the bootloader with direct loading and a host-fed random device
+        run: |
+          set -euo pipefail
+          lab=input/research/puppy50-boot/boot_latency_lab.py
+          python3 "$lab" harness input/source/web109/boot_bench_ahci.py out/boot
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'input/research/puppy50-boot')
+          from boot_latency_lab import AHCI, VIRTIO
+          from repack import replace_once
+          root = Path('input/source/web109')
+          rng = "cmd += ['-object', 'rng-random,id=p50rng,filename=/dev/urandom', '-device', 'virtio-rng-pci,rng=p50rng']"
+          for name, start in [('entropy', 'virtio'), ('combined', 'direct')]:
+              text = (root / f'boot_bench_lab_{start}.py').read_text()
+              if start == 'direct':
+                  text = replace_once(text, AHCI, VIRTIO)
+              text = replace_once(text, VIRTIO, VIRTIO + '\n        ' + rng)
+              compile(text, name, 'exec')
+              (root / f'boot_bench_lab_{name}.py').write_text(text)
+          PY
+          sed -i 's/aa074377b00832818bcb1cd45c0166cb1975b6c1b3ad778279fef6132941aaf6/0d005740bfdc77091f279ae749aabb22e76b39398e8668f73500dfb4d74be0a2/' "$lab"
+          sequence=(reference1 entropy1 combined1 combined2 reference2 entropy2 combined3)
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          for sample in "${sequence[@]}"; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-${sample^^}"
+            mkdir -p "out/$sample"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >"out/$sample/http-receipts.log" 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket
+          import time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(0.05)
+          else:
+              raise RuntimeError('Per-boot HTTP receiver did not start')
+          PY
+            iso=out/reference.iso
+            route=virtio
+            case "$sample" in
+              entropy*) route=entropy ;;
+              combined*) route=combined ;;
+            esac
+            rc=0
+            python3 -u "input/source/web109/boot_bench_lab_$route.py" \
+              --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 32 --cpu-model "$P50_CPU" --emulate-acer-id \
+              --firmware bios --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
+          done
+          python3 "$lab" report out "$P50_ROUTE" "$GITHUB_RUN_ID" "${sequence[@]}"
+      - name: Preserve per-boot results and screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puppy50-storage-entry-comparison
+          path: |
+            out/reports/
+            out/reference*/
+            out/entropy*/
+            out/combined*/
+          retention-days: 21
