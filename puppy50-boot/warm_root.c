@@ -66,7 +66,9 @@ int main(int argc, char **argv)
         close(fd);
         return 1;
     }
-    (void)nice(5);
+    errno = 0;
+    if (nice(5) == -1 && errno != 0)
+        perror("warm-root nice");
     int result = warm(fd, plan);
     fclose(plan);
     close(fd);
