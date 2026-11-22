@@ -1,0 +1,190 @@
+name: Verify the input-ready Puppy50 VirtIO ISO
+on:
+  push:
+    branches: [puppy50-early-entropy-20261122]
+    paths: ['.github/workflows/puppy50-input-ready-verify.yml']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  verify:
+    name: Fresh runner with BIOS, UEFI, alternate VGA and keyboard tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: input/source
+      P50_CPU: i3-540-conservative
+      P50_BUILD_ID: '45072918881'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: input/research
+      - uses: actions/checkout@v4
+        with:
+          ref: 604786a8bce8768ae0cd6bcf11cfc7b07e1825ee
+          path: input/source
+      - uses: actions/checkout@v4
+        with:
+          ref: d39a63afe01ed74b03a7dc2405d4cbe27336d839
+          path: input/preview
+      - name: Install and verify virtual-machine tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq -o Acquire::Retries=2
+          sudo apt-get install -y --no-install-recommends xorriso qemu-system-x86 ovmf python3-pil
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p out/reports out/boot fixture
+          lscpu >out/reports/runner-cpu.txt
+          python3 -c 'import os; assert len(os.sched_getaffinity(0)) >= 4'
+      - uses: actions/download-artifact@v4
+        with:
+          name: puppy50-graphics-virtio-images
+          run-id: 45072918881
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: out/images
+      - name: Verify ISO files and their internal contents
+        run: |
+          set -euo pipefail
+          echo '30da8ee155df7011d390ab8cf8604de0dfab22524459e2f05b37b6e338f69767  out/images/session.iso' >out/reports/iso-sha256.txt
+          sha256sum -c out/reports/iso-sha256.txt
+          xorriso -osirrox on -indev out/images/session.iso -extract / out/iso
+          (cd out/iso && sha256sum -c --quiet sha256sum.txt)
+          for f in live/vmlinuz live/initrd-vm.img isolinux/live.cfg; do cp "out/iso/$f" out/boot/; done
+      - name: Prepare real Firefox JS and network tests
+        run: |
+          set -euo pipefail
+          python3 input/preview/public_preview/prepare_harness.py --source input/source --preview input/preview/public_preview --retry input/research/v159/verify_real_http_with_retry.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('input/source/web112/early_probe.py')
+          s=p.read_text()
+          a=s.index("    send_key(monitor, ['ctrl', 'l']")
+          b=s.index("    report['early_page_seen_seconds']",a)
+          block=s[a:b]
+          nav=block[:block.index('    if not wait_for_color')]
+          nested=''.join('    '+line for line in nav.splitlines(True))
+          focus = (
+              "    for attempt in range(1, 3):\n"
+              "        report['early_navigation_attempts'] = attempt\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 1'})\n"
+              "        time.sleep(0.08)\n"
+              "        qmp(monitor, 'human-monitor-command', {'command-line':'mouse_button 0'})\n"
+          )
+          check="        if wait_for_color(monitor, out, LOADED_COLOR, 'early_loaded.png', timeout=4):\n            break\n    else:\n        return report\n"
+          assert nav.count("send_key(monitor, ['ret']")==1
+          s=s[:a]+focus+nested+check+s[b:]
+          compile(s,str(p),'exec')
+          p.write_text(s)
+          PY
+          nohup python3 -u input/source/web112/early_fixture.py --port 8766 >out/reports/fixture-early.log 2>&1 </dev/null &
+          python3 -c 'import socket,time; time.sleep(2); [socket.create_connection(("127.0.0.1",p),timeout=5).close() for p in (8766,)]'
+      - name: Measure complete fresh boots of the same bytes
+        run: |
+          set -euo pipefail
+          root=input/source/web109
+          lab=input/research/puppy50-boot
+          python3 "$lab/entropy_bench.py" "$root/boot_bench_ahci.py" out/boot bios tuned
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'input/research/puppy50-boot')
+          from repack import replace_once
+          p = Path('input/source/web109/boot_bench_lab_bios.py')
+          new = replace_once(p.read_text(), ',-3dnowprefetch', ',-3dnowprefetch,-hypervisor')
+          p.with_name('boot_bench_fallback.py').write_text(new)
+          # Route the published alternate VGA fixture to this boot's nonce-specific log.
+          p = p.with_name('boot_bench_cirrus_public.py')
+          old = "fixture_log = out.parent / 'reports' / 'fixture-after.log'"
+          p.write_text(replace_once(p.read_text(), old, "fixture_log = out / 'http-receipts.log'"))
+          PY
+          sequence=(repeat1 native1 uefi1 repeat2 graphics1 native2 standard1 repeat3)
+          fixture_pid=
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          for sample in "${sequence[@]}"; do
+            export P50_NONCE="P50-$GITHUB_RUN_ID-TRIAL-${sample^^}"
+            mkdir -p "out/$sample"
+            python3 -u input/source/web103/fixture_server.py --fixture fixture/unused.mp4 --nonce "$P50_NONCE" --port 8765 >"out/$sample/http-receipts.log" 2>&1 &
+            fixture_pid=$!
+            python3 - <<'PY'
+          import socket
+          import time
+          for _ in range(100):
+              try:
+                  socket.create_connection(('127.0.0.1', 8765), timeout=0.1).close()
+                  break
+              except OSError:
+                  time.sleep(0.05)
+          else:
+              raise RuntimeError('Per-boot HTTP receiver did not start')
+          PY
+            iso=out/images/session.iso
+            cpu="$P50_CPU"
+            firmware=bios
+            driver="$root/boot_bench_tuned_plain.py"
+            case "$sample" in
+              native*) driver="$root/boot_bench_tuned_four.py"; cpu=host ;;
+              uefi*) driver="$root/boot_bench_lab_bios.py"; firmware=uefi ;;
+              graphics*) driver="$root/boot_bench_cirrus_public.py" ;;
+              standard*) driver="$root/boot_bench_fallback.py" ;;
+            esac
+            python3 - "$iso" <<'PY'
+          import os
+          import sys
+          with open(sys.argv[1], 'rb') as f:
+              os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+          PY
+            rc=0
+            python3 -u "$driver" \
+              --iso "$iso" --out "out/$sample" --mode online --allow-no-startup-probe \
+              --ram 3072 --seconds 48 --cpu-model "$cpu" --emulate-acer-id \
+              --firmware "$firmware" --media usb --bandwidth 0 --wait-ram-ready || rc=$?
+            printf '%s\n' "$rc" >"out/$sample/exit-status"
+            kill "$fixture_pid"
+            wait "$fixture_pid" || true
+            fixture_pid=
+          done
+          python3 - "$GITHUB_RUN_ID" "${sequence[@]}" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          sys.path.insert(0, 'input/research/puppy50-boot')
+          from boot_latency_lab import read_sample, sha256
+          out = Path('out')
+          results = {}
+          for sample in sys.argv[2:]:
+              row = read_sample(out, sample, sys.argv[1])
+              serial = (out / sample / 'serial.log').read_text(errors='replace')
+              if sample.startswith(('repeat', 'native')):
+                  row['verified'] = row['functional_ok'] and all(marker in serial for marker in (
+                      'P50_BIOS_EARLY_DRM ', 'P50_WM_OBSERVED p50-openbox-ready ', 'P50_WM_OBSERVED p50-first-window '))
+              else:
+                  receipts = (out / sample / 'http-receipts.log').read_text()
+                  nonce = f"P50-{sys.argv[1]}-TRIAL-{sample.upper()}"
+                  row['verified'] = all((row['harness_exit']=='0', row.get('first_home_seen_seconds'),
+                      row.get('early_js_response_seconds'), row.get('staged_ram_ready_seconds'),
+                      row.get('early_media_attached_before_navigation'), row.get('early_media_attached_after_js_response'),
+                      row.get('media_ejected'), row.get('post_eject_browser_http200_confirmed'), not row.get('errors'),
+                      f'nonce={nonce} HTTP/1.1" 200' in receipts, 'P50_STAGE_COPY_VERIFIED' in serial,
+                      'P50_STAGE_RAM_BACKING=/run/p50-stage/store/root.squashfs' in serial,
+                      'P50_FIVE_LAUNCHER' not in serial))
+              results[sample] = row
+          metrics = {'candidate_sha256': sha256(out/'images/session.iso'), 'all_verified': all(x['verified'] for x in results.values()), 'samples': results}
+          (out/'reports/independent.json').write_text(json.dumps(metrics, indent=2)+'\n')
+          for name, row in results.items():
+              print(name, row.get('first_home_seen_seconds'), row.get('early_js_response_seconds'), row['verified'])
+          if not metrics['all_verified']:
+              raise SystemExit('At least one independent boot failed a required check')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puppy50-input-ready-independent
+          path: |
+            out/reports/
+            out/repeat*/
+            out/native*/
+            out/uefi*/
+            out/graphics*/
+            out/standard*/
+          retention-days: 21
