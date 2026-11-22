@@ -191,8 +191,8 @@ jobs:
               fast_path=all(mark in s for mark in ['P50_FIVE_CACHE_SEEDED','P50_FIVE_LOCAL_COOKIE_OK','P50_FIVE_RNG_READY','P50_FIVE_OPTICAL_DEVICE_READY'])
               d['functional_ok']=confirmed
               d['optimized_path_verified']=fast_path
-              d['nonroot_firefox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+user\s+firefox-esr\s+', s, re.M))
-              d['openbox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+user\s+openbox\s+', s, re.M))
+              d['nonroot_firefox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+\S+\s+firefox-esr\s+', s, re.M))
+              d['openbox_seen']=bool(re.search(r'^\s*\d+\s+\d+\s+1000\s+\S+\s+openbox\s+', s, re.M))
               d['authorization_error_seen']='Authorization required, but no authorization protocol specified' in s
               d['desktop_session_stable']=d['nonroot_firefox_seen'] and d['openbox_seen'] and not d['authorization_error_seen']
               runs[n]=d
