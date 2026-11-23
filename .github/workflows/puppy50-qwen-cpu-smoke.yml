@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       run_hermes:
-        description: 'Run optional Hermes Agent 64K-context compatibility test (may time out on CPU)'
+        description: 'Run the live Hermes and Qwen boot review instead of the standalone Qwen smoke'
         type: boolean
         required: false
         default: false
@@ -17,7 +17,11 @@ concurrency:
   group: puppy50-real-qwen-cpu-smoke
   cancel-in-progress: true
 jobs:
+  hermes_review:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_hermes
+    uses: ./.github/workflows/puppy50-hermes-qwen.yml
   qwen_cpu:
+    if: github.event_name != 'workflow_dispatch' || !inputs.run_hermes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -85,11 +89,6 @@ jobs:
           print('Real 128-task CPU inference completed, strict safe JSON:',
                 d['safe_strict_json_responses'])
           PY
-      - name: Run official Hermes Agent one-shot against the same local Qwen model
-        if: github.event_name == 'workflow_dispatch' && inputs.run_hermes
-        continue-on-error: true
-        shell: bash
-        run: bash research_lab/hermes_cpu_smoke.sh
       - name: Publish accurate machine-readable evidence
         if: always()
         shell: bash
@@ -107,7 +106,6 @@ jobs:
           path: |
             cpu-smoke-results/smoke.json
             cpu-smoke-results/batch128.json
-            hermes-smoke-results/
             cpu-qwen-container.log
           retention-days: 7
           if-no-files-found: warn

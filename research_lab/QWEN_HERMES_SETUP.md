@@ -1,10 +1,27 @@
-# Qwen + Hermes / OpenClaude / OpenCode integration
+# Qwen and Hermes in Puppy50 AutoLab
 
-**Status:** adapter deployed. A real GPU model endpoint or hosted Qwen
-provider must be supplied by the operator. We have **not** installed,
-provisioned or exercised actual Qwen inference or Hermes/OpenClaude servers.
+## GitHub Actions boot review
 
-## Model selection (verified November 15, 2026)
+[Puppy50 Hermes and Qwen Boot Review](https://github.com/74127418528426leo-del/Test/actions/workflows/puppy50-hermes-qwen.yml)
+runs Hermes Agent v0.23.3 and open-weight Qwen3.5-4B on the same CPU runner.
+GitHub starts llama.cpp on loopback with a 65,536-token context. The
+workflow verifies the downloaded model and runtime by SHA-256. It needs
+no GPU or inference credentials.
+
+The workflow reads one commit of `puppy50-autolab-state` and reviews the
+latest VM trial and the fastest complete four-boot batch. Hermes offers
+one read-only tool. Each review requires Qwen to select that tool, receive
+the recorded benchmark, and return the matching candidate, slowest Firefox
+frame time, and next step. The Actions summary shows the checks. The
+`puppy50-hermes-qwen-review` artifact contains the input revision, tool
+calls, and model replies.
+
+Use the boot review workflow or choose `run_hermes` in **Puppy50 Real
+Qwen CPU Inference Smoke**. Both routes use the same review. The model's
+recommendation is advisory. The guarded VM workflow remains responsible
+for experiments and independent verification.
+
+## External GPU research (November 15, 2026 model notes)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
   model, Apache 2.0. Recommended first for reproducible Linux and Firefox work.
 - **Qwen/Qwen3-Coder-Next** — agentic coding model; 80B total / 3B active,
@@ -67,9 +84,9 @@ Use Hermes Agent for persistent researcher skills, memory, task delegation
 and scheduled analysis. Use OpenClaude/OpenCode for independent coding/review
 tasks in isolated cloned repositories and draft PRs. Both may connect to
 compatible Qwen inference providers. Their models/tools must be configured
-independently; the GitHub lab does not launch either framework automatically.
+independently. The proposal scheduler does not start external workers.
 
-Agents should load `research_lab/AGENTS.md` as project guardrails. Restrict
+External agents should load `research_lab/AGENTS.md` as project guardrails. Restrict
 their runner permissions, avoid repository secrets in model context and
 do not allow model-written code into a real ISO release without manual review.
 

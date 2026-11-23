@@ -1,0 +1,129 @@
+name: Puppy50 Hermes and Qwen Boot Review
+
+on:
+  push:
+    branches: [main, puppy50-hermes-qwen-20261122]
+    paths:
+      - '.github/workflows/puppy50-hermes-qwen.yml'
+      - 'research_lab/hermes_qwen_review.py'
+  workflow_dispatch: {}
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: puppy50-hermes-qwen-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out Puppy50
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Read the current AutoLab state revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: puppy50-autolab-state
+          path: autolab-snapshot
+          persist-credentials: false
+          sparse-checkout: /experiments/puppy50-autolab/state.json
+          sparse-checkout-cone-mode: false
+      - name: Check out Hermes Agent v0.23.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: caafe5389ae585ef77387a962aee05b1bcf17029
+          path: hermes-upstream
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.13.9'
+          enable-cache: false
+      - name: Install Hermes from the upstream Python lockfile
+        working-directory: hermes-upstream
+        run: uv sync --python 3.14.10 --frozen --no-dev
+      - name: Download and verify llama.cpp and the Qwen3.5-4B weights
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/puppy50-inference"
+          mkdir -p "$runtime/llama"
+          cd "$runtime"
+          curl -fsSL --retry 2 --connect-timeout 20 --max-time 90 \
+            https://github.com/ggml-org/llama.cpp/releases/download/b12359/llama-b12359-bin-ubuntu-x64.tar.gz \
+            -o llama.tar.gz
+          curl -fsSL --retry 2 --connect-timeout 20 --max-time 360 \
+            'https://huggingface.co/ggml-org/Qwen3.5-4B-GGUF/resolve/8d43d974efc48399cb58957ad49c8b26bf5a109c/Qwen3.5-4B-Q4_K_M.gguf?download=true' \
+            -o qwen.gguf
+          sha256sum --check <<'CHECKSUMS'
+          0bc1f091e8916102b6d8f2cf944233a620e90a0f856c72d0ce41150c65c2e72e  llama.tar.gz
+          217002fa8008ef4fc6d548353a3aebef055a96e6ff8e0e2c0953ef8254a89c14  qwen.gguf
+          CHECKSUMS
+          tar -xzf llama.tar.gz --strip-components=1 -C llama
+      - name: Run two real Hermes tool reviews on local Qwen
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/puppy50-inference"
+          mkdir -p hermes-qwen-proof "$runtime/home"
+          "$runtime/llama/llama-server" --model "$runtime/qwen.gguf" \
+            --alias Qwen3.5-4B --host 127.0.0.1 --port 18080 \
+            --ctx-size 65536 --parallel 1 --threads 4 --n-gpu-layers 0 --jinja \
+            --reasoning off --no-ui \
+            >hermes-qwen-proof/llama-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in {1..60}; do
+            if curl -fsS --max-time 2 http://127.0.0.1:18080/health >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            kill -0 "$server" 2>/dev/null || break
+            sleep 2
+          done
+          if [[ "$ready" != true ]]; then
+            tail -n 30 hermes-qwen-proof/llama-server.log >&2
+            exit 1
+          fi
+          state_revision="$(git -C autolab-snapshot rev-parse HEAD)"
+          timeout --kill-after=5s 6m env -i PATH=/usr/bin:/bin \
+            HOME="$runtime/home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
+            hermes-upstream/.venv/bin/python research_lab/hermes_qwen_review.py \
+            --state autolab-snapshot/experiments/puppy50-autolab/state.json \
+            --state-revision "$state_revision" --output hermes-qwen-proof/review.json
+      - name: Summarize the tool and benchmark checks
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Hermes Agent v0.23.3 with Qwen3.5-4B'
+            if [[ -f hermes-qwen-proof/review.json ]]; then
+              jq -r '"AutoLab state revision `" + .state_revision + "`", "",
+                "| Batch | Candidate | Slowest recorded frame (s) | Next step | Review check |",
+                "|---|---|---:|---|---|",
+                (.reviews | to_entries[] | [
+                  .key, (.value.observed_batch.candidate // "—"),
+                  (.value.observed_batch.worst_seconds // "—" | tostring),
+                  (if .value.passed then .value.expected_review.next_step else "—" end),
+                  (if .value.passed then "Passed" else "Failed" end)
+                ] | "| " + join(" | ") + " |")' hermes-qwen-proof/review.json
+            else
+              echo 'The review ended before it produced a results file. See the failed step.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: puppy50-hermes-qwen-review
+          path: hermes-qwen-proof/
+          retention-days: 7
+          if-no-files-found: ignore
