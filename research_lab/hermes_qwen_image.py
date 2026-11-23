@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from uuid import uuid4
 
 from PIL import Image, ImageStat
 
@@ -18,9 +19,10 @@ from hermes_qwen_runtime import BASE_URL, MODEL, local_hermes_profile
 
 
 TOOL = "read_image_brief"
-IMAGE_MODEL = "Qwen/Qwen-Image"
-SPACE = "https://qwen-qwen-image.hf.space"
+IMAGE_MODEL = "Qwen/Qwen-Image-2.1"
+SPACE = "https://qwen-qwen-image-2-1.hf.space"
 SEED = 5067
+SIZE = 768
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 BRIEF = {
     "subject": "A small friendly puppy next to a compact retro desktop computer with a glowing sapphire screen.",
@@ -116,16 +118,15 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def render(prompt, record):
-    client = build_opener(NoRedirect())
-    endpoint = SPACE + "/gradio_api/call/infer"
-    args = [prompt, SEED, False, "1:1", 4, 24, False]
-    request = Request(endpoint, json.dumps({"data": args}).encode(), {"Content-Type": "application/json"})
+def queue_result(client, method, args, session, record):
+    endpoint = SPACE + "/gradio_api/call/" + method
+    payload = {"data": args, "session_hash": session}
+    request = Request(endpoint, json.dumps(payload).encode(), {"Content-Type": "application/json"})
     with client.open(request, timeout=35) as response:
         event_id = json.load(response)["event_id"]
     if not re.fullmatch(r"[a-f0-9]{32}", event_id):
         raise RuntimeError("Unexpected Qwen demo event ID")
-    record["event_id"] = event_id
+    record.setdefault("events", {})[method] = event_id
     deadline = time.monotonic() + 210
     event = ""
     with client.open(endpoint + "/" + event_id, timeout=45) as response:
@@ -136,17 +137,28 @@ def render(prompt, record):
             if line.startswith("event: "):
                 event = line[7:]
             if line.startswith("data: ") and event == "error":
-                raise RuntimeError("Qwen demo returned an error: " + line[6:300])
+                raise RuntimeError(f"Qwen demo {method} returned an error: " + line[6:300])
             if line.startswith("data: ") and event == "complete":
-                image, seed = json.loads(line[6:])
-                break
-        else:
-            raise RuntimeError("Qwen demo closed its queue before returning an image")
+                return json.loads(line[6:])
+    raise RuntimeError(f"Qwen demo closed the {method} queue without a result")
+
+
+def render(prompt, record):
+    client = build_opener(NoRedirect())
+    session = uuid4().hex
+    prepared = queue_result(
+        client, "prepare_request", [[], prompt, False, True, "speed", SEED, False], session, record
+    )
+    if prepared[1] != SEED:
+        raise RuntimeError("Qwen demo prepared a different seed")
+    image, = queue_result(
+        client, "generate_request",
+        [prompt, False, True, "./generation_logs_paper_case", SEED, SIZE, SIZE, " "],
+        session, record,
+    )
     url = urlsplit(image["url"])
     if url.scheme != "https" or url.netloc != urlsplit(SPACE).netloc or not url.path.startswith("/gradio_api/file="):
         raise RuntimeError("Qwen demo returned a file URL outside its image endpoint")
-    if seed != SEED:
-        raise RuntimeError("Qwen demo returned a different seed")
     with client.open(url.geturl(), timeout=35) as response:
         data = response.read(MAX_IMAGE_BYTES + 1)
     if len(data) > MAX_IMAGE_BYTES:
@@ -156,8 +168,8 @@ def render(prompt, record):
 
 def checked_image(raw, output):
     with Image.open(io.BytesIO(raw)) as image:
-        if not (256 <= image.width <= 3072 and image.width == image.height):
-            raise ValueError("Unexpected image dimensions for the square example")
+        if image.size != (SIZE, SIZE):
+            raise ValueError(f"Expected a {SIZE}x{SIZE} image, received {image.width}x{image.height}")
         picture = image.convert("RGB")
     deviations = ImageStat.Stat(picture).stddev
     if max(deviations) < 8:
