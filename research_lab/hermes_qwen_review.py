@@ -20,9 +20,26 @@ TOOL = "read_boot_batch"
 VIEWS = {"latest": "the latest VM trial", "best": "the fastest complete VM batch"}
 SYSTEM_PROMPT = """You report recorded Puppy50 QEMU Firefox boot tests.
 Call read_boot_batch with the requested view to retrieve the results.
-Reply with a JSON object containing the tool's candidate, worst_seconds, and next_step.
+Return only JSON with the tool's candidate, worst_seconds, and next_step.
 Copy the three values exactly, including null for missing measurements.
 """
+RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "puppy50_boot_review",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "candidate": {"type": ["string", "null"]},
+                "worst_seconds": {"type": ["number", "null"]},
+                "next_step": {"enum": ["measure", "optimize", "diagnose", "verified", "replicate"]},
+            },
+            "required": ["candidate", "worst_seconds", "next_step"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def boot_batches(state):
@@ -119,6 +136,14 @@ def review_batches(batches):
     reviews = {}
     for view, description in VIEWS.items():
         reads.clear()
+
+        def constrain_reply(_call_id, name, _args, _result):
+            if name == TOOL and reads == [view]:
+                # Tool selection remains automatic. Once the data arrives, request a typed answer.
+                agent.request_overrides.update(
+                    tools=[], tool_choice="none", response_format=RESPONSE_FORMAT
+                )
+
         agent = AIAgent(
             provider="custom",
             api_mode="chat_completions",
@@ -134,11 +159,15 @@ def review_batches(batches):
             max_tokens=192,
             run_budget_seconds=150,
             request_overrides={"temperature": 0, "tool_choice": "auto", "timeout": 105},
+            tool_complete_callback=constrain_reply,
         )
         if agent.valid_tool_names != {TOOL}:
             raise RuntimeError(f"Unexpected Hermes tool surface: {sorted(agent.valid_tool_names)}")
         started = time.monotonic()
-        result = agent.run_conversation(f"Report {description} (view: {view}).", system_message=SYSTEM_PROMPT)
+        result = agent.run_conversation(
+            f"Report {description} (view: {view}). Return only the JSON object.",
+            system_message=SYSTEM_PROMPT,
+        )
         reply = result.get("final_response") or ""
         reviews[view] = {
             "passed": review_passed(result, reads, view, expected[view]),

@@ -12,10 +12,11 @@ The workflow reads one commit of `puppy50-autolab-state` and reviews the
 latest VM trial and the fastest complete four-boot batch. Hermes offers
 one read-only tool. The tool applies the benchmark rules to the recorded data.
 Each review requires Qwen to select the tool and accurately report the
-candidate, slowest Firefox frame time, and next step it receives. The Actions
-summary shows the checks. The
-`puppy50-hermes-qwen-review-attempt-*` artifact contains the input revision, tool
-calls, and model replies.
+candidate, slowest Firefox frame time, and next step it receives. After
+the tool runs, llama.cpp constrains the reply to the review's JSON schema.
+The Actions summary shows the checks. Each
+`puppy50-hermes-qwen-review-attempt-*` artifact contains the input revision,
+tool calls, and model replies.
 
 Use the boot review workflow or choose `run_hermes` in **Puppy50 Real
 Qwen CPU Inference Smoke**. Both routes use the same review. Each review
