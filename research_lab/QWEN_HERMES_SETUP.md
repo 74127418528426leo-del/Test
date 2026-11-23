@@ -13,7 +13,7 @@ latest VM trial and the fastest complete four-boot batch. Hermes offers
 one read-only tool. Each review requires Qwen to select that tool, receive
 the recorded benchmark, and return the matching candidate, slowest Firefox
 frame time, and next step. The Actions summary shows the checks. The
-`puppy50-hermes-qwen-review` artifact contains the input revision, tool
+`puppy50-hermes-qwen-review-attempt-*` artifact contains the input revision, tool
 calls, and model replies.
 
 Use the boot review workflow or choose `run_hermes` in **Puppy50 Real

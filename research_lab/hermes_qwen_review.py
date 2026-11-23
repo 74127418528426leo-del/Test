@@ -78,6 +78,19 @@ def expected_review(batch):
     }
 
 
+def review_passed(result, tool_reads, view, expected):
+    calls = result.get("api_calls")
+    if result.get("completed") is not True or tool_reads != [view]:
+        return False
+    if type(calls) is not int or calls < 2:
+        return False
+    try:
+        answer = json.loads(result.get("final_response"))
+    except (TypeError, ValueError):
+        return False
+    return answer == expected and type(answer["worst_seconds"]) is not bool
+
+
 def review_batches(batches):
     # Hermes and its tool registry are needed only for the live inference run.
     from run_agent import AIAgent
@@ -132,26 +145,15 @@ def review_batches(batches):
         started = time.monotonic()
         result = agent.run_conversation(f"Review {description}.", system_message=SYSTEM_PROMPT)
         reply = result.get("final_response") or ""
-        try:
-            answer = json.loads(reply)
-        except (TypeError, ValueError):
-            answer = None
-
         expected = expected_review(batches[view])
-        passed = (
-            result.get("completed") is True
-            and reads == [view]
-            and result.get("api_calls", 0) >= 2
-            and answer == expected
-        )
         reviews[view] = {
-            "passed": passed,
+            "passed": review_passed(result, reads, view, expected),
             "tool_reads": list(reads),
             "model_api_calls": result.get("api_calls"),
             "elapsed_seconds": round(time.monotonic() - started, 2),
             "observed_batch": batches[view],
             "expected_review": expected,
-            "model_reply": reply[:1200],
+            "model_reply": reply[:1200] if isinstance(reply, str) else None,
         }
     return reviews
 

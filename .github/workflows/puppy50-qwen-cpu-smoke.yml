@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       run_hermes:
-        description: 'Run the live Hermes and Qwen boot review instead of the standalone Qwen smoke'
+        description: 'Also run the live Hermes and Qwen boot review'
         type: boolean
         required: false
         default: false
@@ -21,7 +21,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_hermes
     uses: ./.github/workflows/puppy50-hermes-qwen.yml
   qwen_cpu:
-    if: github.event_name != 'workflow_dispatch' || !inputs.run_hermes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
