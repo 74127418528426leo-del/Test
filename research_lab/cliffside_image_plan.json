@@ -1,0 +1,14 @@
+{
+  "planning_model": "Qwen3.5-4B",
+  "image_model": "Qwen/Qwen-Image-2.1-Turbo",
+  "seed": 5067,
+  "width": 1216,
+  "height": 896,
+  "prompt": "A tiny golden puppy beside an ivory retro computer with a sapphire screen, in an open stone workshop overlooking a terraced cliffside city at blue hour. Wide cinematic landscape. Foreground workbench with brass instruments, copper cables and the puppy. Below, a lantern-lit arch bridge spans a winding turquoise river. A domed observatory crowns the far ridge. Detailed 3D environment, warm amber windows against indigo twilight, textured stone and timber, reflections on the river, atmospheric haze and faint stars. Keep the puppy and computer distinct in the foreground. Show depth across three planes. No lettering or logos.",
+  "tool_reads": [
+    "brief"
+  ],
+  "qwen_calls": 2,
+  "passed": false,
+  "source_run": 45191670460
+}

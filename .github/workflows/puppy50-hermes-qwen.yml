@@ -12,6 +12,7 @@ on:
       - 'research_lab/hermes_qwen_image.py'
       - 'research_lab/render_qwen_image_cpu.sh'
       - 'research_lab/render_qwen_image_gpu.py'
+      - 'research_lab/cliffside_image_plan.json'
       - 'research_lab/coding_example/PROJECT.md'
       - 'research_lab/coding_example/grade.py'
   workflow_dispatch:
@@ -19,7 +20,7 @@ on:
       task:
         description: Task to run with Hermes and Qwen
         type: choice
-        options: [boot-review, coding-example, image-example, gpu-image-example]
+        options: [boot-review, coding-example, image-example, gpu-image-example, gpu-image-repeat]
         default: boot-review
   workflow_call: {}
 
@@ -36,7 +37,7 @@ jobs:
     timeout-minutes: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-large-image') || inputs.task == 'image-example') && 60 || 18 }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-free-gpu') && 'gpu-image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-large-image') && 'image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
+      P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-free-gpu') && 'gpu-image-repeat' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-large-image') && 'image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
     steps:
       - name: Check out Puppy50
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -54,6 +55,7 @@ jobs:
           sparse-checkout: /experiments/puppy50-autolab/state.json
           sparse-checkout-cone-mode: false
       - name: Check out Hermes Agent v0.23.3
+        if: env.P50_HERMES_TASK != 'gpu-image-repeat'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: NousResearch/hermes-agent
@@ -65,9 +67,11 @@ jobs:
           version: '0.13.9'
           enable-cache: false
       - name: Install Hermes from the upstream Python lockfile
+        if: env.P50_HERMES_TASK != 'gpu-image-repeat'
         working-directory: hermes-upstream
         run: uv sync --python 3.14.10 --frozen --no-dev
       - name: Download and verify llama.cpp and the Qwen3.5-4B weights
+        if: env.P50_HERMES_TASK != 'gpu-image-repeat'
         shell: bash
         run: |
           set -euo pipefail
@@ -86,6 +90,7 @@ jobs:
           CHECKSUMS
           tar -xzf llama.tar.gz --strip-components=1 -C llama
       - name: Run the selected task with Hermes and local Qwen
+        if: env.P50_HERMES_TASK != 'gpu-image-repeat'
         shell: bash
         run: |
           set -euo pipefail
@@ -136,11 +141,17 @@ jobs:
           bash research_lab/render_qwen_image_cpu.sh hermes-qwen-proof
           hermes-upstream/.venv/bin/python research_lab/hermes_qwen_image.py verify --output hermes-qwen-proof
       - name: Render and verify the Qwen image on the public ZeroGPU demo
-        if: env.P50_HERMES_TASK == 'gpu-image-example'
+        if: env.P50_HERMES_TASK == 'gpu-image-example' || env.P50_HERMES_TASK == 'gpu-image-repeat'
         shell: bash
         run: |
-          timeout --kill-after=5s 3m hermes-upstream/.venv/bin/python \
-            research_lab/render_qwen_image_gpu.py --output hermes-qwen-proof
+          set -euo pipefail
+          if [[ "$P50_HERMES_TASK" == gpu-image-repeat ]]; then
+            install -D research_lab/cliffside_image_plan.json hermes-qwen-proof/image-example.json
+            python=(uv run --no-project --python 3.12 --with 'Pillow==13.0.0' python)
+          else
+            python=(hermes-upstream/.venv/bin/python)
+          fi
+          timeout --kill-after=5s 3m "${python[@]}" research_lab/render_qwen_image_gpu.py --output hermes-qwen-proof
       - name: Summarize the results
         if: always()
         shell: bash
@@ -154,6 +165,9 @@ jobs:
                 + (.qwen_calls | tostring) + "\n\nSHA-256 `" + .sha256 + "`"
                 + (if .gpu_request_seconds then
                     "\n\nPublic ZeroGPU request time " + (.gpu_request_seconds | tostring) + " seconds, including queue"
+                  else "" end)
+                + (if .source_run then
+                    "\n\nSaved prompt from GitHub run " + (.source_run | tostring)
                   else "" end)
                 else "Image generation failed. See the render step log." end' \
                 hermes-qwen-proof/image-example.json
