@@ -10,15 +10,16 @@ no GPU or inference credentials.
 
 The workflow reads one commit of `puppy50-autolab-state` and reviews the
 latest VM trial and the fastest complete four-boot batch. Hermes offers
-one read-only tool. Each review requires Qwen to select that tool, receive
-the recorded benchmark, and return the matching candidate, slowest Firefox
-frame time, and next step. The Actions summary shows the checks. The
+one read-only tool. The tool applies the benchmark rules to the recorded data.
+Each review requires Qwen to select the tool and accurately report the
+candidate, slowest Firefox frame time, and next step it receives. The Actions
+summary shows the checks. The
 `puppy50-hermes-qwen-review-attempt-*` artifact contains the input revision, tool
 calls, and model replies.
 
 Use the boot review workflow or choose `run_hermes` in **Puppy50 Real
-Qwen CPU Inference Smoke**. Both routes use the same review. The model's
-recommendation is advisory. The guarded VM workflow remains responsible
+Qwen CPU Inference Smoke**. Both routes use the same review. Each review
+is advisory. The guarded VM workflow remains responsible
 for experiments and independent verification.
 
 ## External GPU research (November 15, 2026 model notes)

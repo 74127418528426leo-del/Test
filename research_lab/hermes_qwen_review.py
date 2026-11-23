@@ -18,16 +18,10 @@ CONTEXT_TOKENS = 65_536
 MODEL = "Qwen3.5-4B"
 TOOL = "read_boot_batch"
 VIEWS = {"latest": "the latest VM trial", "best": "the fastest complete VM batch"}
-SYSTEM_PROMPT = """You review recorded Puppy50 QEMU Firefox boot tests.
-Use the read_boot_batch tool to get the requested batch before reporting anything.
-Return only a JSON object containing candidate, worst_seconds and next_step.
-Copy candidate and worst_seconds from the tool exactly, using null for missing data.
-Choose next_step using the first rule that matches:
-- frames_recorded is below 4: "measure"
-- worst_seconds is 5.0 or greater: "optimize"
-- functional_gates_passed is false: "diagnose"
-- independently_verified is true: "verified"
-- otherwise: "replicate"
+SYSTEM_PROMPT = """You report recorded Puppy50 QEMU Firefox boot tests.
+Call read_boot_batch with the requested view to retrieve the results.
+Reply with a JSON object containing the tool's candidate, worst_seconds, and next_step.
+Copy the three values exactly, including null for missing measurements.
 """
 
 
@@ -50,7 +44,7 @@ def boot_batches(state):
             "candidate": candidate,
             "frames_recorded": len(frames),
             "worst_seconds": max(frames.values(), default=None),
-            "functional_gates_passed": passed is True,
+            "vm_gate_passed": passed is True,
             "independently_verified": (
                 candidate is not None
                 and observations["vm_goal_verified"]
@@ -65,7 +59,7 @@ def expected_review(batch):
         next_step = "measure"
     elif batch["worst_seconds"] >= 5.0:
         next_step = "optimize"
-    elif not batch["functional_gates_passed"]:
+    elif not batch["vm_gate_passed"]:
         next_step = "diagnose"
     elif batch["independently_verified"]:
         next_step = "verified"
@@ -96,6 +90,7 @@ def review_batches(batches):
     from run_agent import AIAgent
     from tools.registry import registry
 
+    expected = {view: expected_review(batch) for view, batch in batches.items()}
     reads = []
 
     def read_batch(args, **_):
@@ -103,14 +98,14 @@ def review_batches(batches):
         if not isinstance(view, str) or view not in VIEWS:
             return json.dumps({"error": "Select latest or best"})
         reads.append(view)
-        return json.dumps(batches[view])
+        return json.dumps(expected[view])
 
     registry.register(
         name=TOOL,
         toolset="puppy50_review",
         schema={
             "name": TOOL,
-            "description": "Read the latest Puppy50 VM trial or the fastest complete four-boot batch.",
+            "description": "Read the latest Puppy50 VM trial or the fastest complete four-boot batch and its recommended next step.",
             "parameters": {
                 "type": "object",
                 "properties": {"view": {"type": "string", "enum": list(VIEWS)}},
@@ -143,16 +138,15 @@ def review_batches(batches):
         if agent.valid_tool_names != {TOOL}:
             raise RuntimeError(f"Unexpected Hermes tool surface: {sorted(agent.valid_tool_names)}")
         started = time.monotonic()
-        result = agent.run_conversation(f"Review {description}.", system_message=SYSTEM_PROMPT)
+        result = agent.run_conversation(f"Report {description} (view: {view}).", system_message=SYSTEM_PROMPT)
         reply = result.get("final_response") or ""
-        expected = expected_review(batches[view])
         reviews[view] = {
-            "passed": review_passed(result, reads, view, expected),
+            "passed": review_passed(result, reads, view, expected[view]),
             "tool_reads": list(reads),
             "model_api_calls": result.get("api_calls"),
             "elapsed_seconds": round(time.monotonic() - started, 2),
             "observed_batch": batches[view],
-            "expected_review": expected,
+            "expected_review": expected[view],
             "model_reply": reply[:1200] if isinstance(reply, str) else None,
         }
     return reviews

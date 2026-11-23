@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from hermes_qwen_review import review_passed
+from hermes_qwen_review import expected_review, review_passed
 
 
 class ReviewTests(unittest.TestCase):
@@ -36,3 +36,15 @@ class ReviewTests(unittest.TestCase):
             with self.subTest(update=update):
                 result = dict(self.result, **update)
                 self.assertFalse(review_passed(result, ["best"], "best", self.expected))
+
+    def test_report_recommends_optimization_at_the_strict_threshold(self):
+        batch = {
+            "candidate": "nice-10_zstd3",
+            "frames_recorded": 4,
+            "worst_seconds": 5.0,
+            "vm_gate_passed": False,
+            "independently_verified": False,
+        }
+        self.assertEqual(expected_review(batch)["next_step"], "optimize")
+        batch["worst_seconds"] = 4.9
+        self.assertEqual(expected_review(batch)["next_step"], "diagnose")
