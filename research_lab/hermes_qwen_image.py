@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
-"""Use a Hermes-planned Qwen prompt to generate a verified image."""
+"""Plan a Qwen image prompt and verify the renderer's PNG."""
 
 import argparse
 import hashlib
-import io
 import json
-import re
-import time
 from pathlib import Path
-from urllib.error import HTTPError
-from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
-from uuid import uuid4
 
 from PIL import Image, ImageStat
 
@@ -19,11 +12,9 @@ from hermes_qwen_runtime import BASE_URL, MODEL, local_hermes_profile
 
 
 TOOL = "read_image_brief"
-IMAGE_MODEL = "Qwen/Qwen-Image-2.1"
-SPACE = "https://qwen-qwen-image-2-1.hf.space"
+IMAGE_MODEL = "Qwen/Qwen-Image-2.1-Turbo"
 SEED = 5067
-SIZE = 768
-MAX_IMAGE_BYTES = 12 * 1024 * 1024
+SIZE = 384
 BRIEF = {
     "subject": "A small friendly puppy next to a compact retro desktop computer with a glowing sapphire screen.",
     "composition": "Square editorial 3D illustration, centered subject, three-quarter view.",
@@ -113,99 +104,39 @@ def plan_image():
     return {"prompt": prompt.strip(), "tool_reads": reads, "qwen_calls": calls}
 
 
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def queue_result(client, method, args, session, record):
-    endpoint = SPACE + "/gradio_api/call/" + method
-    payload = {"data": args, "session_hash": session}
-    request = Request(endpoint, json.dumps(payload).encode(), {"Content-Type": "application/json"})
-    with client.open(request, timeout=35) as response:
-        event_id = json.load(response)["event_id"]
-    if not re.fullmatch(r"[a-f0-9]{32}", event_id):
-        raise RuntimeError("Unexpected Qwen demo event ID")
-    record.setdefault("events", {})[method] = event_id
-    deadline = time.monotonic() + 210
-    event = ""
-    with client.open(endpoint + "/" + event_id, timeout=45) as response:
-        for raw in response:
-            if time.monotonic() > deadline:
-                raise TimeoutError("Qwen image queue exceeded the example's deadline")
-            line = raw.decode("utf-8").strip()
-            if line.startswith("event: "):
-                event = line[7:]
-            if line.startswith("data: ") and event == "error":
-                raise RuntimeError(f"Qwen demo {method} returned an error: " + line[6:300])
-            if line.startswith("data: ") and event == "complete":
-                return json.loads(line[6:])
-    raise RuntimeError(f"Qwen demo closed the {method} queue without a result")
-
-
-def render(prompt, record):
-    client = build_opener(NoRedirect())
-    session = uuid4().hex
-    prepared = queue_result(
-        client, "prepare_request", [[], prompt, False, True, "speed", SEED, False], session, record
-    )
-    if prepared[1] != SEED:
-        raise RuntimeError("Qwen demo prepared a different seed")
-    image, = queue_result(
-        client, "generate_request",
-        [prompt, False, True, "./generation_logs_paper_case", SEED, SIZE, SIZE, " "],
-        session, record,
-    )
-    url = urlsplit(image["url"])
-    if url.scheme != "https" or url.netloc != urlsplit(SPACE).netloc or not url.path.startswith("/gradio_api/file="):
-        raise RuntimeError("Qwen demo returned a file URL outside its image endpoint")
-    with client.open(url.geturl(), timeout=35) as response:
-        data = response.read(MAX_IMAGE_BYTES + 1)
-    if len(data) > MAX_IMAGE_BYTES:
-        raise RuntimeError("Qwen demo returned an oversized image")
-    return data
-
-
-def checked_image(raw, output):
-    with Image.open(io.BytesIO(raw)) as image:
-        if image.size != (SIZE, SIZE):
-            raise ValueError(f"Expected a {SIZE}x{SIZE} image, received {image.width}x{image.height}")
-        picture = image.convert("RGB")
-    deviations = ImageStat.Stat(picture).stddev
-    if max(deviations) < 8:
-        raise ValueError("Image output appears blank")
-    picture.save(output, format="PNG")
-    return {
-        "width": picture.width,
-        "height": picture.height,
-        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-    }
+def verified_sha256(output):
+    with Image.open(output) as image:
+        if image.format != "PNG" or image.size != (SIZE, SIZE):
+            raise ValueError(f"Expected a {SIZE}x{SIZE} PNG")
+        if max(ImageStat.Stat(image.convert("RGB")).stddev) < 8:
+            raise ValueError("Image output appears blank")
+    return hashlib.sha256(output.read_bytes()).hexdigest()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=("plan", "verify"))
     parser.add_argument("--output", type=Path, required=True)
-    out = parser.parse_args().output
+    args = parser.parse_args()
+    out = args.output
     out.mkdir(parents=True, exist_ok=True)
-    report = {"passed": False, "planning_model": MODEL, "image_model": IMAGE_MODEL, "backend": SPACE, "seed": SEED}
-    started = time.monotonic()
-    try:
+    receipt = out / "image-example.json"
+    if args.stage == "plan":
+        report = {
+            "passed": False, "planning_model": MODEL, "image_model": IMAGE_MODEL,
+            "backend": "stable-diffusion.cpp CPU", "seed": SEED, "width": SIZE, "height": SIZE,
+        }
         with local_hermes_profile():
             report.update(plan_image())
         print(f"Image prompt ready after {report['qwen_calls']} Qwen calls", flush=True)
-        report.update(checked_image(render(report["prompt"], report), out / "puppy50-qwen-image.png"))
+    else:
+        report = json.loads(receipt.read_text(encoding="utf-8"))
+        if report.get("tool_reads") != ["brief"] or report.get("qwen_calls", 0) < 2:
+            raise ValueError("Missing verified prompt-planning evidence")
+        report["sha256"] = verified_sha256(out / "puppy50-qwen-image.png")
         report["passed"] = True
-        print(f"Verified Qwen image {report['width']}x{report['height']}", flush=True)
-    except HTTPError as error:
-        report["error"] = f"Image backend HTTP {error.code}"
-    except (KeyError, OSError, TypeError, ValueError, RuntimeError) as error:
-        report["error"] = str(error)[:350]
-    finally:
-        report["elapsed_seconds"] = round(time.monotonic() - started, 2)
-        (out / "image-example.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    if not report["passed"]:
-        print(f"Image example failed: {report['error']}", flush=True)
-    return 0 if report["passed"] else 1
+        print(f"Verified Qwen image {SIZE}x{SIZE} on CPU", flush=True)
+    receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

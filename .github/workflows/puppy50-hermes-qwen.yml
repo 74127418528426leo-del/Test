@@ -10,6 +10,7 @@ on:
       - 'research_lab/test_hermes_qwen_review.py'
       - 'research_lab/hermes_qwen_example.py'
       - 'research_lab/hermes_qwen_image.py'
+      - 'research_lab/render_qwen_image_cpu.sh'
       - 'research_lab/coding_example/PROJECT.md'
       - 'research_lab/coding_example/grade.py'
   workflow_dispatch:
@@ -30,8 +31,8 @@ concurrency:
 
 jobs:
   review:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    runs-on: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') || inputs.task == 'image-example') && 'ubuntu-26.04' || 'ubuntu-24.04' }}
+    timeout-minutes: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') || inputs.task == 'image-example') && 36 || 18 }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
       P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') && 'image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
@@ -113,8 +114,8 @@ jobs:
             limit=11m
             task=(research_lab/hermes_qwen_example.py --output hermes-qwen-proof)
           elif [[ "$P50_HERMES_TASK" == image-example ]]; then
-            limit=8m
-            task=(research_lab/hermes_qwen_image.py --output hermes-qwen-proof)
+            limit=4m
+            task=(research_lab/hermes_qwen_image.py plan --output hermes-qwen-proof)
           else
             limit=6m
             state_revision="$(git -C autolab-snapshot rev-parse HEAD)"
@@ -125,6 +126,14 @@ jobs:
           timeout --kill-after=5s "$limit" env -i PATH=/usr/bin:/bin \
             HOME="$runtime/home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
             hermes-upstream/.venv/bin/python "${task[@]}"
+      - name: Render and verify the Qwen image on the CPU runner
+        if: env.P50_HERMES_TASK == 'image-example'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -- "$RUNNER_TEMP/puppy50-inference/qwen.gguf"
+          bash research_lab/render_qwen_image_cpu.sh hermes-qwen-proof
+          hermes-upstream/.venv/bin/python research_lab/hermes_qwen_image.py verify --output hermes-qwen-proof
       - name: Summarize the results
         if: always()
         shell: bash
