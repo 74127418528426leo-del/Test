@@ -2,7 +2,7 @@ name: Puppy50 Hermes and Qwen
 
 on:
   push:
-    branches: [main, puppy50-hermes-qwen-20261122, puppy50-hermes-qwen-coding-example, puppy50-hermes-qwen-image-example]
+    branches: [main, puppy50-hermes-qwen-20261122, puppy50-hermes-qwen-coding-example, puppy50-hermes-qwen-large-image]
     paths:
       - '.github/workflows/puppy50-hermes-qwen.yml'
       - 'research_lab/hermes_qwen_review.py'
@@ -31,11 +31,11 @@ concurrency:
 
 jobs:
   review:
-    runs-on: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') || inputs.task == 'image-example') && 'ubuntu-26.04' || 'ubuntu-24.04' }}
-    timeout-minutes: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') || inputs.task == 'image-example') && 36 || 18 }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-large-image') || inputs.task == 'image-example') && 'ubuntu-26.04' || 'ubuntu-24.04' }}
+    timeout-minutes: ${{ ((github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-large-image') || inputs.task == 'image-example') && 60 || 18 }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') && 'image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
+      P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-large-image') && 'image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
     steps:
       - name: Check out Puppy50
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

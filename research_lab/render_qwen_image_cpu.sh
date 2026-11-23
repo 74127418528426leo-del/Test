@@ -36,7 +36,7 @@ prompt="$(jq -er '.prompt' "$out/image-example.json")"
 seed="$(jq -er '.seed' "$out/image-example.json")"
 width="$(jq -er '.width' "$out/image-example.json")"
 height="$(jq -er '.height' "$out/image-example.json")"
-timeout --kill-after=10s 16m sd/sd-cli \
+timeout --kill-after=10s 40m sd/sd-cli \
   --backend cpu \
   --diffusion-model "$runtime/diffusion.gguf" --llm "$runtime/text.gguf" \
   --vae "$runtime/vae.safetensors" --params-backend 'te=disk,diffusion=disk,vae=cpu' \

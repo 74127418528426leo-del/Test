@@ -14,12 +14,22 @@ from hermes_qwen_runtime import BASE_URL, MODEL, local_hermes_profile
 TOOL = "read_image_brief"
 IMAGE_MODEL = "Qwen/Qwen-Image-2.1-Turbo"
 SEED = 5067
-SIZE = 384
+WIDTH = 1024
+HEIGHT = 768
 BRIEF = {
-    "subject": "A small friendly puppy next to a compact retro desktop computer with a glowing sapphire screen.",
-    "composition": "Square editorial 3D illustration, centered subject, three-quarter view.",
-    "art_direction": "Ivory computer case, midnight-blue studio backdrop, warm amber rim light, a few realistic details.",
-    "constraints": "One puppy and one computer. Clear silhouette, clean background, no lettering or logos.",
+    "subject": (
+        "A tiny golden puppy beside an ivory retro computer with a sapphire screen, in an open stone workshop "
+        "overlooking a terraced cliffside city at blue hour."
+    ),
+    "composition": (
+        "Wide cinematic landscape. Foreground workbench with brass instruments, copper cables and the puppy. "
+        "Below, a lantern-lit arch bridge spans a winding turquoise river. A domed observatory crowns the far ridge."
+    ),
+    "art_direction": (
+        "Detailed 3D environment, warm amber windows against indigo twilight, textured stone and timber, "
+        "reflections on the river, atmospheric haze and faint stars."
+    ),
+    "constraints": "Keep the puppy and computer distinct in the foreground. Show depth across three planes. No lettering or logos.",
 }
 RESPONSE_FORMAT = {
     "type": "json_schema",
@@ -106,8 +116,8 @@ def plan_image():
 
 def verified_sha256(output):
     with Image.open(output) as image:
-        if image.format != "PNG" or image.size != (SIZE, SIZE):
-            raise ValueError(f"Expected a {SIZE}x{SIZE} PNG")
+        if image.format != "PNG" or image.size != (WIDTH, HEIGHT):
+            raise ValueError(f"Expected a {WIDTH}x{HEIGHT} PNG")
         if max(ImageStat.Stat(image.convert("RGB")).stddev) < 8:
             raise ValueError("Image output appears blank")
     return hashlib.sha256(output.read_bytes()).hexdigest()
@@ -124,7 +134,7 @@ def main():
     if args.stage == "plan":
         report = {
             "passed": False, "planning_model": MODEL, "image_model": IMAGE_MODEL,
-            "backend": "stable-diffusion.cpp CPU", "seed": SEED, "width": SIZE, "height": SIZE,
+            "backend": "stable-diffusion.cpp CPU", "seed": SEED, "width": WIDTH, "height": HEIGHT,
         }
         with local_hermes_profile():
             report.update(plan_image())
@@ -135,7 +145,7 @@ def main():
             raise ValueError("Missing verified prompt-planning evidence")
         report["sha256"] = verified_sha256(out / "puppy50-qwen-image.png")
         report["passed"] = True
-        print(f"Verified Qwen image {SIZE}x{SIZE} on CPU", flush=True)
+        print(f"Verified Qwen image {WIDTH}x{HEIGHT} on CPU", flush=True)
     receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
