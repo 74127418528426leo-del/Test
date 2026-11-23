@@ -23,6 +23,9 @@ Qwen CPU Inference Smoke**. Both routes use the same review. Each review
 is advisory. The guarded VM workflow remains responsible
 for experiments and independent verification.
 
+The same CPU setup can run the [VM scheduler coding example](coding_example/README.md)
+through the workflow's **Task** input.
+
 ## External GPU research (November 15, 2026 model notes)
 - **Qwen/Qwen3.8-27B** — current open-weight general-purpose agentic/reasoning
   model, Apache 2.0. Recommended first for reproducible Linux and Firefox work.
