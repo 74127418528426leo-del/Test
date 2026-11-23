@@ -2,13 +2,14 @@ name: Puppy50 Hermes and Qwen
 
 on:
   push:
-    branches: [main, puppy50-hermes-qwen-20261122, puppy50-hermes-qwen-coding-example]
+    branches: [main, puppy50-hermes-qwen-20261122, puppy50-hermes-qwen-coding-example, puppy50-hermes-qwen-image-example]
     paths:
       - '.github/workflows/puppy50-hermes-qwen.yml'
       - 'research_lab/hermes_qwen_review.py'
       - 'research_lab/hermes_qwen_runtime.py'
       - 'research_lab/test_hermes_qwen_review.py'
       - 'research_lab/hermes_qwen_example.py'
+      - 'research_lab/hermes_qwen_image.py'
       - 'research_lab/coding_example/PROJECT.md'
       - 'research_lab/coding_example/grade.py'
   workflow_dispatch:
@@ -16,7 +17,7 @@ on:
       task:
         description: Task to run with Hermes and Qwen
         type: choice
-        options: [boot-review, coding-example]
+        options: [boot-review, coding-example, image-example]
         default: boot-review
   workflow_call: {}
 
@@ -33,7 +34,7 @@ jobs:
     timeout-minutes: 18
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
+      P50_HERMES_TASK: ${{ (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-image-example') && 'image-example' || (github.event_name == 'push' && github.ref_name == 'puppy50-hermes-qwen-coding-example') && 'coding-example' || inputs.task || 'boot-review' }}
     steps:
       - name: Check out Puppy50
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -111,6 +112,9 @@ jobs:
           if [[ "$P50_HERMES_TASK" == coding-example ]]; then
             limit=11m
             task=(research_lab/hermes_qwen_example.py --output hermes-qwen-proof)
+          elif [[ "$P50_HERMES_TASK" == image-example ]]; then
+            limit=8m
+            task=(research_lab/hermes_qwen_image.py --output hermes-qwen-proof)
           else
             limit=6m
             state_revision="$(git -C autolab-snapshot rev-parse HEAD)"
@@ -127,7 +131,14 @@ jobs:
         run: |
           {
             echo '## Hermes Agent v0.23.3 with Qwen3.5-4B'
-            if [[ -f hermes-qwen-proof/coding-example.json ]]; then
+            if [[ -f hermes-qwen-proof/image-example.json ]]; then
+              jq -r 'if .passed then
+                "Qwen-Image verified at " + (.width | tostring) + " × " + (.height | tostring) + " px"
+                + "\n\nTool reads " + (.tool_reads | length | tostring) + " · Qwen planning calls "
+                + (.qwen_calls | tostring) + "\n\nSHA-256 `" + .sha256 + "`"
+                else "Image generation failed. See image-example.json for the error." end' \
+                hermes-qwen-proof/image-example.json
+            elif [[ -f hermes-qwen-proof/coding-example.json ]]; then
               jq -r '.challenge, "",
                 "| Submission | Tests passed | Brief reads | Qwen calls | Inference seconds |",
                 "|---|---:|---:|---:|---:|",
