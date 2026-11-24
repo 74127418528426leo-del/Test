@@ -1071,6 +1071,34 @@
       "run_id": "45300091600",
       "vm_diagnostics": {},
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-24T11:00:41.734173+00:00",
+      "candidate_id": "nice-10_zstd8",
+      "frames": {
+        "bios1": 9.19,
+        "bios2": 7.7,
+        "uefi1": 10.85,
+        "uefi2": 10.83
+      },
+      "iso_sha256": "c944e8435b54c06a93d4fe75a8a5b2ad9cb1d39e05f6903b7753c2e8c125d15e",
+      "matched_prefetch_control": null,
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.83,
+        "bios2": 15.82,
+        "uefi1": 19.0,
+        "uefi2": 18.48
+      },
+      "reason": "not all four Firefox frames strictly below five seconds; observed 4/4 frames, worst 10.85s; 0 functional diagnostics; NOT a passing VM experiment",
+      "run_id": "45378980857",
+      "vm_diagnostics": {},
+      "vm_passed": false
     }
   ],
   "schema": 1,
