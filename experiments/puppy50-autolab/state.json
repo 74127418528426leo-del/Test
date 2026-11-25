@@ -1127,6 +1127,34 @@
         "uefi2": "no QEMU result.json collected"
       },
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-25T09:56:24.454032+00:00",
+      "candidate_id": "nice-9_zstd3",
+      "frames": {
+        "bios1": 9.79,
+        "bios2": 7.71,
+        "uefi1": 11.08,
+        "uefi2": 11.26
+      },
+      "iso_sha256": "9bb822f7ef5773b2654c0e42798d639f8ef8062ba7ac39744edd22d604bbc153",
+      "matched_prefetch_control": null,
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": true,
+        "uefi1": true,
+        "uefi2": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 17.44,
+        "bios2": 15.86,
+        "uefi1": 19.22,
+        "uefi2": 18.91
+      },
+      "reason": "not all four Firefox frames strictly below five seconds; observed 4/4 frames, worst 11.26s; 0 functional diagnostics; NOT a passing VM experiment",
+      "run_id": "45588942656",
+      "vm_diagnostics": {},
+      "vm_passed": false
     }
   ],
   "schema": 1,
