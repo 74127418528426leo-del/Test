@@ -1239,6 +1239,34 @@
       "run_id": "45903798924",
       "vm_diagnostics": {},
       "vm_passed": false
+    },
+    {
+      "at": "2026-11-27T09:46:06.968930+00:00",
+      "candidate_id": "nice-9_zstd4",
+      "frames": {
+        "bios1": 7.03,
+        "bios2": 6.79,
+        "uefi1": 10.8
+      },
+      "iso_sha256": null,
+      "matched_prefetch_control": null,
+      "post_eject_http200_by_boot": {
+        "bios1": true,
+        "bios2": false,
+        "uefi1": true
+      },
+      "ram_ready_seconds": {
+        "bios1": 15.15,
+        "bios2": 13.92,
+        "uefi1": 17.44
+      },
+      "reason": "build/VM tests failed; observed 3/4 frames, worst 10.8s; 2 functional diagnostics; NOT a passing VM experiment",
+      "run_id": "45975523570",
+      "vm_diagnostics": {
+        "bios2": "RuntimeError('Guest Firefox post-eject HTTP200 missing after three actual QMP navigation attempts; no fake host GET substituted')",
+        "uefi2": "no QEMU result.json collected"
+      },
+      "vm_passed": false
     }
   ],
   "schema": 1,
